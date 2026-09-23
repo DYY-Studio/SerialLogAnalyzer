@@ -1,0 +1,15 @@
+schema_version: 1
+profile_id: ollama-local
+adapter_id: openai-compatible
+base_url: "http://localhost:11434/v1"
+model: "qwen2.5:7b"
+stream: true
+request_timeout_seconds: 300
+
+# 本地服务通常不需要密钥；runtime 类型表示“运行时按提示输入”，
+# 也可直接填任意占位字符。
+credential:
+  kind: runtime
+
+extra_body: {}
+extra_headers: {}
