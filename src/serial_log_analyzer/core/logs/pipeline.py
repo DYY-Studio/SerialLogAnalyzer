@@ -9,7 +9,9 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
+from itertools import islice
 
 from serial_log_analyzer.core.logs.parser import LogParser, ParseOutcome
 from serial_log_analyzer.core.models.logs import LogEntry, LogLevel
@@ -43,7 +45,7 @@ class LogPipeline:
 
     parser: LogParser
     capacity: int = 100000
-    _entries: list[LogEntry] = field(default_factory=list, repr=False)
+    _entries: deque[LogEntry] = field(default_factory=deque, repr=False)
     _next_sequence: int = 0
 
     def feed(self, line: str, received_at: float) -> PipelineUpdate:
@@ -86,10 +88,10 @@ class LogPipeline:
 
         if count <= 0:
             return []
-        items = self._entries
         if min_level is not None:
-            items = [entry for entry in items if entry.level.value >= min_level.value]
-        return list(items[-count:])
+            return [entry for entry in self._entries if entry.level.value >= min_level.value][-count:]
+        # deque 不支持切片；反向迭代取尾部，避免整表复制。
+        return list(islice(reversed(self._entries), count))[::-1]
 
     def selected_with_neighbors(self, sequences: list[int], window: int) -> list[LogEntry]:
         """返回选中序号及其前后 ``window`` 行范围内的条目。"""
@@ -99,13 +101,13 @@ class LogPipeline:
         index = {entry.sequence: position for position, entry in enumerate(self._entries)}
         wanted: set[int] = set()
         for sequence in sequences:
-            if sequence not in index:
+            position = index.get(sequence)
+            if position is None:
                 continue
-            position = index[sequence]
-            start = max(0, position - window)
-            stop = min(len(self._entries), position + window + 1)
-            wanted.update(range(start, stop))
-        return [self._entries[position] for position in sorted(wanted)]
+            wanted.update(
+                range(max(0, position - window), min(len(self._entries), position + window + 1))
+            )
+        return [entry for position, entry in enumerate(self._entries) if position in wanted]
 
     def clear(self) -> None:
         """清空条目并重置序号。"""
@@ -144,5 +146,5 @@ class LogPipeline:
 
         dropped: list[int] = []
         while len(self._entries) > self.capacity:
-            dropped.append(self._entries.pop(0).sequence)
+            dropped.append(self._entries.popleft().sequence)
         return tuple(dropped)
