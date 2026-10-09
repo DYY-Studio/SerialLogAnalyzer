@@ -19,6 +19,8 @@ htmlcov/
 
 # superpowers 执行工作区（ledger 等临时产物）
 .superpowers/
+# superpowers 计划/文档（仅本地保留，不入库）
+docs/superpowers/
 
 # 编辑器 / 系统
 .idea/
