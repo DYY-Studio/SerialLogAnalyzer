@@ -17,6 +17,9 @@ venv/
 .coverage
 htmlcov/
 
+# superpowers 执行工作区（ledger 等临时产物）
+.superpowers/
+
 # 编辑器 / 系统
 .idea/
 .vscode/
