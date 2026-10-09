@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import re
+
 from serial_log_analyzer.core.logs.preset import LogPreset
 from serial_log_analyzer.core.models.logs import LogEntry
 
@@ -113,14 +115,16 @@ class LogParser:
         if not module or module == "-":
             module = None
         device_time = groups.get(rule.time_group) if rule.time_group else None
+        message = groups.get(rule.message_group) or ""
         return LogEntry(
             sequence=sequence,
             received_at=received_at,
             level=self._preset.level_from_token(groups.get(rule.level_group) or ""),
-            message=groups.get(rule.message_group) or "",
+            message=message,
             raw=line,
             device_time=device_time,
             module=module,
+            extra=_extract_fields(rule.fields, message),
         )
 
     def _fallback_entry(self, line: str, sequence: int, received_at: float) -> LogEntry:
@@ -133,3 +137,19 @@ class LogParser:
             message=line.strip(),
             raw=line,
         )
+
+
+def _extract_fields(fields: dict[str, re.Pattern[str]], message: str) -> dict[str, str]:
+    """按字段正则从 ``message`` 中抽取结构化字段。
+
+    命中取第一个捕获组，无捕获组则取整体匹配；未命中的字段不出现。
+    """
+
+    if not fields:
+        return {}
+    extra: dict[str, str] = {}
+    for name, pattern in fields.items():
+        found = pattern.search(message)
+        if found is not None:
+            extra[name] = found.group(1) if pattern.groups else found.group(0)
+    return extra

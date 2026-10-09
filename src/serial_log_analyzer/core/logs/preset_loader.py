@@ -29,7 +29,7 @@ __all__ = ["load_preset", "load_presets"]
 _BUILTIN_DIR = "presets/logs"
 
 _TOP_LEVEL_FIELDS = {"schema_version", "preset_id", "display_name", "line", "fallback"}
-_LINE_FIELDS = {"pattern", "level_map", "continuation_pattern"}
+_LINE_FIELDS = {"pattern", "level_map", "continuation_pattern", "fields"}
 _FALLBACK_FIELDS = {"enabled", "level"}
 _PRESET_ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
@@ -132,6 +132,7 @@ def _validate_and_build(
         if continuation_pattern is not None
         else ContinuationMode.NONE
     )
+    fields = _parse_fields(line_data.get("fields"))
 
     line_rule = PresetLineRule(
         pattern=pattern,
@@ -139,6 +140,7 @@ def _validate_and_build(
         level_map=level_map,
         continuation_mode=continuation_mode,
         continuation_pattern=continuation_pattern,
+        fields=fields,
     )
 
     fallback = FallbackRule()
@@ -187,6 +189,27 @@ def _compile_regex(pattern: str) -> re.Pattern[str]:
         return re.compile(pattern)
     except re.error as exc:
         raise PresetError(f"正则非法：{exc}") from exc
+
+
+def _parse_fields(raw: object) -> dict[str, re.Pattern[str]]:
+    """解析 ``fields``：字段名 → 已编译正则。
+
+    异常:
+        PresetError: 不是对象、字段名为空或正则非法。
+    """
+
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise PresetError("fields 必须是对象")
+    result: dict[str, re.Pattern[str]] = {}
+    for name, pattern in raw.items():
+        if not isinstance(name, str) or not name:
+            raise PresetError("fields 的字段名必须是非空字符串")
+        if not isinstance(pattern, str):
+            raise PresetError(f"fields.{name} 必须是正则字符串")
+        result[name] = _compile_regex(pattern)
+    return result
 
 
 def _parse_level_map(raw: object) -> dict[str, LogLevel]:

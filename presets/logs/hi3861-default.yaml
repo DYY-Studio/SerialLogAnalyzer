@@ -25,6 +25,17 @@ line:
   # 匹配该正则的行会被并入上一条日志（多行栈堆 / 后续缩进行）
   continuation_pattern: '^\s+\S'
 
+  # 从 message 中抽取结构化字段（存入 LogEntry.extra），例如固件输出的 key=value：
+  #   [I] [sensor] led=1 fan=0 temperature=29.7 humidity=43.6 ...
+  fields:
+    led: 'led=(?P<value>\d+)'
+    fan: 'fan=(?P<value>\d+)'
+    temperature: 'temperature=(?P<value>[\d.]+)'
+    humidity: 'humidity=(?P<value>[\d.]+)'
+    light: 'light=(?P<value>\d+)'
+    proximity: 'proximity=(?P<value>\d+)'
+    infrared: 'infrared=(?P<value>\d+)'
+
 fallback:
   enabled: true
   level: UNKNOWN

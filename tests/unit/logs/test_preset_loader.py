@@ -78,3 +78,15 @@ def test_load_presets_relies_on_loader_priority(default_preset_yaml: str) -> Non
     presets = load_presets(loader)
     assert [p.preset_id for p in presets] == ["hi3861-default"]
     assert loader.dirs == ["presets/logs"]
+
+
+def test_fields_must_be_mapping(make_loader) -> None:
+    bad = (
+        "schema_version: 1\npreset_id: bad\ndisplay_name: Bad\n"
+        "line:\n"
+        r"  pattern: '\[(?P<level>\w+)\]\[(?P<module>[^\]]+)\] (?P<message>.*)'" + "\n"
+        "  level_map:\n    I: INFO\n"
+        "  fields: [1, 2]\n"
+    )
+    with pytest.raises(PresetError):
+        load_preset(make_loader({"presets/logs/bad.yaml": bad}), "bad")

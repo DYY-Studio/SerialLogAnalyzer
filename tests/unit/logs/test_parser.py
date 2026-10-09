@@ -58,3 +58,24 @@ def test_unmapped_level_is_unknown(parser) -> None:
 def test_render_for_llm(parser) -> None:
     entry = parser.parse("[I] [main] hi", 1, 0.0).entry
     assert parser.render_for_llm(entry) == "[INFO] [main] hi"
+
+
+def test_fields_extracted_into_extra(parser) -> None:
+    line = (
+        "[I] [sensor] led=1 fan=0 temperature=29.7 humidity=43.6 "
+        "light=122 proximity=62 infrared=8"
+    )
+    entry = parser.parse(line, 1, 0.0).entry
+    assert entry.extra == {
+        "led": "1",
+        "fan": "0",
+        "temperature": "29.7",
+        "humidity": "43.6",
+        "light": "122",
+        "proximity": "62",
+        "infrared": "8",
+    }
+
+
+def test_fields_absent_when_message_has_none(parser) -> None:
+    assert parser.parse("[I] [main] system ready", 1, 0.0).entry.extra == {}
