@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "serial-log-analyzer"
 version = "0.1.0"
-description = "Hi3861 串口日志实时分析与 LLM 辅助诊断桌面工具"
+description = "通用串口日志实时分析与 LLM 辅助诊断桌面工具"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11,<3.15"

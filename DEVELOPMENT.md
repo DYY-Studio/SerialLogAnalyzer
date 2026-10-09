@@ -37,7 +37,7 @@ uv run python -m serial_log_analyzer   # 模块入口
 SLA_LOG_LEVEL=DEBUG uv run python main.py
 ```
 
-**设备日志**（来自 Hi3861）与**应用日志**（工具自身）严格分离：前者进入日志表格与
+**设备日志**（来自所连串口设备）与**应用日志**（工具自身）严格分离：前者进入日志表格与
 `LogPipeline`，后者使用标准库 `logging`（见 `diagnostics/app_logging.py`），二者不混用。
 
 ## 测试

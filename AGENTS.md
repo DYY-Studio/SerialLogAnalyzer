@@ -4,8 +4,9 @@
 
 ## 项目概览
 
-SerialLogAnalyzer 是 PC 端串口日志分析工具：连接 Hi3861 开发板，实时接收并解析日志，
-支持 YAML Preset 声明式解析与 LLM 辅助分析。同仓包含 Hi3861 侧日志发送固件（`fw/`）。
+SerialLogAnalyzer 是 PC 端通用串口日志分析工具：连接串口设备，实时接收并解析日志，
+支持 YAML Preset 声明式解析与 LLM 辅助分析。设备格式由 Preset 声明，不硬编码具体芯片；
+同仓 `fw/` 是配套的 Hi3861 日志发送固件。
 
 ## 常用命令
 
