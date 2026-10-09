@@ -45,6 +45,14 @@ def test_recent_filters_min_level(parser) -> None:
     assert [e.level for e in pipe.recent(10, min_level=LogLevel.ERROR)] == [LogLevel.ERROR]
 
 
+def test_recent_returns_latest_in_order(parser) -> None:
+    pipe = LogPipeline(parser)
+    for i in range(5):
+        pipe.feed(f"[I] [a] {i}", float(i))
+    assert [e.message for e in pipe.recent(2)] == ["3", "4"]
+    assert len(pipe.recent(99)) == 5
+
+
 def test_selected_with_neighbors(parser) -> None:
     pipe = LogPipeline(parser)
     for i in range(5):
