@@ -73,7 +73,7 @@ tests/                   单元 / 集成 / UI 测试
 - 分支命名：`feature/<主题>`、`fix/<主题>`、`docs/<主题>`，主题用简短英文短语，例如
   `feature/log-preset-loader`。
 - PR 不强制评审，但必须通过 `ruff check .` 与 `pytest`，并在描述中说明“做了什么 + 为什么”。
-- 合并方式统一使用 squash merge，保持 `main` 历史线性；PR 标题即最终提交信息。
+- 合并方式统一使用 no-ff merge，保持 `main` 历史线性；PR 标题即最终提交信息。
 - 合并后删除源分支；不保留长期存活的开发分支（不设 `develop`）。
 
 ## 提交约定
