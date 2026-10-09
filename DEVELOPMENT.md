@@ -116,6 +116,18 @@ Qt Main Thread
 - 可编写回放脚本把日志文件按行 + 延迟写入虚拟串口，模拟板子输出。
 - 板子固件构建方式见 `fw/README.md`。
 
+## 硬件联调
+
+接入真实 Hi3861 后，可运行门控集成测试验证串口链路与命令通道：
+
+```bash
+SLA_HW_PORT=COM3 uv run pytest tests/integration/test_hardware_link.py -v
+```
+
+未设置 `SLA_HW_PORT` 时该测试自动跳过，CI 无需硬件。Windows PowerShell 下设置：
+`$env:SLA_HW_PORT="COM3"; uv run pytest tests/integration/test_hardware_link.py -v`。
+
+
 ## 常见问题
 
 | 现象 | 排查 |
