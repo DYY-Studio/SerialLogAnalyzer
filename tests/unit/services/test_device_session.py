@@ -117,3 +117,14 @@ def test_fatal_transport_error_after_close_sets_error(pipe) -> None:
     transport.close()
     transport.fail(SerialConnectionError("device gone"))
     assert session.state is DeviceConnectionState.ERROR
+
+
+def test_disconnect_flushes_residual_line(pipe) -> None:
+    transport = FakeTransport()
+    session = DeviceSession(transport, pipe, _handlers())
+    session.connect(SerialConfig(port="COM3"))
+    transport.emit(b"[I] [main] half")
+    assert len(pipe.entries()) == 0
+    session.disconnect()
+    assert [entry.message for entry in pipe.entries()] == ["half"]
+    assert session.state is DeviceConnectionState.DISCONNECTED
