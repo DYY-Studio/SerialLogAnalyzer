@@ -90,6 +90,15 @@ static void SlaFirmwareInit(void)
 {
     osThreadAttr_t attr;
 
+    /* UART0 默认仅作日志控制台（TX）；先 deinit 再 init 才能开启 RX，否则命令任务读不到数据。 */
+    hi_uart_attribute uart_cfg = {115200, 8, 1, 0, 0};
+    (hi_void)hi_uart_deinit(HI_UART_IDX_0);
+    if (hi_uart_init(HI_UART_IDX_0, &uart_cfg, HI_NULL) != HI_ERR_SUCCESS) {
+        LOGE("main", "uart0 rx init failed");
+    } else {
+        LOGI("main", "uart0 rx ready");
+    }
+
     memset(&attr, 0, sizeof(attr));
     attr.name = "sla_log";
     attr.stack_size = SLA_LOG_TASK_STACK;
