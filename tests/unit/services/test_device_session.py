@@ -76,13 +76,14 @@ def test_connect_sets_state_and_forwards_log_lines(pipe) -> None:
 def test_command_reply_routed_not_into_pipeline(pipe) -> None:
     transport = FakeTransport()
     replies = []
-    session = DeviceSession(
-        transport, pipe, _handlers(on_command_reply=lambda text, ok: replies.append((text, ok)))
-    )
+    session = DeviceSession(transport, pipe, _handlers(on_command_reply=replies.append))
     session.connect(SerialConfig(port="COM3"))
     transport.emit(b"@OK PONG\r\n")
-    assert replies == [("PONG", True)]
+    assert [(r.text, r.ok) for r in replies] == [("PONG", True)]
     assert len(pipe.entries()) == 0
+
+    transport.emit(b"@ERR 2 bad arg\r\n")
+    assert (replies[-1].text, replies[-1].ok, replies[-1].code) == ("bad arg", False, 2)
 
 
 def test_send_command_appends_crlf(pipe) -> None:

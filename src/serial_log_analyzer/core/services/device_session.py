@@ -17,6 +17,7 @@ import time
 from collections.abc import Callable
 
 from serial_log_analyzer.core.device import command as device_command
+from serial_log_analyzer.core.device.command import CommandReply
 from serial_log_analyzer.core.errors import AppError, SerialConnectionError
 from serial_log_analyzer.core.logs.line_framer import LineFramer
 from serial_log_analyzer.core.logs.pipeline import LogPipeline, PipelineUpdate
@@ -31,7 +32,7 @@ __all__ = ["DeviceSession", "DeviceSessionHandlers"]
 
 UpdateHandler = Callable[[PipelineUpdate], None]
 StateHandler = Callable[[DeviceConnectionState, str], None]
-CommandReplyHandler = Callable[[str, bool], None]
+CommandReplyHandler = Callable[[CommandReply], None]
 
 
 class DeviceSessionHandlers:
@@ -41,7 +42,7 @@ class DeviceSessionHandlers:
         on_update: 日志增量（批量刷新载荷）。
         on_state: 连接状态变化与人类可读说明。
         on_error: 错误通知。
-        on_command_reply: 命令响应；``(文本, 是否成功)``。
+        on_command_reply: 命令响应；携带 :class:`CommandReply`（文本 / 是否成功 / 错误码）。
     """
 
     def __init__(
@@ -145,7 +146,7 @@ class DeviceSession:
         if device_command.is_response_line(line):
             reply = device_command.parse_response(line)
             if self._handlers.on_command_reply is not None:
-                self._handlers.on_command_reply(reply.text, reply.ok)
+                self._handlers.on_command_reply(reply)
             return
         self._handlers.on_update(self._pipeline.feed(line, time.time()))
 

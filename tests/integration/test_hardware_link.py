@@ -46,7 +46,7 @@ def test_hw_receives_log_and_ping(qtbot) -> None:
             on_update=lambda update: None,
             on_state=lambda state, message: None,
             on_error=lambda error: None,
-            on_command_reply=lambda text, ok: replies.append((text, ok)),
+            on_command_reply=lambda reply: replies.append((reply.text, reply.ok)),
         ),
     )
     session.connect(SerialConfig(port=os.environ["SLA_HW_PORT"]))

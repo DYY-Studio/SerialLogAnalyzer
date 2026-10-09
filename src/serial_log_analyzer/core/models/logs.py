@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 __all__ = ["LogEntry", "LogLevel"]
@@ -38,6 +38,8 @@ class LogEntry:
         device_time: 板上时间戳原文；v1 默认无，使用该字段的 Preset 才会填充。
         module: 模块 / tag 名；日志格式未提供时为 ``None``。
         continuation: 该条是否由多行合并产生（即自身或后续存在 continuation 行）。
+        extra: 预留的结构化字段（如 Preset 捕获的 ``key=value``）；当前恒为空，
+            带默认值以维持构造兼容，后续扩展无需改动调用方。
     """
 
     sequence: int
@@ -48,6 +50,7 @@ class LogEntry:
     device_time: str | None = None
     module: str | None = None
     continuation: bool = False
+    extra: dict[str, str] = field(default_factory=dict)
 
     def display_time(self) -> str:
         """返回用于表格展示的时间文本。
