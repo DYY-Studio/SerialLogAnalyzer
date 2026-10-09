@@ -52,9 +52,15 @@ def test_bad_level_target_raises(make_loader) -> None:
 def test_load_presets_lists_and_sorts(make_loader, default_preset_yaml: str) -> None:
     a = default_preset_yaml.replace("hi3861-default", "aaa").replace("Hi3861 默认日志", "AAA")
     b = default_preset_yaml.replace("hi3861-default", "bbb").replace("Hi3861 默认日志", "BBB")
-    loader = make_loader({"presets/logs/a.yaml": a, "presets/logs/b.yaml": b})
+    loader = make_loader({"presets/logs/aaa.yaml": a, "presets/logs/bbb.yaml": b})
     presets = load_presets(loader)
     assert [p.preset_id for p in presets] == ["aaa", "bbb"]
+
+
+def test_preset_id_must_match_file_name(make_loader, default_preset_yaml: str) -> None:
+    loader = make_loader({"presets/logs/renamed.yaml": default_preset_yaml})
+    with pytest.raises(PresetError):
+        load_preset(loader, "renamed")
 
 
 def test_load_presets_relies_on_loader_priority(default_preset_yaml: str) -> None:

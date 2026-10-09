@@ -102,6 +102,8 @@ def _validate_and_build(
     declared_id = data.get("preset_id")
     if not isinstance(declared_id, str) or not _PRESET_ID_RE.match(declared_id):
         raise PresetError("preset_id 非法")
+    if declared_id != preset_id:
+        raise PresetError(f"preset_id 与文件名不一致：声明 {declared_id!r}，请求 {preset_id!r}")
 
     display_name = data.get("display_name")
     if not isinstance(display_name, str) or not display_name:
