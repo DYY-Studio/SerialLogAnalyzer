@@ -22,6 +22,8 @@ line:                           # 必填，行匹配规则
     W: WARN
     E: ERROR
   continuation_pattern: '^\s+\S'  # 选填，匹配的行并入上一条
+  fields:                         # 选填，从 message 抽取结构化字段 → LogEntry.extra
+    temperature: 'temperature=(?P<value>[\d.]+)'
 
 fallback:                       # 选填，无法匹配时的降级规则
   enabled: true
@@ -35,13 +37,15 @@ fallback:                       # 选填，无法匹配时的降级规则
 | `pattern` | 是 | 正则表达式，必须包含命名组 `level`、`module`、`message`；可选 `time` |
 | `level_map` | 是 | 板上标识到固定级别集的映射，键为字符串，值为 `VERBOSE` / `DEBUG` / `INFO` / `WARN` / `ERROR` / `UNKNOWN` |
 | `continuation_pattern` | 否 | 满足该正则的行并入上一条；缺省时不合并 |
+| `fields` | 否 | 字段名 → 正则；对 `message` 做 `search`，命中取第一个捕获组（无捕获组则整体匹配）存入 `LogEntry.extra`；未命中的字段不出现 |
 
 对齐要求：
 
 - `level` 组缺失或正则编译失败 → 加载报 `PresetError`；
 - `module` 组可匹配到空串（如 `[-]`），此时 `LogEntry.module` 记为 `None`；
 - `time` 组存在时填充 `LogEntry.device_time`，否则由 PC 侧接收时间兜底；
-- `pattern` 中额外出现的命名组会被忽略，不影响解析（如需保留请开 Issue 讨论）。
+- `pattern` 中额外出现的命名组会被忽略，不影响解析（如需保留请开 Issue 讨论）；
+- `fields` 可选，键为字段名（非空字符串），值为正则字符串；`fields` 非对象、字段名为空或正则非法 → 加载报 `PresetError`。
 
 ## 3. 级别映射 `level_map`
 
@@ -77,6 +81,7 @@ Preset 负责把板上的任意标识（`V` / `verbose` / `FATAL` …）映射�
 | 文件缺失或 YAML 非法 | 加载报 `PresetError`，界面提示并继续使用当前 Preset |
 | 缺少必填字段 / 类型错误 | 同上 |
 | 正则编译失败或缺少必需组 | 同上 |
+| `fields` 非对象 / 字段名为空 / 字段正则非法 | 同上 |
 | 未知顶层字段 | 报错（避免拼写错误被静默忽略） |
 | 级别标识未命中映射 | 运行期降级为 `UNKNOWN`，不报错 |
 

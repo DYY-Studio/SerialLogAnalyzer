@@ -39,6 +39,8 @@ class PresetLineRule:
         level_map: 板上级别标识到 :class:`LogLevel` 的映射；未命中时使用 fallback。
         continuation_mode: 多行合并策略。
         continuation_pattern: 已编译的 continuation 正则；``MERGE_PREVIOUS`` 时必需。
+        fields: 从 ``message`` 中抽取的结构化字段：字段名 → 已编译正则；
+            命中时取第一个捕获组（无捕获组则取整体匹配），存入 ``LogEntry.extra``。
     """
 
     pattern: re.Pattern[str]
@@ -49,6 +51,7 @@ class PresetLineRule:
     level_map: dict[str, LogLevel] = field(default_factory=dict)
     continuation_mode: ContinuationMode = ContinuationMode.MERGE_PREVIOUS
     continuation_pattern: re.Pattern[str] | None = None
+    fields: dict[str, re.Pattern[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -90,4 +93,4 @@ class LogPreset:
         未命中映射时返回 ``LogLevel.UNKNOWN``，不抛异常（日志仍需保留）。
         """
 
-        raise NotImplementedError
+        return self.line.level_map.get(token, LogLevel.UNKNOWN)

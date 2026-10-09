@@ -19,14 +19,14 @@ class DeviceController(QObject):
         connection_changed: 连接状态变化，携带状态与说明文本。
         log_update: 日志增量载荷，携带 :class:`PipelineUpdate`。
         error_occurred: 错误文本，供状态栏展示。
-        command_reply: 命令响应文本与是否成功。
+        command_reply: 命令响应，携带 :class:`CommandReply`。
     """
 
     ports_refreshed = Signal(list)
     connection_changed = Signal(object, str)
     log_update = Signal(object)
     error_occurred = Signal(str)
-    command_reply = Signal(str, bool)
+    command_reply = Signal(object)
 
     def __init__(self, session: object) -> None:
         """参数: session — :class:`core.services.device_session.DeviceSession`。"""

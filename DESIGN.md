@@ -110,17 +110,19 @@ class LogLevel(Enum): VERBOSE, DEBUG, INFO, WARN, ERROR, UNKNOWN   # 固定集 +
 class LogEntry:
     sequence: int
     received_at: float          # PC 接收时刻（始终存在）
-    device_time: str | None     # 可选，板上时间戳；v1 默认无
     level: LogLevel
-    module: str | None
     message: str
     raw: str
-    continuation: bool
+    device_time: str | None = None     # 可选，板上时间戳；v1 默认无
+    module: str | None = None
+    continuation: bool = False
+    extra: dict[str, str] = field(default_factory=dict)  # Preset fields 抽取的结构化字段
 ```
 
 ```python
 # core/ports.py —— 依赖倒置：core 定义 Protocol，io 实现
 class SerialTransport(Protocol):
+    def list_ports(self) -> list[SerialPortInfo]: ...   # 枚举可用串口（工具栏 Refresh）
     def open(self, config: SerialConfig) -> None: ...
     def close(self) -> None: ...
     def write(self, data: bytes) -> None: ...
@@ -135,7 +137,7 @@ class SettingsStore(Protocol):
     def get(self, key, default=None): ...
     def set(self, key, value) -> None: ...
 
-class CredentialStore(Protocol):
+class KeyringStore(Protocol):        # 系统钥匙串适配（角色单一，故不叫 CredentialStore）
     @property
     def available(self) -> bool: ...
     def read(self, credential_id: str) -> str | None: ...
@@ -157,15 +159,39 @@ class ResourceLoader(Protocol):
 ```text
 QSerialPort.readyRead → io.readAll() (bytes)
  → core.LineFramer.feed(bytes) -> list[str]      # 自维护字节缓冲，\r\n 切分
- → core.LogParser.parse(line) -> LogEntry
- → core.LogPipeline (环形缓冲 + 多行合并)
+ → core.LogParser.parse(line, sequence, received_at) -> ParseResult
+ → core.LogPipeline.feed(line, received_at) -> PipelineUpdate
+ → core.DeviceSession 分发（`@` 开头 → 命令回复，其余 → 流水线）
  → ui.Controller 每 ~40ms 批量刷入 LogTableModel
 ```
 
-- `LineFramer` 处理跨块半行；`finalize()` 处理尾部残留；不假设 `readyRead` 对齐一行。
-- `LogPipeline.feed(line) -> PipelineUpdate(added, updated_last, truncated)`；continuation 行**并入上一条**（message/raw 追加，`continuation=True`）。
-- 环形缓冲上限默认 100000（可配置）。
+- `LineFramer` 处理跨块半行；`finalize()` 处理尾部残留、`reset()` 清空缓冲；不假设 `readyRead` 对齐一行；超长行按 `max_line_bytes` 截断。
+- `LogParser.parse(line, sequence, received_at) -> ParseResult`；`outcome` ∈ `MATCHED` / `CONTINUATION` / `FALLBACK` / `IGNORED`，`CONTINUATION` 时携带待并入文本。
+- `LogPipeline.feed(line, received_at) -> PipelineUpdate(added, updated, dropped_sequences)`；continuation 行**并入上一条**（message/raw 追加，`continuation=True`）。
+- 环形缓冲上限默认 100000（可配置）；查询接口 `entries()` / `recent(count, *, min_level=None)` / `selected_with_neighbors(sequences, window)` / `render(entries)` / `clear()` 供分析与 UI 使用。
+- `DeviceSession` 负责串口连接、字节分发与命令通道编排（见 §6.1）。
 - UI：`QAbstractTableModel` + `QSortFilterProxyModel`（level/module/文本过滤）+ `QTableView`；不以 `QTextEdit` 为数据源。批量 `beginInsertRows`，末条更新 `dataChanged`，截断 `beginRemoveRows`。
+
+### 6.1 DeviceSession（设备会话，`ui` 接入串口链路的唯一入口）
+
+```python
+DeviceSession(transport: SerialTransport, pipeline: LogPipeline, handlers: DeviceSessionHandlers)
+    .connect(config: SerialConfig) -> None      # 失败抛 SerialConnectionError
+    .disconnect() -> None                       # 关闭并 flush 分帧器残余
+    .send_command(command: str) -> None         # 自动追加 \r\n；未连接抛 SerialConnectionError
+    .list_ports() -> list[SerialPortInfo]
+    .state -> DeviceConnectionState
+    .pipeline -> LogPipeline
+
+DeviceSessionHandlers(
+    on_update:  (PipelineUpdate) -> None,
+    on_state:   (DeviceConnectionState, str) -> None,
+    on_error:   (AppError) -> None,
+    on_command_reply: (CommandReply) -> None = None,   # 见 §7
+)
+```
+
+`ui` Controller 把这组普通回调转成 Qt Signal；`core` 不 import PySide6。
 
 ## 7. 板上日志格式与命令协议（`docs/protocols/board-protocol.md`）
 
@@ -193,6 +219,11 @@ QSerialPort.readyRead → io.readAll() (bytes)
 | `LOGLEVEL <L>` | `@OK LOGLEVEL W` | 板上过滤级别 |
 
 响应前缀 `@OK ...` / `@ERR <code> <msg>`，与 `[` 开头日志行不冲突；UI 命令回复区单独呈现。
+PC 侧解析见 `core/device/command.py`：`is_response_line(line)`、`parse_response(line) -> CommandReply(text, ok, code)`；
+`DeviceSession` 以 `@` 前缀判定回复行，回复不写入日志表格。
+
+命令超时（v1 方案，暂未实现）：由 `ui/DeviceController` 在发送后起 `QTimer`（`board-protocol.md` §2.4 建议 2s），
+超时未见回复则在命令回复区提示；`core` 不感知超时，协议也不引入请求 id，从而不改固件即可通用。
 
 ## 8. YAML Log Preset Schema（v1 单规则 + fallback + 合并）
 
@@ -215,6 +246,8 @@ line:
     WARNING: WARN
     ERROR: ERROR
   continuation_pattern: '^\s+\S'
+  fields:                          # 可选：从 message 抽取结构化字段存入 LogEntry.extra
+    temperature: 'temperature=(?P<value>[\d.]+)'
 fallback:
   enabled: true
   level: UNKNOWN
