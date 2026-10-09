@@ -42,6 +42,22 @@
 内部统一走 `printf`，请勿在业务代码中直接手写日志格式，避免格式漂移。
 新增级别标识时需同步更新 PC 端 `presets/logs/*.yaml` 的 `level_map`。
 
+## 传感器日志与运行指示灯
+
+固件启动时初始化板载 SHT20（温湿度）与 AP3216C（光照/接近/红外）传感器，并创建一个 IO 任务：
+
+- 每 500ms 翻转运行指示灯 LED2（PCF8574 的 P2，低电平点亮），用于指示程序在运行；
+- 每约 3s 输出一条传感器日志，并附带上报 LED 与风扇当前状态（风扇本固件不驱动，恒为 0）：
+
+```text
+[I] [sensor] led=1 fan=0 temperature=29.7 humidity=43.6 light=122 proximity=62 infrared=8
+```
+
+> LED2 对应 PCF8574 P2（`set_led`），来自 `FS-Hi3861-V4.2` 原理图网表：P0=风扇、
+> P1=蜂鸣器、P2=LED（运行指示灯 LED2）、P3~P7=D0~D4（RJ12 扩展口，`set_D2` 即在 P5）。
+> 传感器与 PCF8574 共用 I2C0，驱动直接复用 SDK 的
+> `vendor/hqyj/fs_hi3861/common/bsp`，不复制代码。
+
 ## 命令通道
 
 PC 端发送以 `\r\n` 结尾的文本命令，固件以 `@OK ...` 或 `@ERR <code> <msg>` 响应：
