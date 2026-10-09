@@ -2,7 +2,7 @@
 [I] [app] heartbeat tick=254
 @OK fw=1.0.0 chip=hi3861
 [I] [sensor] led=1 fan=0 temperature=26.4 humidity=44.2 light=42 proximity=132 infrared=3
-@OK PING VERSION HELP TEST LOGLEVEL
+@OK PING VERSION HELP TEST
 [I] [app] heartbeat tick=255
 [W] [app] periodic warn tick=255
 [I] [app] heartbeat tick=256

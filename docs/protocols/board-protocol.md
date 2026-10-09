@@ -66,9 +66,8 @@ PC 端发送文本命令（`\r\n` 结尾），固件同步或异步回复一行�
 |---|---|---|
 | `PING` | `@OK PONG` | 连通性检查 |
 | `VERSION` | `@OK fw=1.0.0 chip=hi3861` | 固件与芯片版本 |
-| `HELP` | `@OK PING VERSION HELP TEST LOGLEVEL` | 命令列表 |
+| `HELP` | `@OK PING VERSION HELP TEST` | 命令列表 |
 | `TEST <name>` | `@OK TEST wifi started` | 触发自测；`name` ∈ {`wifi`, `uart`, `gpio`} |
-| `LOGLEVEL <L>` | `@OK LOGLEVEL W` | 设置板上最低输出级别（`V` `D` `I` `W` `E`） |
 
 ### 2.3 错误码
 

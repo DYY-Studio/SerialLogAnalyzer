@@ -11,7 +11,7 @@
 - LLM 分析：单次分析 + 多轮追问，SSE 流式输出
 - Provider 配置驱动：OpenAI 兼容、OpenAI Responses、Anthropic、Google Gemini（YAML 声明）
 - 凭据管理：系统 Keychain 优先，环境变量回退，支持运行时临时输入
-- PC → 板命令通道：`PING` / `VERSION` / `HELP` / `TEST` / `LOGLEVEL`
+- PC → 板命令通道：`PING` / `VERSION` / `HELP` / `TEST`
 
 ## 快速开始
 

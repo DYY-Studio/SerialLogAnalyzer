@@ -214,9 +214,8 @@ DeviceSessionHandlers(
 |---|---|---|
 | `PING` | `@OK PONG` | 连通性 |
 | `VERSION` | `@OK fw=1.0.0 chip=hi3861` | 版本 |
-| `HELP` | `@OK PING VERSION HELP TEST LOGLEVEL` | 帮助 |
+| `HELP` | `@OK PING VERSION HELP TEST` | 帮助 |
 | `TEST <name>` | `@OK TEST <name> started` | 触发自测（wifi/uart/gpio…） |
-| `LOGLEVEL <L>` | `@OK LOGLEVEL W` | 板上过滤级别 |
 
 响应前缀 `@OK ...` / `@ERR <code> <msg>`，与 `[` 开头日志行不冲突；UI 命令回复区单独呈现。
 PC 侧解析见 `core/device/command.py`：`is_response_line(line)`、`parse_response(line) -> CommandReply(text, ok, code)`；
