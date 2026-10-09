@@ -8,6 +8,9 @@ static_library("sla_fw") {
     sources = [
         "src/sla_firmware.c",
         "src/board_command.c",
+        "//vendor/hqyj/fs_hi3861/common/bsp/src/hal_bsp_pcf8574.c",
+        "//vendor/hqyj/fs_hi3861/common/bsp/src/hal_bsp_sht20.c",
+        "//vendor/hqyj/fs_hi3861/common/bsp/src/hal_bsp_ap3216c.c",
     ]
 
     include_dirs = [
@@ -16,5 +19,6 @@ static_library("sla_fw") {
         "//kernel/liteos_m/kal/cmsis",
         "//base/iot_hardware/peripheral/interfaces/kits",
         "//device/hisilicon/hispark_pegasus/sdk_liteos/include",
+        "//vendor/hqyj/fs_hi3861/common/bsp/include",
     ]
 }
