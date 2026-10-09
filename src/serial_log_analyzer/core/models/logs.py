@@ -38,8 +38,7 @@ class LogEntry:
         device_time: 板上时间戳原文；v1 默认无，使用该字段的 Preset 才会填充。
         module: 模块 / tag 名；日志格式未提供时为 ``None``。
         continuation: 该条是否由多行合并产生（即自身或后续存在 continuation 行）。
-        extra: 预留的结构化字段（如 Preset 捕获的 ``key=value``）；当前恒为空，
-            带默认值以维持构造兼容，后续扩展无需改动调用方。
+        extra: Preset ``line.fields`` 从消息中抽取的结构化字段（字段名 → 文本值）；无字段规则时为空。
     """
 
     sequence: int
@@ -52,13 +51,3 @@ class LogEntry:
     continuation: bool = False
     extra: dict[str, str] = field(default_factory=dict)
 
-    def display_time(self) -> str:
-        """返回用于表格展示的时间文本。
-
-        优先使用板上时间戳；缺失时由 UI 层按 ``received_at`` 格式化，本方法只提供
-        秒级字符串以保证 core 不依赖任何本地化 / Qt 时间格式化。
-        """
-
-        if self.device_time:
-            return self.device_time
-        return f"{self.received_at:.3f}"

@@ -117,8 +117,6 @@ class LogEntry:
     module: str | None = None
     continuation: bool = False
     extra: dict[str, str] = field(default_factory=dict)  # Preset fields 抽取的结构化字段
-
-    def display_time(self) -> str: ...  # device_time 优先，缺失用 received_at 秒级文本
 ```
 
 ```python
