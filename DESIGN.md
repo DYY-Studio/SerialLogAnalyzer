@@ -116,7 +116,7 @@ class LogEntry:
     device_time: str | None = None     # 可选，板上时间戳；v1 默认无
     module: str | None = None
     continuation: bool = False
-    extra: dict[str, str] = field(default_factory=dict)  # 预留：结构化字段（当前恒为空）
+    extra: dict[str, str] = field(default_factory=dict)  # Preset fields 抽取的结构化字段
 
     def display_time(self) -> str: ...  # device_time 优先，缺失用 received_at 秒级文本
 ```
@@ -224,6 +224,9 @@ DeviceSessionHandlers(
 PC 侧解析见 `core/device/command.py`：`is_response_line(line)`、`parse_response(line) -> CommandReply(text, ok, code)`；
 `DeviceSession` 以 `@` 前缀判定回复行，回复不写入日志表格。
 
+命令超时（v1 方案，暂未实现）：由 `ui/DeviceController` 在发送后起 `QTimer`（`board-protocol.md` §2.4 建议 2s），
+超时未见回复则在命令回复区提示；`core` 不感知超时，协议也不引入请求 id，从而不改固件即可通用。
+
 ## 8. YAML Log Preset Schema（v1 单规则 + fallback + 合并）
 
 ```yaml
@@ -245,6 +248,8 @@ line:
     WARNING: WARN
     ERROR: ERROR
   continuation_pattern: '^\s+\S'
+  fields:                          # 可选：从 message 抽取结构化字段存入 LogEntry.extra
+    temperature: 'temperature=(?P<value>[\d.]+)'
 fallback:
   enabled: true
   level: UNKNOWN
