@@ -90,4 +90,4 @@ class LogPreset:
         未命中映射时返回 ``LogLevel.UNKNOWN``，不抛异常（日志仍需保留）。
         """
 
-        raise NotImplementedError
+        return self.line.level_map.get(token, LogLevel.UNKNOWN)
