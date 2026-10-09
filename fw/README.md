@@ -61,12 +61,22 @@ PC 端发送以 `\r\n` 结尾的文本命令，固件以 `@OK ...` 或 `@ERR <co
 - 参数错误返回 `@ERR 2 invalid argument`；
 - 命令解析在主循环中轮询 UART 接收缓冲完成，避免在中断里做字符串处理。
 
-## 构建方式
+## 构建与烧录（华清远见 FS-Hi3861 + hqyj OpenHarmony SDK）
 
-1. 在 DevEco Device Tool / OpenHarmony 源码树中导入 `fw/` 作为示例工程；
-2. 将 `include/log_macro.h` 加入头文件搜索路径，`src/` 下源文件加入编译；
-3. 使用 Hi3861 默认 UART0（115200-8-N-1）作为日志与命令通道；
-4. 烧写后可用 `python main.py` 连接验证。
+本目录即完整固件源码（入口 `src/sla_firmware.c`）。因依赖 SDK 提供的
+`ohos_init.h` / `cmsis_os2.h` / `hi_uart.h`，需放入 SDK 源码树内编译：
 
-> 本目录只提供日志宏与命令协议的参考实现骨架，完整工程由固件负责同学按
-> 实际 SDK 版本补全。
+1. 将本目录复制进 SDK 的演示目录：
+   `<sdk>/src/vendor/hqyj/fs_hi3861/demo/sla_fw/`（含 `BUILD.gn`、`include/`、`src/`）。
+2. 在 `<sdk>/src/vendor/hqyj/fs_hi3861/demo/BUILD.gn` 的 `features` 中启用
+   `"sla_fw:sla_fw",`，并确保其它 demo 保持注释（多入口会冲突）。
+3. 确认 `<sdk>/src/applications/sample/wifi-iot/app/BUILD.gn` 已挂载
+   `//vendor/hqyj/fs_hi3861/demo:demo`。
+4. 编译：在工具链目录运行 `env_start.bat` 后 `cd <sdk>/src && hb build -f`。
+   产物为 `out/hispark_pegasus/wifiiot_hispark_pegasus/Hi3861_wifiiot_app_allinone.bin`。
+5. 烧录：DevEco Device Tool 的 `upload`，或 `burntool/BurnTool.exe` 加载上述 bin；
+   串口 115200-8-N-1 查看日志并发送命令。
+
+> 产品选择以实际 SDK 为准；本 SDK 中 `hqyj_fs_hi3861` 因缺少 `device/hqyj` 无法
+> `hb set`，选 `hispark_pegasus` 即可（参见 `docs/protocols/board-protocol.md`）。
+> 复制进 SDK 后，本目录与 SDK 内副本需保持同步。
