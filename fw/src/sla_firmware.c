@@ -16,6 +16,7 @@
 #include "ohos_init.h"
 #include "cmsis_os2.h"
 #include "hi_uart.h"
+#include "iot_errno.h"
 
 #include "board_command.h"
 #include "hal_bsp_ap3216c.h"
@@ -113,11 +114,15 @@ static void SlaIoTask(void)
             uint16_t light = 0;
             uint16_t proximity = 0;
 
-            SHT20_ReadData(&temperature, &humidity);
-            AP3216C_ReadData(&infrared, &light, &proximity);
-            LOGI("sensor",
-                 "led=%u fan=0 temperature=%.1f humidity=%.1f light=%u proximity=%u infrared=%u",
-                 led_on, temperature, humidity, light, proximity, infrared);
+            /* 读取失败时不输出伪造读数，避免把 0 当成有效值。 */
+            if (SHT20_ReadData(&temperature, &humidity) != IOT_SUCCESS ||
+                AP3216C_ReadData(&infrared, &light, &proximity) != IOT_SUCCESS) {
+                LOGE("sensor", "read failed");
+            } else {
+                LOGI("sensor",
+                     "led=%u fan=0 temperature=%.1f humidity=%.1f light=%u proximity=%u infrared=%u",
+                     led_on, temperature, humidity, light, proximity, infrared);
+            }
         }
 
         tick++;
