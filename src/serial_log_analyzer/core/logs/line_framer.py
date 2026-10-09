@@ -14,19 +14,18 @@ class LineFramer:
 
     参数:
         encoding: 文本编码，默认 ``utf-8``。
-        newline: 行分隔符，默认 ``\\n``；``\\r\\n`` 与 ``\\r`` 也会被正常处理。
         max_line_bytes: 单行最大字节数，超出时强制截断，防止设备异常导致内存膨胀。
+
+    行尾以 ``\\n`` 切分，段内裸 ``\\r`` 也会被切分（兼容 ``\\r\\n``）。
     """
 
     def __init__(
         self,
         *,
         encoding: str = "utf-8",
-        newline: str = "\n",
         max_line_bytes: int = 65536,
     ) -> None:
         self._encoding = encoding
-        self._newline = newline
         self._max_line_bytes = max_line_bytes
         self._buffer = bytearray()
 
