@@ -66,9 +66,8 @@ PC 端发送以 `\r\n` 结尾的文本命令，固件以 `@OK ...` 或 `@ERR <co
 |---|---|---|
 | `PING` | `@OK PONG` | 连通性检查 |
 | `VERSION` | `@OK fw=1.0.0 chip=hi3861` | 固件与芯片版本 |
-| `HELP` | `@OK PING VERSION HELP TEST LOGLEVEL` | 命令列表 |
+| `HELP` | `@OK PING VERSION HELP TEST` | 命令列表 |
 | `TEST <name>` | `@OK TEST wifi started` | 触发指定自测（wifi / uart / gpio） |
-| `LOGLEVEL <L>` | `@OK LOGLEVEL W` | 设置板上最低输出级别 |
 
 约定：
 

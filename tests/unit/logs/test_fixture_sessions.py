@@ -55,7 +55,7 @@ def test_session_fixture_parses(parser) -> None:
     assert [(reply.text, reply.ok) for reply in replies] == [
         ("PONG", True),
         ("fw=1.0.0 chip=hi3861", True),
-        ("PING VERSION HELP TEST LOGLEVEL", True),
+        ("PING VERSION HELP TEST", True),
     ]
     entries = pipeline.entries()
     assert entries and all(entry.message for entry in entries)  # \r\r\n 不产生空条目

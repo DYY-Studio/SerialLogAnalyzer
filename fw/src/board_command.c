@@ -10,10 +10,6 @@
 #include "log_macro.h"
 
 #define SLA_FW_VERSION "1.0.0"
-#define SLA_LOGLEVEL_DEFAULT "D"
-
-/** 当前板上日志过滤级别，可由 LOGLEVEL 命令修改。 */
-static char g_log_level[2] = SLA_LOGLEVEL_DEFAULT;
 
 /** @brief 比较命令首字段，返回真实参数指针；不匹配返回 NULL。 */
 static const char *match_command(const char *line, const char *name)
@@ -49,7 +45,7 @@ void BoardCommand_HandleLine(const char *line)
         return;
     }
     if ((arg = match_command(line, "HELP")) != NULL && *arg == '\0') {
-        printf(SLA_REPLY_OK "PING VERSION HELP TEST LOGLEVEL\r\n");
+        printf(SLA_REPLY_OK "PING VERSION HELP TEST\r\n");
         return;
     }
     if ((arg = match_command(line, "TEST")) != NULL) {
@@ -59,15 +55,6 @@ void BoardCommand_HandleLine(const char *line)
         }
         printf(SLA_REPLY_OK "TEST %s started\r\n", arg);
         LOGI("test", "run test %s", arg);
-        return;
-    }
-    if ((arg = match_command(line, "LOGLEVEL")) != NULL) {
-        if (*arg == '\0' || arg[1] != '\0') {
-            printf(SLA_REPLY_ERR "%d invalid log level\r\n", SLA_ERR_INVALID_ARGUMENT);
-            return;
-        }
-        g_log_level[0] = *arg;
-        printf(SLA_REPLY_OK "LOGLEVEL %c\r\n", g_log_level[0]);
         return;
     }
     printf(SLA_REPLY_ERR "%d unknown command\r\n", SLA_ERR_UNKNOWN_COMMAND);
