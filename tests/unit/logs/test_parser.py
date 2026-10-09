@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
-from serial_log_analyzer.core.logs.parser import ParseOutcome
+from serial_log_analyzer.core.logs.parser import LogParser, ParseOutcome
+from serial_log_analyzer.core.logs.preset import LogPreset, PresetLineRule
 from serial_log_analyzer.core.models.logs import LogLevel
 
 
@@ -79,3 +82,13 @@ def test_fields_extracted_into_extra(parser) -> None:
 
 def test_fields_absent_when_message_has_none(parser) -> None:
     assert parser.parse("[I] [main] system ready", 1, 0.0).entry.extra == {}
+
+
+def test_field_with_unmatched_optional_group_is_omitted() -> None:
+    rule = PresetLineRule(
+        pattern=re.compile(r"^\[(?P<level>\w+)\] (?P<message>.*)$"),
+        level_map={"I": LogLevel.INFO},
+        fields={"opt": re.compile(r"foo(?:=(?P<value>\w+))?")},
+    )
+    parser = LogParser(LogPreset("p", "P", rule))
+    assert parser.parse("[I] foo", 1, 0.0).entry.extra == {}

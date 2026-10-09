@@ -150,6 +150,9 @@ def _extract_fields(fields: dict[str, re.Pattern[str]], message: str) -> dict[st
     extra: dict[str, str] = {}
     for name, pattern in fields.items():
         found = pattern.search(message)
-        if found is not None:
-            extra[name] = found.group(1) if pattern.groups else found.group(0)
+        if found is None:
+            continue
+        value = found.group(1) if pattern.groups else found.group(0)
+        if value is not None:
+            extra[name] = value
     return extra
