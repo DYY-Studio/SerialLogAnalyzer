@@ -72,9 +72,14 @@ PC 端发送以 `\r\n` 结尾的文本命令，固件以 `@OK ...` 或 `@ERR <co
    `"sla_fw:sla_fw",`，并确保其它 demo 保持注释（多入口会冲突）。
 3. 确认 `<sdk>/src/applications/sample/wifi-iot/app/BUILD.gn` 已挂载
    `//vendor/hqyj/fs_hi3861/demo:demo`。
-4. 编译：在工具链目录运行 `env_start.bat` 后 `cd <sdk>/src && hb build -f`。
+4. **关闭 SDK 的 AT 控制台**：SDK 默认启用 AT 命令组件（`CONFIG_AT_SUPPORT`），
+   它在 UART0 上回显输入并对未知命令回 `ERROR`，会与固件命令通道冲突。
+   这是 SCons 构建的开关：在 `<sdk>/src/device/hisilicon/hispark_pegasus/sdk_liteos/build/scripts/common_env.py`
+   中把 `set_config('env_cfg', 'CONFIG_AT_SUPPORT', ...)` 的值由 `'y'` 改为 `'n'`。
+   （`config.gni` / `build/make_scripts/config.mk` 里的同名 `-DCONFIG_AT_COMMAND` 也一并去掉，避免混淆。）
+5. 编译：在工具链目录运行 `env_start.bat` 后 `cd <sdk>/src && hb build -f`。
    产物为 `out/hispark_pegasus/wifiiot_hispark_pegasus/Hi3861_wifiiot_app_allinone.bin`。
-5. 烧录：DevEco Device Tool 的 `upload`，或 `burntool/BurnTool.exe` 加载上述 bin；
+6. 烧录：DevEco Device Tool 的 `upload`，或 `burntool/BurnTool.exe` 加载上述 bin；
    串口 115200-8-N-1 查看日志并发送命令。
 
 > 产品选择以实际 SDK 为准；本 SDK 中 `hqyj_fs_hi3861` 因缺少 `device/hqyj` 无法
