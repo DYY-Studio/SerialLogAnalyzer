@@ -27,7 +27,6 @@ from serial_log_analyzer.core.ports import ResourceLoader
 __all__ = ["load_preset", "load_presets"]
 
 _BUILTIN_DIR = "presets/logs"
-_USER_DIR = "user/presets/logs"
 
 _TOP_LEVEL_FIELDS = {"schema_version", "preset_id", "display_name", "line", "fallback"}
 _LINE_FIELDS = {"pattern", "level_map", "continuation_pattern"}
@@ -75,7 +74,7 @@ def load_presets(loader: ResourceLoader) -> list[LogPreset]:
         已校验的 Preset 列表，按 ``display_name`` 排序。
     """
 
-    paths = loader.list_files(_BUILTIN_DIR, "*.yaml") + loader.list_files(_USER_DIR, "*.yaml")
+    paths = loader.list_files(_BUILTIN_DIR, "*.yaml")
     ids: dict[str, str] = {}
     for path in paths:
         ids.setdefault(Path(path).stem, path)

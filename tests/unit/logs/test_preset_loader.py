@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from serial_log_analyzer.core.errors import PresetError
+from serial_log_analyzer.core.errors import ConfigError, PresetError
 from serial_log_analyzer.core.logs.preset_loader import load_preset, load_presets
 from serial_log_analyzer.core.models.logs import LogLevel
 
@@ -55,3 +55,26 @@ def test_load_presets_lists_and_sorts(make_loader, default_preset_yaml: str) -> 
     loader = make_loader({"presets/logs/a.yaml": a, "presets/logs/b.yaml": b})
     presets = load_presets(loader)
     assert [p.preset_id for p in presets] == ["aaa", "bbb"]
+
+
+def test_load_presets_relies_on_loader_priority(default_preset_yaml: str) -> None:
+    """用户覆盖由 ResourceLoader 的跨根优先级实现，不该由本模块拼 ``user/`` 前缀。"""
+
+    class RecordingLoader:
+        def __init__(self, files: dict[str, str]) -> None:
+            self._files = files
+            self.dirs: list[str] = []
+
+        def read_text(self, relative_path: str) -> str:
+            if relative_path not in self._files:
+                raise ConfigError(relative_path)
+            return self._files[relative_path]
+
+        def list_files(self, relative_dir: str, pattern: str) -> list[str]:
+            self.dirs.append(relative_dir)
+            return sorted(path for path in self._files if path.startswith(relative_dir))
+
+    loader = RecordingLoader({"presets/logs/hi3861-default.yaml": default_preset_yaml})
+    presets = load_presets(loader)
+    assert [p.preset_id for p in presets] == ["hi3861-default"]
+    assert loader.dirs == ["presets/logs"]

@@ -150,9 +150,10 @@ class DeviceSession:
         self._handlers.on_update(self._pipeline.feed(line, time.time()))
 
     def _on_transport_error(self, error: AppError) -> None:
-        """串口错误回调：更新状态并上报。"""
+        """串口错误回调：可恢复错误只上报，端口已关闭的致命错误才置错。"""
 
-        self._set_state(DeviceConnectionState.ERROR, str(error))
+        if not self._transport.is_open:
+            self._set_state(DeviceConnectionState.ERROR, str(error))
         self._handlers.on_error(error)
 
     def _set_state(self, state: DeviceConnectionState, message: str) -> None:

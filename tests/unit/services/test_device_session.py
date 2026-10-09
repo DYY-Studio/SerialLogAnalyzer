@@ -99,10 +99,20 @@ def test_send_when_closed_raises(pipe) -> None:
         session.send_command("PING")
 
 
-def test_transport_error_sets_error_state(pipe) -> None:
+def test_recoverable_transport_error_keeps_connected(pipe) -> None:
     transport = FakeTransport()
-    states = []
-    session = DeviceSession(transport, pipe, _handlers(on_state=lambda s, m: states.append(s)))
+    errors = []
+    session = DeviceSession(transport, pipe, _handlers(on_error=errors.append))
     session.connect(SerialConfig(port="COM3"))
-    transport.fail(SerialConnectionError("boom"))
-    assert states[-1] is DeviceConnectionState.ERROR
+    transport.fail(SerialConnectionError("framing error"))
+    assert session.state is DeviceConnectionState.CONNECTED
+    assert errors
+
+
+def test_fatal_transport_error_after_close_sets_error(pipe) -> None:
+    transport = FakeTransport()
+    session = DeviceSession(transport, pipe, _handlers())
+    session.connect(SerialConfig(port="COM3"))
+    transport.close()
+    transport.fail(SerialConnectionError("device gone"))
+    assert session.state is DeviceConnectionState.ERROR
