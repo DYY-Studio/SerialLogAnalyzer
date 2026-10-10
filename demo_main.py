@@ -402,6 +402,7 @@ class DemoWindow(QMainWindow):
         self.analysis_panel.analyze_clicked.connect(self._mock_analyze)
         self.analysis_panel.send_message_clicked.connect(self._mock_followup)
         self.analysis_panel.new_session_clicked.connect(self._mock_new_session)
+        self.analysis_panel.ai_settings_clicked.connect(self._open_ai_settings)
 
         # 模拟实时日志定时器（初始不启动）
         self._seq = 100
@@ -543,6 +544,142 @@ class DemoWindow(QMainWindow):
 
         if dlg.exec():
             self.status_bar.showMessage("串口设置已保存")
+
+    def _open_ai_settings(self):
+        """打开 AI 模型配置对话框"""
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
+            QComboBox, QLineEdit, QPushButton, QDialogButtonBox,
+            QGroupBox, QLabel, QTabWidget, QWidget,
+        )
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("AI 模型配置")
+        dlg.setMinimumWidth(560)
+        dlg.setStyleSheet("""
+            QDialog {
+                background: #ffffff;
+                font-family: "Microsoft YaHei UI", sans-serif;
+            }
+            QGroupBox {
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                margin-top: 16px;
+                padding-top: 20px;
+                font-weight: 600;
+                color: #2d3748;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 14px;
+                padding: 0 6px;
+                color: #2b6cb0;
+            }
+            QLabel {
+                color: #4a5568;
+            }
+            QLineEdit, QComboBox {
+                background: white;
+                border: 1px solid #cbd5e0;
+                border-radius: 6px;
+                padding: 6px 10px;
+                min-height: 20px;
+            }
+            QLineEdit:focus, QComboBox:focus {
+                border-color: #3182ce;
+            }
+            QPushButton {
+                background-color: #f7fafc;
+                color: #2d3748;
+                border: 1px solid #cbd5e0;
+                border-radius: 6px;
+                padding: 6px 20px;
+                min-height: 24px;
+            }
+            QPushButton:hover {
+                background-color: #edf2f7;
+                border-color: #4299e1;
+            }
+            QDialogButtonBox QPushButton {
+                min-width: 80px;
+            }
+        """)
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(16)
+
+        # ===== 提供商选择 =====
+        provider_group = QGroupBox("模型提供商")
+        provider_layout = QFormLayout(provider_group)
+        provider_layout.setSpacing(12)
+        provider_layout.setContentsMargins(16, 24, 16, 16)
+
+        provider_combo = QComboBox()
+        provider_combo.addItems([
+            "OpenAI (GPT-4o / GPT-3.5)",
+            "DeepSeek (V3 / R1)",
+            "通义千问 (Qwen)",
+            "智谱 GLM",
+            "Ollama (本地模型)",
+            "自定义 OpenAI 兼容接口",
+        ])
+        provider_layout.addRow("提供商：", provider_combo)
+
+        base_url_edit = QLineEdit()
+        base_url_edit.setPlaceholderText("https://api.openai.com/v1")
+        provider_layout.addRow("API Base URL：", base_url_edit)
+
+        model_edit = QLineEdit()
+        model_edit.setPlaceholderText("gpt-4o-mini")
+        provider_layout.addRow("模型名称：", model_edit)
+
+        layout.addWidget(provider_group)
+
+        # ===== 密钥配置 =====
+        key_group = QGroupBox("API 密钥")
+        key_layout = QFormLayout(key_group)
+        key_layout.setSpacing(12)
+        key_layout.setContentsMargins(16, 24, 16, 16)
+
+        api_key_edit = QLineEdit()
+        api_key_edit.setPlaceholderText("sk-...")
+        api_key_edit.setEchoMode(QLineEdit.Password)
+        key_layout.addRow("API Key：", api_key_edit)
+
+        key_hint = QLabel("密钥将安全存储在系统凭据管理器中，不会明文保存")
+        key_hint.setStyleSheet("color: #718096; font-size: 11px;")
+        key_layout.addRow("", key_hint)
+
+        layout.addWidget(key_group)
+
+        # ===== 高级参数 =====
+        adv_group = QGroupBox("高级参数")
+        adv_layout = QFormLayout(adv_group)
+        adv_layout.setSpacing(12)
+        adv_layout.setContentsMargins(16, 24, 16, 16)
+
+        temp_combo = QComboBox()
+        temp_combo.addItems(["0.0 (精确)", "0.3 (平衡)", "0.7 (创意)", "1.0 (发散)"])
+        temp_combo.setCurrentIndex(1)
+        adv_layout.addRow("温度：", temp_combo)
+
+        max_tokens_edit = QLineEdit()
+        max_tokens_edit.setText("4096")
+        adv_layout.addRow("最大输出 Tokens：", max_tokens_edit)
+
+        layout.addWidget(adv_group)
+
+        # ===== 底部按钮 =====
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Save).setText("保存配置")
+        buttons.button(QDialogButtonBox.Cancel).setText("取消")
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+
+        if dlg.exec():
+            self.status_bar.showMessage("AI 模型配置已保存")
 
     def _mock_refresh_ports(self):
         self.port_combo.clear()

@@ -52,6 +52,7 @@ class AnalysisPanel(QWidget):
     analyze_clicked = Signal(object, object, str)  # AnalysisMode, ContextSelector, user_input
     send_message_clicked = Signal(str)
     new_session_clicked = Signal()
+    ai_settings_clicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -100,6 +101,12 @@ class AnalysisPanel(QWidget):
         # 按钮区（右对齐）
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
+
+        self.ai_settings_btn = QPushButton("⚙ AI 配置...")
+        self.ai_settings_btn.setFixedHeight(32)
+        self.ai_settings_btn.clicked.connect(self.ai_settings_clicked.emit)
+        btn_layout.addWidget(self.ai_settings_btn)
+
         btn_layout.addStretch()
 
         self.new_session_btn = QPushButton("新建会话")

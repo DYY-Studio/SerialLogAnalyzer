@@ -23,7 +23,7 @@ LEVEL_COLORS = {
     LogLevel.UNKNOWN: QColor(128, 90, 213),
 }
 
-LEVEL_HEADERS = ["#", "时间", "级别", "模块", "消息"]
+LEVEL_HEADERS = ["序号", "时间", "级别", "模块", "消息"]
 
 
 class LogTableModel(QAbstractTableModel):
