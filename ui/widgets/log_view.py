@@ -92,6 +92,7 @@ class LogView(QWidget):
         self.table_view.horizontalHeader().setStretchLastSection(True)
         self.table_view.setWordWrap(False)
         self.table_view.setShowGrid(False)
+        self.table_view.verticalHeader().setVisible(False)  # 隐藏左侧行号列
 
         layout.addWidget(self.table_view, stretch=1)
 
