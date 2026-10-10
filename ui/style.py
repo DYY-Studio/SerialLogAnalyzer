@@ -75,6 +75,13 @@ QComboBox::drop-down {
     width: 24px;
 }
 
+/* 下拉箭头：V 形实心三角 */
+QComboBox::down-arrow {
+    image: url(ui/resources/dropdown_arrow.png);
+    width: 12px;
+    height: 12px;
+}
+
 QComboBox QAbstractItemView {
     background-color: #ffffff;
     border: 1px solid #cbd5e0;
