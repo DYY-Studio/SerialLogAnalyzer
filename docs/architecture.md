@@ -74,6 +74,7 @@ DiagnosticsReport.collect(loader, ...)  ← python -m serial_log_analyzer.diagno
 | 调整解析行为 | `core/logs/parser.py` | 需补单元测试 |
 | 支持新的模型接口 | `providers/adapters/*.yaml` | 优先声明式解决，不改代码 |
 | 新增/修改 Profile 可配字段 | `core/llm/profile_loader.py` + `profile_writer.py` | 同步 `io/storage/profile_store.py` 与 `docs/protocols/provider.md` |
+| 改 Profile 编辑界面（新建 / 删除 / 模型下拉） | `ui/dialogs/provider_dialog.py` | 归界面分工；数据层已由 `ProfileStore` 提供，不必改 core |
 | 改资源查找顺序或新增资源类型 | `io/resources.py` + `io/paths.py` | 用户目录永远优先于内置资源 |
 | 新增设置项 | `io/settings/qt_settings_store.py` 的 `SETTINGS_KEYS` | 界面读写放 `ui/dialogs/settings_dialog.py` |
 | 改凭据来源或优先级 | `core/services/credential_resolver.py` | 钥匙串/环境变量实现留在 `io/credentials/`、`io/environment.py` |
@@ -101,4 +102,5 @@ v1 全部运行在 Qt 主线程：串口与网络均为异步事件驱动，解�
 | 更多导出格式（Excel / HTML） | 在 `ExportFormat` 增加分支，不改核心流水线（CSV / JSONL 已实现） |
 | 新增凭据后端（如 1Password） | 实现 `core/ports.KeyringStore`，在 `CredentialResolver` 复用同一优先级逻辑 |
 | 多份用户配置（便携模式 / 多设备） | 用 `SLA_CONFIG_HOME` 切换用户配置目录，无需改代码 |
+| Profiles 管理器（新建 / 复制 / 删除 / 拉取模型列表） | 属界面分工：在 `ProviderDialog` 上扩展，落盘复用 `ProfileStore`；模型列表需 LLM 分工先实现 `providers/adapters` 的 `models` 发现 |
 | 迁移到 Web 后端 | 复用 `core/`，新增 FastAPI 层与 httpx 版 `HttpTransport` |

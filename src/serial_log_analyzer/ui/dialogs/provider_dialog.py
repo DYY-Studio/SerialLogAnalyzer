@@ -1,8 +1,18 @@
-"""Provider 配置对话框：选择 Profile、编辑 base_url / model / 流式开关。
+"""Provider 配置对话框：选择已有 Profile 并编辑其少数字段。
+
+概念划分：Adapter 决定请求/响应的**格式**，Profile 决定**连哪个服务、用哪个模型与参数**；
+仓库里的 Preset 专指设备日志格式，与模型配置无关。
 
 Profile 的持久化以 ``providers/profiles/*.yaml`` 为准；本对话框只做界面编辑。
 点击「保存到用户配置」会把当前编辑结果写入用户配置目录，覆盖同 ID 的内置 Profile
 （内置文件本身不会被修改）。
+
+**本对话框是壳子**，范围仅限：选择 Profile、编辑 base_url / model / stream / 请求超时、
+查看 Adapter 与凭据来源、保存到用户配置。以下刻意不做（见 docs/configuration.md §4.4）：
+新建 / 复制 / 删除 Profile、在界面上改选 Adapter、编辑 extra_body / extra_headers、
+拉取服务端模型列表（依赖 LLM 分工的模型发现）。模型参数
+（``${temperature}`` / ``${max_output_tokens}`` 的取值）由 LLM 分工的 RequestBuilder 决定，
+Profile 只声明模型与 extra_body 透传，因此这里不提供这两项。
 """
 
 from __future__ import annotations

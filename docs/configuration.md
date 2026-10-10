@@ -73,6 +73,10 @@ fallback:
 
 ## 4. LLM Adapter 与 Profile
 
+> **术语**：**Adapter** 决定请求与响应的**格式**（OpenAI Compatible / OpenAI Responses / Anthropic / Gemini）；
+> **Profile** 决定**连哪个服务、用哪个模型与参数**。仓库里的 **Preset** 专指设备日志格式
+> （`presets/logs/*.yaml`，见 §3），与模型配置无关。
+
 ### 4.1 Adapter（`providers/adapters/<adapter_id>.yaml`）
 
 内置 `openai-compatible`、`openai-responses`、`anthropic`、`google-gemini`。
@@ -132,6 +136,24 @@ extra_headers: {}
 - 写入采用「临时文件 + 原子替换」，避免半截文件；
 - 只写用户配置目录，**不会修改**仓库/内置文件；
 - 保存前先用 `profile_writer.dump_profile()` 校验字段，非法值会弹窗提示并保持对话框打开。
+
+### 4.4 Profile 编辑器的当前边界（壳子）
+
+仓库内置的 `providers/profiles/*.yaml` 本身就是示例，**改选中的那一条**即可，不需要先「新建」。
+因此「模型服务」对话框目前刻意只做**选择已有 Profile + 编辑少量字段 + 保存**：
+
+| 层 | 归哪个分工（DESIGN §17） | 现状 |
+|---|---|---|
+| `providers/**` 资源 schema 与运行期语义（模型发现、请求参数、流式） | LLM 分工 | 运行期仍为桩（`core/llm/request.py` 等） |
+| 加载 / 校验 / 序列化 / 原子落盘 / 凭据解析 | 配置与集成（本文档） | 已实现 |
+| 界面形态（Profiles 管理器、新建 / 复制 / 删除 / 模型下拉） | 界面分工 | 只有壳子 |
+
+- **壳子已覆盖**：选择 Profile、编辑 `base_url` / `model` / `stream` / `request_timeout_seconds`、
+  查看 Adapter 与凭据来源、保存到用户配置目录。
+- **未实现（本任务范围外）**：新建 / 复制 / 删除 Profile、在界面上改选 Adapter、编辑
+  `extra_body` / `extra_headers`、拉取服务端模型列表（依赖 LLM 分工的模型发现）。
+- 模型参数（`${temperature}` / `${max_output_tokens}` 的**取值**）由 LLM 分工的 `RequestBuilder`
+  决定，Profile 只负责声明模型与 `extra_body` 透传，所以界面暂不提供这两项。
 
 ## 5. API Key 与凭据
 
