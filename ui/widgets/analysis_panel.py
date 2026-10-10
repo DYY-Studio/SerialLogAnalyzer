@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QComboBox,
     QPushButton,
     QTextEdit,
@@ -59,85 +60,141 @@ class AnalysisPanel(QWidget):
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(12)
 
-        # 顶部控制区
-        control_group = QGroupBox("分析设置")
-        control_layout = QVBoxLayout(control_group)
-        control_layout.setSpacing(10)
-        control_layout.setContentsMargins(16, 20, 16, 16)
+        # ===== 第一层：AI分析配置卡片 =====
+        config_group = QGroupBox("AI分析配置")
+        config_layout = QVBoxLayout(config_group)
+        config_layout.setSpacing(12)
+        config_layout.setContentsMargins(16, 24, 16, 16)
 
-        # 上下文选择
-        ctx_layout = QHBoxLayout()
-        ctx_layout.addWidget(QLabel("上下文:"))
+        # 配置参数网格布局（标签列固定宽度，上下对齐）
+        grid_layout = QGridLayout()
+        grid_layout.setSpacing(8)
+        grid_layout.setColumnMinimumWidth(0, 90)
+
+        # 上下文来源
+        ctx_label = QLabel("上下文来源：")
+        grid_layout.addWidget(ctx_label, 0, 0)
+
         self.context_combo = QComboBox()
         self.context_combo.setFixedHeight(30)
         for label in CONTEXT_OPTIONS:
             self.context_combo.addItem(label)
-        ctx_layout.addWidget(self.context_combo)
-        control_layout.addLayout(ctx_layout)
+        grid_layout.addWidget(self.context_combo, 0, 1)
 
-        # 分析目标
-        goal_layout = QHBoxLayout()
-        goal_layout.addWidget(QLabel("目标:"))
+        # 分析指令
+        goal_label = QLabel("分析指令：")
+        grid_layout.addWidget(goal_label, 1, 0)
+
         self.goal_combo = QComboBox()
         self.goal_combo.setEditable(True)
         self.goal_combo.setFixedHeight(30)
         for goal in GOAL_OPTIONS:
             self.goal_combo.addItem(goal)
-        goal_layout.addWidget(self.goal_combo)
-        control_layout.addLayout(goal_layout)
+        grid_layout.addWidget(self.goal_combo, 1, 1)
 
-        # 按钮区
+        config_layout.addLayout(grid_layout)
+
+        # 按钮区（右对齐）
         btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(10)
+        btn_layout.setSpacing(8)
+        btn_layout.addStretch()
 
-        self.analyze_btn = QPushButton("开始分析")
-        self.analyze_btn.setFixedHeight(32)
-        self.analyze_btn.setMinimumWidth(100)
-        self.analyze_btn.clicked.connect(self._on_analyze_clicked)
-        btn_layout.addWidget(self.analyze_btn)
-
-        self.new_session_btn = QPushButton("新会话")
+        self.new_session_btn = QPushButton("新建会话")
         self.new_session_btn.setFixedHeight(32)
         self.new_session_btn.clicked.connect(self.new_session_clicked.emit)
         btn_layout.addWidget(self.new_session_btn)
 
-        control_layout.addLayout(btn_layout)
-        layout.addWidget(control_group)
+        self.analyze_btn = QPushButton("执行分析")
+        self.analyze_btn.setFixedHeight(32)
+        self.analyze_btn.setMinimumWidth(90)
+        self.analyze_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3182ce;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #2b6cb0;
+            }
+            QPushButton:pressed {
+                background-color: #2c5282;
+            }
+            QPushButton:disabled {
+                background-color: #a0aec0;
+            }
+        """)
+        self.analyze_btn.clicked.connect(self._on_analyze_clicked)
+        btn_layout.addWidget(self.analyze_btn)
 
-        # 结果显示区
-        result_label = QLabel("分析结果 / 对话")
-        result_label.setStyleSheet("color: #4a5568; font-weight: 600; padding: 4px 0;")
-        layout.addWidget(result_label)
+        config_layout.addLayout(btn_layout)
+        layout.addWidget(config_group)
+
+        # ===== 第二层：分析结果与对话记录卡片 =====
+        result_card = QWidget()
+        result_card.setStyleSheet("""
+            QWidget {
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+            }
+        """)
+        result_layout = QVBoxLayout(result_card)
+        result_layout.setContentsMargins(14, 14, 14, 14)
+        result_layout.setSpacing(8)
+
+        result_label = QLabel("分析结果与对话记录")
+        result_label.setStyleSheet("color: #2b6cb0; font-weight: 600; border: none; background: transparent;")
+        result_layout.addWidget(result_label)
 
         self.result_view = QTextEdit()
         self.result_view.setReadOnly(True)
         self.result_view.setPlaceholderText("分析结果将在这里显示...")
-        layout.addWidget(self.result_view, stretch=1)
+        self.result_view.setStyleSheet("border: none; background: transparent; padding: 4px;")
+        result_layout.addWidget(self.result_view, stretch=1)
 
-        # 底部输入区（多轮对话）
-        input_widget = QWidget()
-        input_widget.setFixedHeight(36)
-        input_layout = QHBoxLayout(input_widget)
+        layout.addWidget(result_card, stretch=1)
+
+        # ===== 第三层：追问输入区 =====
+        input_layout = QHBoxLayout()
         input_layout.setContentsMargins(0, 0, 0, 0)
         input_layout.setSpacing(8)
-        input_layout.setAlignment(Qt.AlignVCenter)
 
         self.message_input = QLineEdit()
-        self.message_input.setPlaceholderText("继续追问...")
+        self.message_input.setPlaceholderText("针对本次结果继续提问...")
         self.message_input.setFixedHeight(32)
         self.message_input.returnPressed.connect(self._on_send_message)
-        input_layout.addWidget(self.message_input)
+        input_layout.addWidget(self.message_input, stretch=1)
 
         self.send_btn = QPushButton("发送")
         self.send_btn.setFixedHeight(32)
         self.send_btn.setMinimumWidth(60)
+        self.send_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3182ce;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background-color: #2b6cb0;
+            }
+            QPushButton:pressed {
+                background-color: #2c5282;
+            }
+            QPushButton:disabled {
+                background-color: #a0aec0;
+            }
+        """)
         self.send_btn.clicked.connect(self._on_send_message)
         input_layout.addWidget(self.send_btn)
 
-        layout.addWidget(input_widget)
+        layout.addLayout(input_layout)
 
     # ------------------------------------------------------------------
     # 外部接口
