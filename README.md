@@ -12,6 +12,9 @@ PC 端**通用串口日志分析工具**：从任意串口设备实时接收并�
 - LLM 分析：单次分析 + 多轮追问，SSE 流式输出
 - Provider 配置驱动：OpenAI 兼容、OpenAI Responses、Anthropic、Google Gemini（YAML 声明）
 - 凭据管理：系统 Keychain 优先，环境变量回退，支持运行时临时输入
+- 配置与资源：用户配置目录覆盖内置 YAML Preset / Adapter / Profile 与 Prompt 模板
+- 日志留档：导出为文本 / CSV / JSONL，也可导入历史日志回看
+- 诊断报告：一条命令列出资源来源、已加载配置、配置错误与日志末尾（`python -m serial_log_analyzer.diagnostics`）
 - PC → 板命令通道：`PING` / `VERSION` / `HELP` / `TEST`
 
 ## 快速开始
@@ -61,6 +64,7 @@ docs/protocols/          协议规范
 ## 文档
 
 - [`DESIGN.md`](DESIGN.md)：完整架构设计（分层、接口、数据流）
+- [`docs/configuration.md`](docs/configuration.md)：配置文件设计（资源查找顺序、设置键、API Key 优先级、导出格式、诊断信息）
 - [`DEVELOPMENT.md`](DEVELOPMENT.md)：开发环境、运行与调试、协作约定
 - [`AGENTS.md`](AGENTS.md)：面向 AI 助手与协作者的编码约定
 - [`docs/protocols/board-protocol.md`](docs/protocols/board-protocol.md)：板上日志格式与命令通道
