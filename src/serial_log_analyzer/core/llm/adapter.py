@@ -8,9 +8,19 @@ Adapter 描述“如何调用某一类模型接口”，与具体 ``base_url`` /
 
 from __future__ import annotations
 
+import re
+from copy import deepcopy
 from dataclasses import dataclass, field
+from string import Template
 from typing import Any
 
+from serial_log_analyzer.core.errors import (
+    ConfigError,
+    PointerError,
+    ProviderError,
+    ResponseParseError,
+)
+from serial_log_analyzer.core.llm.pointer import resolve_pointer
 from serial_log_analyzer.core.models.analysis import AnalysisMessage
 from serial_log_analyzer.core.models.provider import StreamEvent
 
@@ -30,6 +40,7 @@ class StreamCondition:
     pointer: str
     equals: Any = None
     exists: bool = False
+    match_equals: bool = True
 
 
 @dataclass(frozen=True)
@@ -43,6 +54,7 @@ class StreamRule:
 
     pointer: str
     when: StreamCondition | None = None
+    text_blocks: bool = False
 
 
 @dataclass(frozen=True)
@@ -68,6 +80,7 @@ class StreamingSpec:
     request_body: dict[str, Any] = field(default_factory=dict)
     error_events: tuple[tuple[StreamCondition, str, str | None], ...] = ()
     allow_clean_eof: bool = False
+    usage_pointers: tuple[tuple[str, ...], ...] = ((), (), ())
 
 
 @dataclass(frozen=True)
@@ -101,6 +114,8 @@ class JSONAdapter:
     streaming: StreamingSpec | None = None
     schema_version: int = 3
     source_path: str = ""
+    response_text_blocks_pointer: str | None = None
+    default_max_output_tokens: int = 0
 
     @property
     def streaming_supported(self) -> bool:
@@ -139,7 +154,53 @@ class JSONAdapter:
             ConfigError: 占位符未知、字段冲突或未声明流式却请求流式。
         """
 
-        raise NotImplementedError
+        if stream and self.streaming is None:
+            raise ConfigError("此 Adapter 不支持流式请求")
+        if self.messages_format not in {"openai", "anthropic", "gemini"}:
+            raise ConfigError("不支持的消息格式")
+        system = "\n\n".join(m.content for m in messages if m.role.value == "system")
+        converted = []
+        for message in messages:
+            role = message.role.value
+            if self.messages_format == "openai":
+                converted.append({"role": role, "content": message.content})
+            elif role != "system":
+                if self.messages_format == "anthropic":
+                    converted.append({"role": role, "content": message.content})
+                else:
+                    converted.append(
+                        {
+                            "role": "model" if role == "assistant" else role,
+                            "parts": [{"text": message.content}],
+                        }
+                    )
+        limit = max_output_tokens or self.default_max_output_tokens
+        values = {
+            "model": model,
+            "system": system,
+            "messages": converted,
+            "temperature": temperature,
+            "max_output_tokens": limit,
+            "stream": stream,
+        }
+        body = _render_body(self.body_template, values)
+        if stream:
+            _merge(body, _render_body(self.streaming.request_body, values))
+        _merge(body, deepcopy(extra_body or {}))
+        headers = {}
+        for name, value in self.headers_template.items():
+            try:
+                names = Template(value).get_identifiers()
+                if any(n not in {"api_key", "model"} for n in names):
+                    raise ConfigError("请求头包含未知占位符")
+                headers[name] = Template(value).substitute(api_key=api_key, model=model)
+            except (KeyError, ValueError) as exc:
+                raise ConfigError("请求头模板非法") from exc
+        for name, value in (extra_headers or {}).items():
+            if name.lower() in {n.lower() for n in headers}:
+                raise ConfigError(f"请求头冲突：{name}")
+            headers[name] = value
+        return headers, body
 
     def parse_response(self, payload: Any) -> tuple[str, str | None]:
         """从非流式响应中提取正文与思考正文。
@@ -151,12 +212,36 @@ class JSONAdapter:
             ResponseParseError: 路径缺失或类型不是字符串。
         """
 
-        raise NotImplementedError
+        if isinstance(payload, dict) and payload.get("error"):
+            raise ProviderError("模型服务返回错误响应")
+        try:
+            if self.response_text_blocks_pointer is not None:
+                blocks = resolve_pointer(payload, self.response_text_blocks_pointer)
+                texts = _text_blocks(blocks)
+                if not texts:
+                    raise ResponseParseError("响应缺少有效文本内容块")
+                content = "".join(texts)
+            else:
+                content = resolve_pointer(payload, self.response_content_pointer)
+            if not isinstance(content, str):
+                raise ResponseParseError("响应正文必须是字符串")
+        except PointerError as exc:
+            raise ResponseParseError("响应正文路径不存在") from exc
+        reasoning = None
+        for pointer in self.reasoning_pointers:
+            value = _optional(payload, pointer)
+            if value is not None:
+                if not isinstance(value, str):
+                    raise ResponseParseError("响应 reasoning 必须是字符串")
+                reasoning = value
+                break
+        return content, reasoning
 
     def extract_usage(self, payload: Any) -> tuple[int, int, int] | None:
         """提取用量三元组；未声明或路径缺失时返回 ``None``。"""
 
-        raise NotImplementedError
+        values = [_optional(payload, p) if p else None for p in self.usage_pointers]
+        return _usage(values)
 
     def stream_content_deltas(self, event: StreamEvent) -> list[str]:
         """从流式事件中提取正文增量。
@@ -165,19 +250,148 @@ class JSONAdapter:
             ProviderError: 未声明流式规则。
         """
 
-        raise NotImplementedError
+        if self.streaming is None:
+            raise ProviderError("Adapter 未声明流式规则")
+        return self._deltas(event, self.streaming.content_events)
 
     def stream_reasoning_deltas(self, event: StreamEvent) -> list[str]:
         """从流式事件中提取思考正文增量。"""
 
-        raise NotImplementedError
+        if self.streaming is None:
+            raise ProviderError("Adapter 未声明流式规则")
+        return self._deltas(event, self.streaming.reasoning_events)
 
     def is_terminal(self, event: StreamEvent) -> bool:
         """判断事件是否表示流结束（哨兵或终止条件）。"""
 
-        raise NotImplementedError
+        if self.streaming is None:
+            raise ProviderError("Adapter 未声明流式规则")
+        if self.streaming.terminal_sentinel == event.data:
+            return True
+        return self.streaming.terminal_when is not None and _matches(
+            _payload(event), self.streaming.terminal_when
+        )
 
     def stream_error(self, event: StreamEvent) -> str | None:
         """若事件表示服务端错误，返回用户可读错误信息。"""
 
-        raise NotImplementedError
+        if self.streaming is None:
+            raise ProviderError("Adapter 未声明流式规则")
+        if self.streaming.terminal_sentinel == event.data:
+            return None
+        payload = _payload(event)
+        if isinstance(payload, dict) and (payload.get("error") or payload.get("object") == "error"):
+            return "模型服务返回流式错误"
+        for condition, _message_pointer, _status_pointer in self.streaming.error_events:
+            if _matches(payload, condition):
+                # 不回显不受信任的远端错误正文，防止回显请求中的凭据。
+                return "模型服务返回流式错误"
+        return None
+
+    def _deltas(self, event: StreamEvent, rules: tuple[StreamRule, ...]) -> list[str]:
+        if self.streaming and self.streaming.terminal_sentinel == event.data:
+            return []
+        payload = _payload(event)
+        result = []
+        for rule in rules:
+            if rule.when is not None and not _matches(payload, rule.when):
+                continue
+            value = _optional(payload, rule.pointer)
+            if value is None:
+                continue
+            if rule.text_blocks:
+                result.extend(_text_blocks(value))
+                continue
+            if not isinstance(value, str):
+                raise ResponseParseError("流式增量必须是字符串")
+            if value:
+                result.append(value)
+        return result
+
+
+def _optional(payload: Any, pointer: str) -> Any:
+    try:
+        return resolve_pointer(payload, pointer)
+    except PointerError:
+        return None
+
+
+def _payload(event: StreamEvent) -> Any:
+    import json
+
+    try:
+        payload = json.loads(event.data)
+        if not isinstance(payload, dict):
+            raise ResponseParseError("流式 JSON 必须是对象")
+        return payload
+    except (ValueError, TypeError) as exc:
+        raise ResponseParseError("流式事件不是合法 JSON") from exc
+
+
+def _matches(payload: Any, condition: StreamCondition) -> bool:
+    try:
+        value = resolve_pointer(payload, condition.pointer)
+    except PointerError:
+        return False
+    return condition.exists or (
+        condition.match_equals
+        and type(value) is type(condition.equals)
+        and value == condition.equals
+    )
+
+
+def _merge(target: dict, extra: dict) -> None:
+    overlap = target.keys() & extra.keys()
+    if overlap:
+        raise ConfigError("请求字段冲突：" + ", ".join(sorted(overlap)))
+    target.update(extra)
+
+
+def _render_body(node: Any, values: dict) -> Any:
+    if isinstance(node, dict):
+        return {
+            key: _render_body(value, values)
+            for key, value in node.items()
+            if not (value == "${max_output_tokens}" and not values["max_output_tokens"])
+        }
+    if isinstance(node, list):
+        return [_render_body(value, values) for value in node]
+    if isinstance(node, str) and "$" in node:
+        match = re.fullmatch(r"\$\{([a-z_]+)\}", node)
+        if not match or match[1] not in values:
+            raise ConfigError("请求体包含非法占位符")
+        return deepcopy(values[match[1]])
+    return deepcopy(node)
+
+
+def _usage(values: list) -> tuple[int, int, int] | None:
+    if all(v is None for v in values):
+        return None
+    if any(v is not None and (type(v) is not int or v < 0) for v in values):
+        raise ResponseParseError("用量必须是非负整数")
+    input_tokens, output_tokens, total_tokens = values
+    return (
+        input_tokens or 0,
+        output_tokens or 0,
+        (total_tokens if total_tokens is not None else (input_tokens or 0) + (output_tokens or 0)),
+    )
+
+
+def _text_blocks(blocks: Any) -> list[str]:
+    if not isinstance(blocks, list):
+        raise ResponseParseError("响应内容块必须是数组")
+    result = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            raise ResponseParseError("响应内容块必须是对象")
+        if block.get("type") == "message":
+            result.extend(_text_blocks(block.get("content")))
+        elif not block.get("thought", False) and (
+            block.get("type") in {"text", "output_text"}
+            or ("type" not in block and "text" in block)
+        ):
+            text = block.get("text")
+            if not isinstance(text, str):
+                raise ResponseParseError("内容块正文必须是字符串")
+            result.append(text)
+    return result

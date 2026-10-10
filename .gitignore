@@ -31,3 +31,8 @@ docs/superpowers/
 exports/
 *.log
 !docs/**/*.log
+
+# 本地 API 密钥（仅提交无密钥的模板）
+.env
+.env.*
+!.env.example

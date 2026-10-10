@@ -14,7 +14,10 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
+
+from serial_log_analyzer.core.errors import PointerError
 
 __all__ = ["parse_pointer", "resolve_pointer"]
 
@@ -34,7 +37,14 @@ def parse_pointer(pointer: str) -> list[str]:
         PointerError: 指针不以 ``/`` 开头，或包含非法转义（``~`` 后不是 0/1）。
     """
 
-    raise NotImplementedError
+    if not isinstance(pointer, str) or (pointer and not pointer.startswith("/")):
+        raise PointerError("JSON Pointer 必须为空或以 / 开头")
+    if not pointer:
+        return []
+    tokens = pointer[1:].split("/")
+    if any(re.search(r"~(?![01])", token) for token in tokens):
+        raise PointerError("JSON Pointer 包含非法转义")
+    return [token.replace("~1", "/").replace("~0", "~") for token in tokens]
 
 
 def resolve_pointer(document: Any, pointer: str) -> Any:
@@ -51,4 +61,23 @@ def resolve_pointer(document: Any, pointer: str) -> Any:
         PointerError: 路径不存在、下标越界、类型不匹配或使用非法负索引。
     """
 
-    raise NotImplementedError
+    value = document
+    for token in parse_pointer(pointer):
+        if token in ("-0", "-"):
+            raise PointerError("非法数组下标")
+        if isinstance(value, dict):
+            if re.fullmatch(r"-?[0-9]+", token):
+                raise PointerError("数字下标只能用于数组")
+            if token not in value:
+                raise PointerError(f"路径不存在：{pointer}")
+            value = value[token]
+        elif isinstance(value, list):
+            if not re.fullmatch(r"(?:0|[1-9][0-9]*|-[1-9][0-9]*)", token):
+                raise PointerError("非法数组下标")
+            index = int(token)
+            if not -len(value) <= index < len(value):
+                raise PointerError("数组下标越界")
+            value = value[index]
+        else:
+            raise PointerError("路径经过标量，无法继续取值")
+    return value

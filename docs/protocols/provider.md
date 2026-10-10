@@ -167,3 +167,25 @@ extra_headers: {}
 | `stream: true` 但 Adapter 无 `streaming` | `ConfigError` |
 | 响应路径不存在或类型不符 | `ResponseParseError` |
 | 服务端返回错误事件 | `ProviderError`（携带服务端消息） |
+
+## 5. 当前实现补充
+
+Adapter 使用 schema 3，Profile 使用 schema 1。可选字段补充如下：
+
+| 字段 | 位置 | 行为 |
+|---|---|---|
+| `default_max_output_tokens` | Adapter 顶层 | 非负整数，默认 0。分析请求上限为 0 时使用该默认值；两者均为 0 才移除模板字段。Anthropic 默认 4096，满足其必填要求。 |
+| `response_text_blocks_pointer` | Adapter 顶层 | 可选数组路径；指定时按顺序合并所有文本块，代替仅取末块。支持 text/output_text、Responses message.content 和 Gemini text parts，跳过 thought 内容。 |
+| `text_blocks` | 流式 content/reasoning 规则 | 默认 false；true 时 pointer 指向内容块数组，依次产出其中正文。Gemini 使用该规则，避免丢失同事件的前置文本块。 |
+
+`equals: null` 表示字段存在且值为 null，与 `exists: true` 区分。
+`exists: false`、同时指定 equals 与 exists、未知字段、重复 YAML 键均拒绝。
+用量必须为非负整数，布尔值不视为整数；缺少总量时按输入与输出之和计算。
+模板渲染保持原生 JSON 类型，不修改已加载的声明对象。
+
+新增 `chat-completions-basic` Adapter 供 SenseNova 与书生 Profile 使用；
+不发送 stream_options，要求 `[DONE]`，兼容两服务的基础 Chat Completions 格式。
+完整配置、调用示例和离线/在线验证边界见 [LLM 模块接入与交接](../llm-integration.md)。
+
+服务端错误事件抛出 ProviderError。当前实现保留通用错误类型，HTTP 错误保留状态码，
+不直接展示远端错误文本，以避免错误正文回显凭据。

@@ -1,28 +1,16 @@
-"""流式响应组装：把 SSE 事件序列转换为正文增量与结束状态。
-
-职责：
-- 接收 :class:`StreamEvent`，交给 Adapter 提取正文 / 思考增量；
-- 处理终止哨兵与终止条件；
-- 识别服务端错误事件；
-- 累积用量统计；
-- 以回调形式向调用方（``AnalysisService``）推送增量。
-"""
+"""按 Adapter 规则处理 SSE 事件与终止状态。"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 
-from serial_log_analyzer.core.llm.adapter import JSONAdapter
+from serial_log_analyzer.core.errors import ProviderError, ResponseParseError
+from serial_log_analyzer.core.llm.adapter import JSONAdapter, _optional, _payload, _usage
 from serial_log_analyzer.core.models.provider import StreamEvent
-
-__all__ = ["StreamOutcome", "StreamProcessor"]
-
-DeltaHandler = Callable[[str], None]
-ReasoningHandler = Callable[[str], None]
 
 
 class StreamOutcome:
-    """单个事件的处理结果类型。"""
+    """单个流式事件的处理结果。"""
 
     DELTA = "delta"
     TERMINAL = "terminal"
@@ -31,50 +19,73 @@ class StreamOutcome:
 
 
 class StreamProcessor:
-    """把流式事件组装为分析结果。
-
-    参数:
-        adapter: 目标 Adapter（提供增量提取与终止判断）。
-        on_delta: 收到正文增量时的回调。
-        on_reasoning: 收到思考正文增量时的回调；无则忽略思考内容。
-        on_usage: 完整用量可用时的回调。
-    """
+    """通过 adapter 提取事件，向 on_delta/on_reasoning/on_usage 推送增量。"""
 
     def __init__(
         self,
         adapter: JSONAdapter,
-        on_delta: DeltaHandler,
-        on_reasoning: ReasoningHandler | None = None,
+        on_delta: Callable[[str], None],
+        on_reasoning: Callable[[str], None] | None = None,
         on_usage: Callable[[int, int, int], None] | None = None,
     ) -> None:
-        raise NotImplementedError
-
-    def handle(self, event: StreamEvent) -> str:
-        """处理单个事件。
-
-        返回:
-            :class:`StreamOutcome` 中的取值，供调用方决定是否继续。
-
-        异常:
-            ResponseParseError: 事件 JSON 非法或增量类型不是字符串。
-        """
-
-        raise NotImplementedError
+        if not adapter.streaming_supported:
+            raise ProviderError("此 Adapter 不支持流式")
+        self._adapter = adapter
+        self._on_delta = on_delta
+        self._on_reasoning = on_reasoning
+        self._on_usage = on_usage
+        self._finished = False
+        self._failed = False
+        self._usage_values = [None, None, None]
 
     @property
     def finished(self) -> bool:
-        """是否已收到终止事件或错误事件。"""
+        """返回是否已终止（含错误）。"""
+        return self._finished
 
-        raise NotImplementedError
+    def handle(self, event: StreamEvent) -> str:
+        """处理事件；服务错误抛出 ProviderError，数据错误抛出 ResponseParseError。"""
+        if self._finished:
+            return StreamOutcome.IGNORED
+        try:
+            error = self._adapter.stream_error(event)
+            if error:
+                raise ProviderError(error)
+            deltas = self._adapter.stream_content_deltas(event)
+            reasoning = self._adapter.stream_reasoning_deltas(event)
+            spec = self._adapter.streaming
+            if event.data != spec.terminal_sentinel:
+                payload = _payload(event)
+                previous = self._usage_values.copy()
+                for i, candidates in enumerate(spec.usage_pointers):
+                    for pointer in candidates:
+                        value = _optional(payload, pointer)
+                        if value is not None:
+                            self._usage_values[i] = value
+                            break
+                usage = _usage(self._usage_values)
+                if usage is not None and self._usage_values != previous and self._on_usage:
+                    self._on_usage(*usage)
+            for delta in deltas:
+                self._on_delta(delta)
+            if self._on_reasoning:
+                for delta in reasoning:
+                    self._on_reasoning(delta)
+            if self._adapter.is_terminal(event):
+                self._finished = True
+                return StreamOutcome.TERMINAL
+            return StreamOutcome.DELTA if deltas or reasoning else StreamOutcome.IGNORED
+        except (ProviderError, ResponseParseError):
+            self._failed = self._finished = True
+            raise
 
     def finalize(self, *, clean_eof: bool) -> None:
-        """输入结束时收尾。
-
-        参数:
-            clean_eof: 是否是连接正常关闭（未收到显式终止事件）。
-
-        异常:
-            ResponseParseError: 既无终止事件又非正常关闭，且 Adapter 不允许干净 EOF。
-        """
-
-        raise NotImplementedError
+        """收尾；只有显式终止或配置允许的正常 EOF 才算成功。"""
+        if self._failed:
+            raise ResponseParseError("流式请求已失败")
+        if self._finished:
+            return
+        self._finished = True
+        if not (clean_eof and self._adapter.streaming.allow_clean_eof):
+            self._failed = True
+            raise ResponseParseError("流式响应缺少终止事件，可能被截断")

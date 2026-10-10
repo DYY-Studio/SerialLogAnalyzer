@@ -261,6 +261,7 @@ fallback:
 ## 9. LLM 声明（YAML）
 
 - 声明格式为 YAML，不提供其他格式的兼容层。
+- Adapter 当前采用 schema_version 3（以 `docs/protocols/provider.md` 为准），Profile 采用 schema_version 1。
 - `providers/adapters/*.yaml` 字段：`schema_version / adapter_id / endpoint / messages_format / headers / body / response_content_pointer / response_reasoning_content_pointers / models / usage / streaming`。
 - 内置四个 adapter：`openai-compatible`、`openai-responses`、`anthropic`、`google-gemini`。
 - `providers/profiles/*.yaml`：

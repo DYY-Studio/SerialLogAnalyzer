@@ -11,11 +11,12 @@ from typing import Any, Protocol, runtime_checkable
 
 from serial_log_analyzer.core.errors import AppError
 from serial_log_analyzer.core.models.device import SerialConfig, SerialPortInfo
-from serial_log_analyzer.core.models.provider import HttpRequest
+from serial_log_analyzer.core.models.provider import CredentialRef, HttpRequest
 
 __all__ = [
     "BytesHandler",
     "CancellationToken",
+    "CredentialProvider",
     "EnvironmentReader",
     "ErrorHandler",
     "HttpTransport",
@@ -161,3 +162,10 @@ class ResourceLoader(Protocol):
             relative_dir: 相对资源根目录。
             pattern: 文件名匹配模式，例如 ``*.yaml``。
         """
+
+
+class CredentialProvider(Protocol):
+    """LLM 请求所需的凭据解析端口；由凭据服务实现。"""
+
+    def resolve(self, credential: CredentialRef) -> str:
+        """根据引用返回非空密钥；不可用时抛出 CredentialError。"""

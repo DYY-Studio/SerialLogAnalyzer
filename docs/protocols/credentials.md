@@ -1,7 +1,7 @@
 # 凭据存储规范
 
-API Key 等敏感信息**不得**明文写入仓库、配置文件或日志。本规范定义凭据的来源、
-优先级与界面行为。
+API Key 等敏感信息**不得提交到 Git**，不得写入共享配置或日志。允许按用户要求保存到
+被 Git 忽略的本地 `.env`。本规范定义凭据来源、优先级与界面行为。
 
 ## 1. 三种来源
 
@@ -61,3 +61,21 @@ SecretService（GNOME Keyring / KWallet）。
 
 - 单元测试使用 Fake `KeyringStore` 与 Fake `EnvironmentReader`，不触碰真实钥匙串；
 - 集成测试如需验证真实后端，只能使用临时 account，并在测试结束时删除。
+
+
+## 7. 本地 .env
+
+项目根目录 `.env` 存放本机 API 密钥，`.env.example` 仅保留空变量名供复制。
+`.env` 和 `.env.*` 被 Git 忽略，只有 `.env.example` 可提交。
+SenseNova 使用 `SENSENOVA_API_KEY`，书生使用 `INTERNLM_API_KEY`。
+
+`DotEnvEnvironmentReader` 实现 EnvironmentReader：同名进程环境变量优先，缺失时读 `.env`。
+进程环境显式设置为空值时不回退文件，该密钥视为缺失。文件只读取指定路径，不向上搜索，
+不修改 os.environ，不执行命令，不展开变量。支持 UTF-8 BOM、注释、export 前缀及单/双引号。
+重复变量、非法赋值或不可读文件抛出 ConfigError，消息不包含文件行内容或密钥。
+读取器构造时载入文件，修改 `.env` 后需重新构造客户端。
+
+`build_llm_client(profile_id, manager, project_root=...)` 在组合根中连接资源、环境读取器、
+CredentialResolver 与网络传输。此入口只组装运行时/环境凭据，不启用系统钥匙串。
+CredentialResolver 支持注入钥匙串接口用于完整应用集成，并保持运行时 → 钥匙串 → 环境优先级。
+运行时输入的 credential_id 取 credential.name、否则 env_var、否则固定 `runtime`。
