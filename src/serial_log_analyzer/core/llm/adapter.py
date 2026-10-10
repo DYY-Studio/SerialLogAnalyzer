@@ -58,6 +58,8 @@ class StreamingSpec:
         terminal_when: 终止条件。
         error_events: 错误事件规则（条件 + 消息路径 + 可选状态码路径）。
         allow_clean_eof: 服务端未发终止事件即关闭连接时，是否视为正常结束。
+        usage_pointers: 流式用量路径三元组（输入 / 输出 / 总计），每项是候选路径元组
+            （按序尝试）；未声明时为空元组。
     """
 
     endpoint: str
@@ -68,6 +70,7 @@ class StreamingSpec:
     request_body: dict[str, Any] = field(default_factory=dict)
     error_events: tuple[tuple[StreamCondition, str, str | None], ...] = ()
     allow_clean_eof: bool = False
+    usage_pointers: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]] = ((), (), ())
 
 
 @dataclass(frozen=True)

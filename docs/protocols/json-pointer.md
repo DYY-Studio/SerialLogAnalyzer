@@ -27,6 +27,7 @@ pointer = "" | *( "/" reference-token )
 |---|---|
 | `""` | 返回整个文档 |
 | `-0` | **非法**，报 `PointerError` |
+| `-01` / `-00` 等带前导零的负索引 | **非法**（与 `-0` 同类写法） |
 | 单独的 `-` | **非法**（RFC 6901 中 `-` 仅用于写入语义，本项目只做读取） |
 | 负索引绝对值超过数组长度 | 报 `PointerError` |
 | 对非数组使用数字或 `-N` 下标 | 报 `PointerError` |
@@ -63,3 +64,17 @@ pointer = "" | *( "/" reference-token )
 - 纯 Python，不依赖 Qt / HTTP；
 - 独立完整的单元测试，覆盖上表全部情形；
 - 解析与求值分离：`parse_pointer` 只做词法解析与转义，`resolve_pointer` 负责求值。
+
+### 5.1 加载期预校验
+
+Adapter / Profile 加载时会对声明的指针做**同一套词法校验**（实现见
+`core/llm/adapter_loader.py` 的 `_validate_pointer`），此时抛出的异常类型是
+`ConfigError`（配置写错了），而不是运行期求值失败的 `PointerError`。
+两者校验的语法集合一致：空串合法、必须以 `/` 开头、`~` 后只能是 `0` / `1`、
+裸 `-` 与 `-0`（含前导零）非法。
+
+### 5.2 当前状态
+
+`parse_pointer` / `resolve_pointer` 目前仍是 `NotImplementedError` 桩，
+求值语义（越界、类型不符、键不存在等 `PointerError` 情形）尚未实现，
+对应的 `tests/unit/llm/test_pointer.py` 也待补。
