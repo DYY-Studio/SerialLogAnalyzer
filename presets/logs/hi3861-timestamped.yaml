@@ -1,0 +1,21 @@
+schema_version: 1
+preset_id: hi3861-timestamped
+display_name: "Hi3861 带板上时间戳"
+
+line:
+  # 板上先打印运行毫秒数，例如：
+  #   [  12.345] [D] [wifi] scanning
+  pattern: '^\[(?P<time>\s*\d+(?:\.\d+)?)\]\s*\[(?P<level>[A-Za-z]+)\]\s*\[(?P<module>[^\]]+)\]\s*(?P<message>.*)$'
+
+  level_map:
+    V: VERBOSE
+    D: DEBUG
+    I: INFO
+    W: WARN
+    E: ERROR
+
+  continuation_pattern: '^\s+\S'
+
+fallback:
+  enabled: true
+  level: UNKNOWN

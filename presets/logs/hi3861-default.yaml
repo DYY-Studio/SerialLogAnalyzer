@@ -1,0 +1,41 @@
+schema_version: 1
+preset_id: hi3861-default
+display_name: "Hi3861 默认日志"
+
+line:
+  # 支持两种行形态：
+  #   [I] [wifi] connected to AP
+  #   [1.234] [I] [wifi] connected to AP     （板上带时间戳的可选变体）
+  pattern: '^\s*(?:\[(?P<time>[^\]]+)\]\s*)?\[(?P<level>[A-Za-z]+)\]\s*\[(?P<module>[^\]]+)\]\s*(?P<message>.*)$'
+
+  level_map:
+    V: VERBOSE
+    D: DEBUG
+    I: INFO
+    W: WARN
+    E: ERROR
+    VERBOSE: VERBOSE
+    DEBUG: DEBUG
+    INFO: INFO
+    WARN: WARN
+    WARNING: WARN
+    ERROR: ERROR
+    FATAL: ERROR
+
+  # 匹配该正则的行会被并入上一条日志（多行栈堆 / 后续缩进行）
+  continuation_pattern: '^\s+\S'
+
+  # 从 message 中抽取结构化字段（存入 LogEntry.extra），例如固件输出的 key=value：
+  #   [I] [sensor] led=1 fan=0 temperature=29.7 humidity=43.6 ...
+  fields:
+    led: 'led=(?P<value>\d+)'
+    fan: 'fan=(?P<value>\d+)'
+    temperature: 'temperature=(?P<value>[\d.]+)'
+    humidity: 'humidity=(?P<value>[\d.]+)'
+    light: 'light=(?P<value>\d+)'
+    proximity: 'proximity=(?P<value>\d+)'
+    infrared: 'infrared=(?P<value>\d+)'
+
+fallback:
+  enabled: true
+  level: UNKNOWN

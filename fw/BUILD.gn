@@ -1,0 +1,24 @@
+# SerialLogAnalyzer Hi3861 固件（fw/）。
+#
+# 该 BUILD.gn 供 OpenHarmony lite 构建使用：将 fw/ 整体复制到
+# src/vendor/hqyj/fs_hi3861/demo/sla_fw/ 后，在 demo/BUILD.gn 中启用
+# "sla_fw:sla_fw" 即可参与编译。详见 fw/README.md。
+
+static_library("sla_fw") {
+    sources = [
+        "src/sla_firmware.c",
+        "src/board_command.c",
+        "//vendor/hqyj/fs_hi3861/common/bsp/src/hal_bsp_pcf8574.c",
+        "//vendor/hqyj/fs_hi3861/common/bsp/src/hal_bsp_sht20.c",
+        "//vendor/hqyj/fs_hi3861/common/bsp/src/hal_bsp_ap3216c.c",
+    ]
+
+    include_dirs = [
+        "include",
+        "//utils/native/lite/include",
+        "//kernel/liteos_m/kal/cmsis",
+        "//base/iot_hardware/peripheral/interfaces/kits",
+        "//device/hisilicon/hispark_pegasus/sdk_liteos/include",
+        "//vendor/hqyj/fs_hi3861/common/bsp/include",
+    ]
+}

@@ -1,0 +1,10 @@
+[I] [main] uart0 rx ready
+I2C PCF8574 Init is succeeded!!!
+I2C SHT20 Init is succeeded!!!
+I2C AP3216C Init is succeeded!!!
+[I] [main] system ready
+[D] [boot] log task started
+[E] [demo] assert failed
+    at osTimerStart (timer.c:128)
+    at app_main (main.c:57)
+[I] [app] heartbeat tick=1

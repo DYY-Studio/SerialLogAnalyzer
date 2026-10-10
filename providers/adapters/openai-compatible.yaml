@@ -1,0 +1,56 @@
+schema_version: 3
+adapter_id: openai-compatible
+endpoint: "/chat/completions"
+
+headers:
+  Authorization: "Bearer ${api_key}"
+  Content-Type: "application/json"
+
+body:
+  model: "${model}"
+  messages: "${messages}"
+  temperature: "${temperature}"
+  max_tokens: "${max_output_tokens}"
+  stream: "${stream}"
+
+messages_format: openai
+
+response_content_pointer: "/choices/0/message/content"
+response_reasoning_content_pointers:
+  - "/choices/0/message/reasoning_content"
+  - "/choices/0/message/reasoning"
+
+models:
+  endpoint: "/models"
+  response_models_pointer: "/data"
+  response_model_id: "id"
+
+usage:
+  input_tokens_pointer: "/usage/prompt_tokens"
+  output_tokens_pointer: "/usage/completion_tokens"
+  total_tokens_pointer: "/usage/total_tokens"
+
+streaming:
+  transport: sse
+  endpoint: "/chat/completions"
+  request_body:
+    stream_options:
+      include_usage: true
+  content_events:
+    - pointer: "/choices/0/delta/content"
+  reasoning_events:
+    - pointer: "/choices/0/delta/reasoning_content"
+    - pointer: "/choices/0/delta/reasoning"
+  terminal:
+    sentinel: "[DONE]"
+  allow_clean_eof: true
+  error_events:
+    - when:
+        pointer: "/choices/0/finish_reason"
+        equals: "error"
+      message_pointer: "/error/message"
+      status_pointer: "/error/status"
+  usage:
+    input_tokens_pointers: ["/usage/prompt_tokens"]
+    output_tokens_pointers: ["/usage/completion_tokens"]
+    total_tokens_pointers: ["/usage/total_tokens"]
