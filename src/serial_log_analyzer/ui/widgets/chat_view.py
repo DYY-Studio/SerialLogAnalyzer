@@ -146,7 +146,7 @@ class ChatView(QScrollArea):
         self._message_cards: list[_TurnCard] = []
         self._live: _TurnCard | None = None
         self.setWidgetResizable(True)
-        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setFrameShape(QFrame.Shape.StyledPanel)  # 结果区整体要有一圈边框，便于辨认
         # 输出区至少要能看几轮对话，避免被日志/命令面板挤扁（停靠面板会尊重这个下限）。
         self.setMinimumHeight(160)
 
