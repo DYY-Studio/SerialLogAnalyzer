@@ -75,6 +75,5 @@ Adapter / Profile 加载时会对声明的指针做**同一套词法校验**（�
 
 ### 5.2 当前状态
 
-`parse_pointer` / `resolve_pointer` 目前仍是 `NotImplementedError` 桩，
-求值语义（越界、类型不符、键不存在等 `PointerError` 情形）尚未实现，
-对应的 `tests/unit/llm/test_pointer.py` 也待补。
+`core/llm/pointer.py` 已实现 `parse_pointer` / `resolve_pointer`，覆盖 RFC6901 转义与负索引，
+越界、类型不符、键不存在、非法转义等情形统一抛 `PointerError`；单测见 `tests/unit/llm/test_llm.py`。

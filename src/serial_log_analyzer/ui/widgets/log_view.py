@@ -38,11 +38,13 @@ class LogView(QWidget):
     信号:
         selection_changed(list): 选中变化，携带条目序号。
         export_requested(): 用户请求导出日志。
+        import_requested(): 用户请求导入历史日志。
         clear_requested(): 用户请求清空日志。
     """
 
     selection_changed = Signal(list)
     export_requested = Signal()
+    import_requested = Signal()
     clear_requested = Signal()
 
     def __init__(self, model: LogTableModel, parent: QWidget | None = None) -> None:
@@ -124,6 +126,9 @@ class LogView(QWidget):
         export = QPushButton("导出")
         export.clicked.connect(self.export_requested.emit)
         bar.addWidget(export)
+        load = QPushButton("导入")
+        load.clicked.connect(self.import_requested.emit)
+        bar.addWidget(load)
         clear = QPushButton("清空")
         clear.clicked.connect(self.clear_requested.emit)
         bar.addWidget(clear)

@@ -78,8 +78,8 @@ token = QtHttpTransport(network_manager).send(request, on_chunk, on_done, on_err
 - 多轮分析需由 `AnalysisService` 按顺序提供 system/user/assistant 历史，本模块不保存历史。
 
 Adapter / Profile / Prompt 加载、`RequestBuilder`、`SSEParser`、`StreamProcessor`、
-`QtHttpTransport` 均已实现；`AnalysisService`、完整窗口与 `build_application/main`
-仍未实现，完整桌面应用暂不能启动。测试使用假密钥或本地 Qt TCP 服务；未进行真实 API 请求。
+`QtHttpTransport`、`AnalysisService` 与桌面窗口均已实现；`python main.py` 可直接启动。
+测试使用假密钥或本地 Qt TCP 服务；未进行真实 API 请求。
 
 ## 错误与生命周期
 

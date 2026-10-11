@@ -16,7 +16,9 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtNetwork import QNetworkAccessManager
@@ -26,7 +28,7 @@ from serial_log_analyzer.core.errors import ConfigError
 from serial_log_analyzer.core.llm.adapter_loader import load_adapter
 from serial_log_analyzer.core.llm.profile_loader import load_profile, load_profiles
 from serial_log_analyzer.core.logs.parser import LogParser
-from serial_log_analyzer.core.logs.pipeline import LogPipeline
+from serial_log_analyzer.core.logs.pipeline import LogPipeline, PipelineUpdate
 from serial_log_analyzer.core.logs.preset_loader import load_preset, load_presets
 from serial_log_analyzer.core.models.device import DeviceConnectionState
 from serial_log_analyzer.core.prompts.loader import PromptLibrary
@@ -37,7 +39,7 @@ from serial_log_analyzer.diagnostics.app_logging import configure_logging
 from serial_log_analyzer.io.credentials.keyring_store import KeyringStoreAdapter
 from serial_log_analyzer.io.environment import DotEnvEnvironmentReader
 from serial_log_analyzer.io.llm.qt_http_transport import QtHttpTransport
-from serial_log_analyzer.io.paths import repo_root, user_config_dir
+from serial_log_analyzer.io.paths import default_export_dir, repo_root, user_config_dir
 from serial_log_analyzer.io.resources import CompositeResourceLoader
 from serial_log_analyzer.io.serial.qt_serial_transport import QtSerialTransport
 from serial_log_analyzer.io.settings.qt_settings_store import SETTINGS_KEYS, QtSettingsStore
@@ -50,7 +52,7 @@ from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
 from serial_log_analyzer.ui.widgets.log_view import LogView
 from serial_log_analyzer.ui.widgets.serial_toolbar import SerialToolBar
 
-__all__ = ["ApplicationContext", "build_application", "main"]
+__all__ = ["ApplicationContext", "build_application", "export_logs", "import_logs", "main"]
 
 _APP_NAME = "SerialLogAnalyzer"
 _APP_VERSION = "0.1.0"
@@ -203,9 +205,9 @@ def build_window(context: ApplicationContext) -> MainWindow:
     log_view.selection_changed.connect(analysis.selected_sequences)
     log_view.clear_requested.connect(device.clear_logs)
     log_view.clear_requested.connect(log_view.clear)
-    log_view.export_requested.connect(
-        lambda: window.show_status("导出功能待接通（io/storage 的 LogFileStore 已就绪）")
-    )
+    log_view.export_requested.connect(lambda: _export_logs(window, context))
+    log_view.import_requested.connect(lambda: _import_logs(window, context))
+    toolbar.serial_settings_requested.connect(lambda: _open_serial_settings(window, toolbar))
 
     panel.analyze_requested.connect(lambda payload: analysis.start_analysis(*payload))
     panel.follow_up_requested.connect(analysis.follow_up)
@@ -215,7 +217,7 @@ def build_window(context: ApplicationContext) -> MainWindow:
     analysis.state_changed.connect(panel.set_state)
     analysis.error_occurred.connect(window.show_status)
 
-    window.settings_requested.connect(lambda: _open_settings(window, settings))
+    window.settings_requested.connect(lambda: _open_settings(window, context))
     window.provider_requested.connect(lambda: _open_provider(window, context))
     window.credential_requested.connect(lambda: _open_credential(window, context))
 
@@ -225,12 +227,132 @@ def build_window(context: ApplicationContext) -> MainWindow:
     return window
 
 
-def _open_settings(window: MainWindow, settings: Any) -> None:
-    """打开设置对话框（键值由 ``io.settings`` 决定落盘位置）。"""
+def _open_settings(window: MainWindow, context: ApplicationContext) -> None:
+    """打开设置对话框；关闭后把可即时生效的项立即应用到界面与流水线。"""
 
     from serial_log_analyzer.ui.dialogs.settings_dialog import SettingsDialog
 
-    SettingsDialog(settings, window).exec()
+    SettingsDialog(context.settings, window).exec()
+    _apply_settings(window, context)
+
+
+def _open_serial_settings(window: MainWindow, toolbar: SerialToolBar) -> None:
+    """打开串口高级设置并把结果写回工具栏。"""
+
+    from serial_log_analyzer.ui.dialogs.serial_settings_dialog import SerialSettingsDialog
+
+    dialog = SerialSettingsDialog(window, toolbar.serial_values())
+    if dialog.exec():
+        toolbar.apply_serial_settings(dialog.values())
+
+
+def _apply_settings(window: MainWindow, context: ApplicationContext) -> None:
+    """把设置里可即时生效的项应用出来：自动滚动、日志容量、应用日志级别。"""
+
+    settings = context.settings
+    window.log_view.set_autoscroll(bool(settings.get(SETTINGS_KEYS.AUTOSCROLL, True)))
+    context.pipeline.capacity = _capacity(settings)
+    dropped = context.pipeline.enforce_capacity()
+    if dropped:
+        window.log_view.append_update(PipelineUpdate(dropped_sequences=dropped))
+    configure_logging(level=str(settings.get(SETTINGS_KEYS.LOG_LEVEL, "INFO")))
+
+
+def _log_store(context: ApplicationContext) -> Any:
+    """按设置构造日志导入导出存储。"""
+
+    from serial_log_analyzer.io.storage.log_file_store import LogFileStore
+
+    chosen = str(context.settings.get(SETTINGS_KEYS.EXPORT_DIR, "") or "").strip()
+    return LogFileStore(Path(chosen) if chosen else default_export_dir())
+
+
+def export_logs(context: ApplicationContext, path: Path, fmt: object = None) -> int:
+    """把内存中的日志导出到 ``path``，返回写出的行数。
+
+    参数:
+        context: 组装结果（提供流水线条目与导出目录设置）。
+        path: 目标文件路径。
+        fmt: :class:`ExportFormat`；``None`` 时按路径后缀推断，未知后缀按文本导出。
+    """
+
+    from serial_log_analyzer.io.storage.log_file_store import ExportFormat
+
+    if fmt is None:
+        suffix = path.suffix
+        fmt = next((item for item in ExportFormat if item.suffix == suffix), ExportFormat.TEXT)
+    return _log_store(context).export_entries(context.pipeline.entries(), path, fmt=fmt)
+
+
+def import_logs(
+    context: ApplicationContext, path: Path, on_update: Callable[[PipelineUpdate], None]
+) -> int:
+    """把 ``path`` 逐行导入既有解析流水线，返回导入行数。
+
+    参数:
+        context: 组装结果（提供流水线）。
+        path: 源文件路径。
+        on_update: 每行产生的 :class:`PipelineUpdate`，由调用方刷入界面。
+    """
+
+    def _feed(text: str, moment: float) -> None:
+        on_update(context.pipeline.feed(text, moment))
+
+    return _log_store(context).import_entries(path, _feed)
+
+
+def _export_logs(window: MainWindow, context: ApplicationContext) -> None:
+    """导出对话框：按后缀选择 TEXT / CSV / JSONL。"""
+
+    from PySide6.QtWidgets import QFileDialog
+
+    from serial_log_analyzer.core.errors import AppError
+    from serial_log_analyzer.io.storage.log_file_store import ExportFormat
+
+    store = _log_store(context)
+    formats = ";;".join(f"{fmt.display_name()} (*{fmt.suffix})" for fmt in ExportFormat)
+    path_text, selected = QFileDialog.getSaveFileName(
+        window, "导出日志", str(store.suggested_path(fmt=ExportFormat.TEXT)), formats
+    )
+    if not path_text:
+        return
+    target = Path(path_text)
+    if not target.suffix:
+        target = target.with_suffix(_suffix_of(selected) or ExportFormat.TEXT.suffix)
+    try:
+        lines = export_logs(context, target)
+    except AppError as exc:
+        window.show_status(f"导出失败：{exc}")
+        return
+    window.show_status(f"已导出 {len(context.pipeline.entries())} 条到 {target}（{lines} 行）")
+
+
+def _import_logs(window: MainWindow, context: ApplicationContext) -> None:
+    """导入对话框：逐行喂进流水线并刷新表格。"""
+
+    from PySide6.QtWidgets import QFileDialog
+
+    from serial_log_analyzer.core.errors import AppError
+
+    path_text, _ = QFileDialog.getOpenFileName(
+        window, "导入日志", str(_log_store(context).default_dir()), "日志文本 (*.log *.txt)"
+    )
+    if not path_text:
+        return
+    try:
+        count = import_logs(context, Path(path_text), window.log_view.append_update)
+    except AppError as exc:
+        window.show_status(f"导入失败：{exc}")
+        return
+    window.show_status(f"已导入 {count} 行到日志表格")
+
+
+def _suffix_of(selected_filter: str) -> str:
+    """从文件对话框的选择项里取出后缀，如 ``导出 (*.csv)`` → ``.csv``。"""
+
+    start = selected_filter.rfind("*")
+    end = selected_filter.rfind(")")
+    return selected_filter[start + 1 : end] if 0 <= start < end else ""
 
 
 def _open_provider(window: MainWindow, context: ApplicationContext) -> None:

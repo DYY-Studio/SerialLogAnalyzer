@@ -10,6 +10,7 @@ from serial_log_analyzer.core.models.analysis import (
     ContextSelector,
     TokenUsage,
 )
+from serial_log_analyzer.core.models.device import FlowControl, Parity, StopBits
 from serial_log_analyzer.core.models.logs import LogEntry, LogLevel
 from serial_log_analyzer.ui.main_window import MainWindow
 from serial_log_analyzer.ui.models.log_table_model import LogTableModel
@@ -134,3 +135,30 @@ def test_toolbar_emits_config_and_command(qtbot) -> None:
 
     assert configs[0].port == "COM3" and configs[0].baudrate == 115200
     assert commands == ["PING"]
+
+
+def test_toolbar_serial_settings_feed_current_config(qtbot) -> None:
+    toolbar = SerialToolBar()
+    qtbot.addWidget(toolbar)
+    requested: list[bool] = []
+    toolbar.serial_settings_requested.connect(lambda: requested.append(True))
+    toolbar.port_combo.addItem("COM4", "COM4")
+
+    toolbar.settings_btn.click()
+    assert requested == [True]
+
+    toolbar.apply_serial_settings(
+        {
+            "baudrate": "9600",
+            "data_bits": 7,
+            "parity": Parity.EVEN,
+            "stop_bits": StopBits.TWO,
+            "flow_control": FlowControl.HARDWARE,
+        }
+    )
+    config = toolbar.current_config()
+
+    assert (config.baudrate, config.data_bits) == (9600, 7)
+    assert config.parity is Parity.EVEN
+    assert config.stop_bits is StopBits.TWO
+    assert config.flow_control is FlowControl.HARDWARE

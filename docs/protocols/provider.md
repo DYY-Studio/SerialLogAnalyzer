@@ -176,8 +176,8 @@ extra_headers: {}
 | `stream` | 否 | 流式开关，默认 `true`；Adapter 未声明 `streaming` 且此处为 `true` 时报错 |
 | `request_timeout_seconds` | 否 | 正数，默认 `120`；布尔值非法 |
 | `credential` | 否 | 凭据引用，见 `credentials.md`；缺省等价于 `{kind: runtime}` |
-| `extra_body` | 否 | 追加请求体字段；与 Adapter 模板冲突时报错（运行期待实现） |
-| `extra_headers` | 否 | 追加请求头；与 Adapter 模板头同名（大小写不敏感）时报错（运行期待实现） |
+| `extra_body` | 否 | 追加请求体字段；与 Adapter 模板字段冲突时报 `ConfigError` |
+| `extra_headers` | 否 | 追加请求头；与 Adapter 模板头同名（大小写不敏感）时报 `ConfigError` |
 
 ## 3. 内置 Adapter
 
@@ -210,10 +210,8 @@ Adapter 与 Profile 都通过同一套资源加载器查找，优先级由高到
 | 未知占位符 | `ConfigError` |
 | `adapter_id` / `profile_id` 与文件名不一致 | `ConfigError` |
 | `stream: true` 但 Adapter 无 `streaming` | `ConfigError` |
-| 响应路径不存在或类型不符 | `ResponseParseError`（运行期待实现） |
-| 服务端返回错误事件 | `ProviderError`（携带服务端消息，运行期待实现） |
+| 响应路径不存在或类型不符 | `ResponseParseError` |
+| 服务端返回错误事件 | `ProviderError`（不回显远端错误正文，避免回显凭据） |
 
-> 运行期条目（`max_output_tokens: 0` 时移除字段、`request_body` / `extra_body` /
-> `extra_headers` 冲突检查、`ResponseParseError` / `ProviderError`）由
-> `core/llm/adapter.py`、`core/llm/request.py` 负责，目前仍是 `NotImplementedError` 桩；
-> 上表已标注“运行期待实现”的部分在实现落地前不会触发。
+> 运行期行为由 `core/llm/adapter.py`（渲染与解析）、`core/llm/request.py`（URL 与凭据）
+> 与 `core/llm/stream.py`（流式装配）实现；`max_output_tokens` 为 `0` 时该字段从请求体移除。
