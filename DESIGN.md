@@ -323,7 +323,7 @@ class AnalysisState(Enum): IDLE, STREAMING, DONE, ERROR
 
 ## 13. 设置 / 凭据 / 存储
 
-- `QSettings`：窗口尺寸、splitter、最近串口/波特率、当前 profile、UI 选项。
+- `QSettings`：窗口尺寸、工具栏 / 停靠布局、最近串口/波特率、当前 profile、UI 选项。
 - `providers/profiles/*.yaml`：结构复杂配置。
 - 凭据三种 kind：`keyring`（`{kind: keyring, name}`，缺省账号名取 `profile_id`）、`environment`（`{kind: environment, env_var}`，取值来自进程环境或仓库根目录的本地 `.env`）、`runtime`（`{kind: runtime}`，每次运行时输入，键取 `profile_id`）。
 - 解析顺序：`runtime 输入`（仅当前会话、仅存内存）→ `kind` 声明的**唯一**来源；**不跨来源回落**，未命中即 `CredentialError`，提示改用其他来源。
@@ -359,15 +359,14 @@ AppError
 ```text
 Menu（文件：导出/导入/清空日志；配置：设置/模型服务/凭据/切换日志 Preset；视图：停靠面板显隐）
 Toolbar: Port │ Baud（可编辑）│ Refresh │ Connect │ Disconnect │ 串口参数…
-┌─────────────────────────┬────────────────────┐
-│ 过滤: 级别 + 自动滚动    │  模型: [当前 Profile] │
-│      模块 + 关键字       │  上下文 / 目标      │
-│  Log Table              │  Result / Chat      │
-│  Time Level Module      │  当前会话 N 轮       │
-│                         │  发送框（Enter 发送） │
-├─────────────────────────┴────────────────────┤
-│ 命令 dock: 命令输入 + 发送 │ 回复历史（→ 发出 / ← 回复）│
-└──────────────────────────────────────────────┘
+┌──────────────────────────┬───────────────┐
+│ 过滤: 级别 + 自动滚动     │ LLM 分析 dock  │
+│      模块 + 关键字        │ 模型 / 上下文 / │
+│  Log Table               │ 目标 / 结果 /   │
+│  Time Level Module       │ 发送框         │
+├──────────────────────────┴───────────────┤
+│ 命令 dock: 命令输入 + 发送 │ 回复历史       │
+└──────────────────────────────────────────┘
 Status bar
 ```
 
@@ -378,6 +377,8 @@ v1 不做：自定义标题栏、动画、多窗口工作区、复杂主题系�
 `extra_body` / `extra_headers`，并用当前字段拉取服务端模型列表。LLM 相关控件集中在右侧分析面板
 （顶部一行切换当前 Profile，换用对应 Adapter 并写回设置）；波特率在工具栏下拉里设置（可编辑），
 数据位 / 校验位 / 停止位 / 流控在工具栏「串口参数…」，仅本次会话有效。
+右侧「LLM 分析」与底部「命令」都是 `QDockWidget`：可拖动、可拖出成浮动窗口、可关闭，
+关掉后由「视图」菜单恢复；布局随 `window/state`（`saveState`/`restoreState`）持久化。
 
 ## 17. 建议模块划分
 

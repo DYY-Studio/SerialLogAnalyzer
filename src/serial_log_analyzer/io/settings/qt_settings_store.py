@@ -1,6 +1,6 @@
 """基于 ``QSettings`` 的设置存储实现。
 
-只保存简单首选项（窗口尺寸、splitter 状态、最近串口与波特率、当前 Profile/Preset、UI 选项）；
+只保存简单首选项（窗口尺寸与停靠布局、最近串口与波特率、当前 Profile/Preset、UI 选项）；
 结构复杂的 Provider Profile 使用 ``providers/profiles/*.yaml``，不塞进 ``QSettings``。
 """
 
@@ -19,7 +19,6 @@ class SETTINGS_KEYS:
 
     WINDOW_GEOMETRY = "window/geometry"
     WINDOW_STATE = "window/state"
-    SPLITTER_SIZES = "window/splitter_sizes"
     LAST_PORT = "device/last_port"
     LAST_BAUDRATE = "device/last_baudrate"
     CURRENT_PROFILE = "llm/current_profile"

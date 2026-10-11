@@ -14,9 +14,7 @@ from PySide6.QtWidgets import (
     QDockWidget,
     QMainWindow,
     QMenu,
-    QSplitter,
     QStatusBar,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -38,6 +36,9 @@ class MainWindow(QMainWindow):
         command_panel: 底部命令面板（输入 + 回复历史）。
         parent: 可选父窗口。
         on_close: 关闭前的清理回调（由组合根注入，例如断开设备、取消请求）。
+
+    布局：中央是日志表格，「LLM 分析」停靠在右侧、「命令」停靠在底部，两者都可拖动 /
+    浮动 / 关闭，「视图」菜单控制显隐。
 
     信号（由组合根连接，窗口不自己构造对话框）:
         export_requested(): 请求导出内存日志。
@@ -76,24 +77,14 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("SerialLogAnalyzer - 串口日志分析工具")
         self.resize(1200, 800)
         self.addToolBar(serial_toolbar)
+        self.analysis_dock = self._make_dock(
+            "analysis-dock", "LLM 分析", analysis_panel, Qt.DockWidgetArea.RightDockWidgetArea
+        )
         self.command_dock = self._make_dock(
             "command-dock", "命令", command_panel, Qt.DockWidgetArea.BottomDockWidgetArea
         )
         self._build_menu()
-
-        self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.splitter.addWidget(log_view)
-        self.splitter.addWidget(analysis_panel)
-        self.splitter.setStretchFactor(0, 7)
-        self.splitter.setStretchFactor(1, 3)
-        self.splitter.setSizes([840, 360])
-
-        central = QWidget()
-        layout = QVBoxLayout(central)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(self.splitter)
-        self.setCentralWidget(central)
+        self.setCentralWidget(log_view)
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -144,6 +135,7 @@ class MainWindow(QMainWindow):
         _add(config_menu, "切换日志 Preset…", self.preset_requested)
 
         view_menu = self.menuBar().addMenu("视图")
+        view_menu.addAction(self.analysis_dock.toggleViewAction())
         view_menu.addAction(self.command_dock.toggleViewAction())
 
     def closeEvent(self, event: object) -> None:

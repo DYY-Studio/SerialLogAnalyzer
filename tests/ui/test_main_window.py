@@ -178,12 +178,13 @@ def test_menu_actions_emit_intent_signals(qtbot) -> None:
         "凭据…",
         "切换日志 Preset…",
     ]
-    # 「视图」里必须能开关命令面板，否则关掉就找不回来
-    assert [action.text() for action in menus[2].menu().actions()] == ["命令"]
+    # 「视图」里必须能开关停靠面板，否则关掉就找不回来
+    assert [action.text() for action in menus[2].menu().actions()] == ["LLM 分析", "命令"]
+    assert window.analysis_dock.widget() is window.analysis_panel
     assert window.command_dock.widget() is window.command_panel
-    features = window.command_dock.features()
-    assert features & QDockWidget.DockWidgetFeature.DockWidgetFloatable
-    assert features & QDockWidget.DockWidgetFeature.DockWidgetMovable
+    for dock in (window.analysis_dock, window.command_dock):
+        assert dock.features() & QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        assert dock.features() & QDockWidget.DockWidgetFeature.DockWidgetMovable
 
     for action in (*file_actions, *config_actions[:3]):
         action.trigger()

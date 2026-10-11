@@ -499,14 +499,14 @@ def _switch_preset(window: MainWindow, context: ApplicationContext, preset_id: s
 
 
 def _restore_view(window: MainWindow, toolbar: SerialToolBar, log_view: LogView, settings: Any) -> None:
-    """按设置恢复窗口几何、splitter、串口选择与自动滚动。"""
+    """按设置恢复窗口几何、工具栏/停靠布局、串口选择与自动滚动。"""
 
     geometry = settings.get(SETTINGS_KEYS.WINDOW_GEOMETRY)
     if geometry is not None:
         window.restoreGeometry(geometry)
-    sizes = settings.get(SETTINGS_KEYS.SPLITTER_SIZES)
-    if sizes:
-        window.splitter.setSizes([int(size) for size in sizes])
+    state = settings.get(SETTINGS_KEYS.WINDOW_STATE)
+    if state is not None:
+        window.restoreState(state)
     toolbar.restore(
         str(settings.get(SETTINGS_KEYS.LAST_PORT, "") or ""),
         str(settings.get(SETTINGS_KEYS.LAST_BAUDRATE, "115200") or "115200"),
@@ -519,7 +519,7 @@ def _shutdown(main_controller: MainController, window: MainWindow, settings: Any
 
     main_controller.shutdown()
     settings.set(SETTINGS_KEYS.WINDOW_GEOMETRY, window.saveGeometry())
-    settings.set(SETTINGS_KEYS.SPLITTER_SIZES, window.splitter.sizes())
+    settings.set(SETTINGS_KEYS.WINDOW_STATE, window.saveState())
 
 
 def main(argv: list[str] | None = None) -> int:
