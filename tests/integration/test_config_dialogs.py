@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
@@ -14,14 +15,18 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSpinBox,
 )
 
-from serial_log_analyzer.core.llm.profile_loader import load_profiles
+from serial_log_analyzer.core.llm.adapter_loader import load_adapters
+from serial_log_analyzer.core.llm.profile_loader import load_profile, load_profiles
+from serial_log_analyzer.core.models.provider import ModelOption
 from serial_log_analyzer.io.credentials.keyring_store import KeyringStoreAdapter
 from serial_log_analyzer.io.resources import CompositeResourceLoader
 from serial_log_analyzer.io.settings.qt_settings_store import SETTINGS_KEYS, QtSettingsStore
@@ -36,11 +41,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 @pytest.fixture
 def store(tmp_path) -> QtSettingsStore:
     return QtSettingsStore(settings=QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat))
-
-
-@pytest.fixture
-def profiles():
-    return load_profiles(CompositeResourceLoader.from_environment(_REPO_ROOT))
 
 
 class FakeKeyringBackend:
@@ -124,18 +124,31 @@ def test_settings_dialog_accept_persists_values(qtbot, store: QtSettingsStore) -
 # --------------------------------------------------------------------------- 模型服务对话框
 
 
-def test_provider_dialog_lists_profiles(qtbot, profiles, tmp_path) -> None:
-    dialog = ProviderDialog(profiles, store=ProfileStore(tmp_path))
+def _provider_dialog(tmp_path, *, discovery=None) -> ProviderDialog:
+    """用「临时用户目录 + 仓库内置」构造对话框：reload 与落盘共用同一份资源。"""
+
+    loader = CompositeResourceLoader([Path(tmp_path), _REPO_ROOT])
+    return ProviderDialog(
+        load_profiles(loader),
+        load_adapters(loader),
+        reload=lambda: load_profiles(loader),
+        store=ProfileStore(tmp_path),
+        discovery=discovery,
+    )
+
+
+def test_provider_dialog_lists_profiles(qtbot, tmp_path) -> None:
+    dialog = _provider_dialog(tmp_path)
     qtbot.addWidget(dialog)
 
     assert dialog.selected_profile_id() == "deepseek"
-    assert dialog.findChild(QLineEdit, "provider-model").text() == "deepseek-chat"
-    assert dialog.findChild(QLabel, "provider-adapter").text() == "openai-compatible"
+    assert dialog.findChild(QComboBox, "provider-model").currentText() == "deepseek-chat"
+    assert dialog.findChild(QComboBox, "provider-adapter").currentData() == "openai-compatible"
     assert "系统钥匙串" in dialog.findChild(QLabel, "provider-credential").text()
 
 
-def test_provider_dialog_switches_profile(qtbot, profiles, tmp_path) -> None:
-    dialog = ProviderDialog(profiles, store=ProfileStore(tmp_path))
+def test_provider_dialog_switches_profile(qtbot, tmp_path) -> None:
+    dialog = _provider_dialog(tmp_path)
     qtbot.addWidget(dialog)
 
     combo = dialog.findChild(QComboBox, "provider-combo")
@@ -146,31 +159,138 @@ def test_provider_dialog_switches_profile(qtbot, profiles, tmp_path) -> None:
     assert "运行时临时输入" in dialog.findChild(QLabel, "provider-credential").text()
 
 
-def test_provider_dialog_saves_edits_to_user_config(qtbot, profiles, tmp_path, monkeypatch) -> None:
+def test_provider_dialog_saves_edits_to_user_config(qtbot, tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
     store = ProfileStore(tmp_path)
-    dialog = ProviderDialog(profiles, store=store)
+    dialog = _provider_dialog(tmp_path)
     qtbot.addWidget(dialog)
-    dialog.findChild(QLineEdit, "provider-model").setText("deepseek-reasoner")
+    dialog.findChild(QComboBox, "provider-model").setCurrentText("deepseek-reasoner")
     dialog.findChild(QSpinBox, "provider-timeout").setValue(300)
-
-    qtbot.mouseClick(
-        dialog.findChild(QPushButton, "provider-save"), Qt.MouseButton.LeftButton
+    dialog.findChild(QPlainTextEdit, "provider-extra-body").setPlainText('{"top_p": 0.9}')
+    dialog.findChild(QComboBox, "provider-adapter").setCurrentIndex(
+        dialog.findChild(QComboBox, "provider-adapter").findData("openai-responses")
     )
 
-    saved = Path(dialog.saved_path())
-    assert saved == store.path_for("deepseek")
-    text = store.load_text("deepseek")
+    qtbot.mouseClick(dialog.findChild(QPushButton, "provider-save"), Qt.MouseButton.LeftButton)
+
+    assert Path(dialog.saved_path()) == store.path_for("deepseek")
+    text = store.load_text("deepseek") or ""
     assert "deepseek-reasoner" in text
     assert "request_timeout_seconds: 300" in text
+    assert "adapter_id: openai-responses" in text
+    assert "top_p" in text
 
 
 def test_provider_dialog_without_profiles(qtbot, tmp_path) -> None:
-    dialog = ProviderDialog([], store=ProfileStore(tmp_path))
+    dialog = ProviderDialog([], [], reload=lambda: [], store=ProfileStore(tmp_path))
     qtbot.addWidget(dialog)
 
     assert dialog.selected_profile_id() == ""
-    assert dialog.findChild(QLabel, "provider-adapter").text() == "（无可用 Profile）"
+    assert dialog.findChild(QComboBox, "provider-adapter").count() == 0
+    assert dialog.findChild(QLabel, "provider-credential").text() == "（无可用 Profile）"
+    assert dialog.findChild(QPushButton, "provider-save").isEnabled() is False
+
+
+def test_provider_dialog_creates_profile_in_user_config(qtbot, tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("team-a", True))
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
+    dialog = _provider_dialog(tmp_path)
+    qtbot.addWidget(dialog)
+
+    qtbot.mouseClick(dialog.findChild(QPushButton, "provider-new"), Qt.MouseButton.LeftButton)
+
+    store = ProfileStore(tmp_path)
+    assert store.exists("team-a")
+    assert "team-a" in (store.load_text("team-a") or "")
+    combo = dialog.findChild(QComboBox, "provider-combo")
+    assert dialog.selected_profile_id() == "team-a"
+    assert [combo.itemData(index) for index in range(combo.count())].count("team-a") == 1
+
+
+def test_provider_dialog_creation_rejects_bad_id(qtbot, tmp_path, monkeypatch) -> None:
+    warned: list[str] = []
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("Team A", True))
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda *args, **kwargs: warned.append(args[2] if args else "")
+    )
+    dialog = _provider_dialog(tmp_path)
+    qtbot.addWidget(dialog)
+
+    qtbot.mouseClick(dialog.findChild(QPushButton, "provider-new"), Qt.MouseButton.LeftButton)
+
+    assert warned and "profile_id" in warned[0]
+    assert not ProfileStore(tmp_path).exists("team-a")
+
+
+def test_provider_dialog_delete_falls_back_to_builtin(qtbot, tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
+    store = ProfileStore(tmp_path)
+    builtin = load_profile(CompositeResourceLoader.from_environment(_REPO_ROOT), "deepseek")
+    store.save(dataclasses.replace(builtin, model="my-deepseek"))
+    dialog = _provider_dialog(tmp_path)
+    qtbot.addWidget(dialog)
+    assert dialog.findChild(QComboBox, "provider-model").currentText() == "my-deepseek"
+
+    qtbot.mouseClick(dialog.findChild(QPushButton, "provider-delete"), Qt.MouseButton.LeftButton)
+
+    assert not store.exists("deepseek")
+    assert dialog.selected_profile_id() == "deepseek"
+    assert dialog.findChild(QComboBox, "provider-model").currentText() == "deepseek-chat"
+
+
+def test_provider_dialog_refuses_to_delete_builtin(qtbot, tmp_path, monkeypatch) -> None:
+    warned: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda *args, **kwargs: warned.append(args[2] if args else "")
+    )
+    dialog = _provider_dialog(tmp_path)
+    qtbot.addWidget(dialog)
+
+    qtbot.mouseClick(dialog.findChild(QPushButton, "provider-delete"), Qt.MouseButton.LeftButton)
+
+    assert warned and "内置" in warned[0]
+
+
+def test_provider_dialog_rejects_non_mapping_extra_body(qtbot, tmp_path, monkeypatch) -> None:
+    errors: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "critical", lambda *args, **kwargs: errors.append(args[2] if args else "")
+    )
+    dialog = _provider_dialog(tmp_path)
+    qtbot.addWidget(dialog)
+    dialog.findChild(QPlainTextEdit, "provider-extra-body").setPlainText("[1, 2]")
+
+    qtbot.mouseClick(dialog.findChild(QPushButton, "provider-save"), Qt.MouseButton.LeftButton)
+
+    assert errors and "extra_body" in errors[0]
+    assert ProfileStore(tmp_path).load_text("deepseek") is None
+
+
+def test_provider_dialog_fetches_models_with_edited_fields(qtbot, tmp_path) -> None:
+    calls: list[tuple[str, str, str]] = []
+
+    class FakeDiscovery:
+        def fetch(self, adapter, profile, on_done, on_error) -> None:
+            calls.append((adapter.adapter_id, profile.base_url, profile.model))
+            on_done([ModelOption("m-small", "M Small"), ModelOption("m-large", "M Large")])
+
+    dialog = _provider_dialog(tmp_path, discovery=FakeDiscovery())
+    qtbot.addWidget(dialog)
+    dialog.findChild(QLineEdit, "provider-base-url").setText("https://example.test/v1")
+    dialog.findChild(QComboBox, "provider-model").setCurrentText("deepseek-chat")
+
+    qtbot.mouseClick(
+        dialog.findChild(QPushButton, "provider-model-fetch"), Qt.MouseButton.LeftButton
+    )
+
+    model = dialog.findChild(QComboBox, "provider-model")
+    assert [model.itemData(index) for index in range(model.count())] == ["m-small", "m-large"]
+    assert calls == [("openai-compatible", "https://example.test/v1", "deepseek-chat")]
+    assert "2" in dialog.findChild(QLabel, "provider-status").text()
+
 
 
 # --------------------------------------------------------------------------- API Key 对话框
