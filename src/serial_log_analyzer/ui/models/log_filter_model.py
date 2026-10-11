@@ -1,93 +1,71 @@
-"""
-日志过滤模型 - 基于 QSortFilterProxyModel
-支持按级别、模块、关键字进行过滤
-"""
+"""日志过滤代理模型：按级别 / 模块 / 关键字过滤 ``LogTableModel``。"""
 
 from __future__ import annotations
 
-from typing import Set, Optional
-
-from PySide6.QtCore import QSortFilterProxyModel, QModelIndex
+from PySide6.QtCore import QModelIndex, QSortFilterProxyModel
 
 from serial_log_analyzer.core.models.logs import LogLevel
+from serial_log_analyzer.ui.models.log_table_model import (
+    LOG_LEVEL_ROLE,
+    LOG_MESSAGE_ROLE,
+    LOG_MODULE_ROLE,
+)
+
+__all__ = ["LogFilterModel"]
 
 
 class LogFilterModel(QSortFilterProxyModel):
-    """
-    日志过滤代理模型
-    
-    支持：
-    - 按日志级别过滤（多选）
-    - 按模块名过滤
-    - 按文本关键字过滤
+    """日志过滤代理。
+
+    过滤条件互不影响，可组合使用：级别白名单、模块子串、消息子串（均不区分大小写）。
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: object | None = None) -> None:
         super().__init__(parent)
-        self._allowed_levels: Optional[Set[LogLevel]] = None
-        self._module_filter: str = ""
-        self._text_filter: str = ""
+        self._allowed_levels: set[LogLevel] | None = None
+        self._module = ""
+        self._text = ""
 
-    # ------------------------------------------------------------------
-    # 过滤条件设置
-    # ------------------------------------------------------------------
+    def set_allowed_levels(self, levels: set[LogLevel] | None) -> None:
+        """设置允许显示的级别；``None`` 表示不过滤。"""
 
-    def set_allowed_levels(self, levels: Optional[Set[LogLevel]]) -> None:
-        """设置允许显示的日志级别，None 表示全部"""
-        self._allowed_levels = levels
-        self.invalidateFilter()
+        self._allowed_levels = set(levels) if levels is not None else None
+        self.invalidate()
 
     def set_module_filter(self, module: str) -> None:
-        """设置模块名过滤（精确匹配，空字符串表示全部）"""
-        self._module_filter = module.strip()
-        self.invalidateFilter()
+        """设置模块过滤（子串匹配，不区分大小写）。"""
+
+        self._module = module.strip().lower()
+        self.invalidate()
 
     def set_text_filter(self, text: str) -> None:
-        """设置文本关键字过滤（不区分大小写，匹配消息内容）"""
-        self._text_filter = text.strip().lower()
-        self.invalidateFilter()
+        """设置消息关键字过滤（子串匹配，不区分大小写）。"""
+
+        self._text = text.strip().lower()
+        self.invalidate()
 
     def clear_filters(self) -> None:
-        """清空所有过滤条件"""
-        self._allowed_levels = None
-        self._module_filter = ""
-        self._text_filter = ""
-        self.invalidateFilter()
+        """清空全部过滤条件。"""
 
-    # ------------------------------------------------------------------
-    # 过滤逻辑
-    # ------------------------------------------------------------------
+        self._allowed_levels = None
+        self._module = ""
+        self._text = ""
+        self.invalidate()
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
-        # 获取源模型中的日志条目
-        source_model = self.sourceModel()
-        if source_model is None:
+        model = self.sourceModel()
+        if model is None:  # pragma: no cover - 未设置源模型时不过滤
             return True
-
-        # 级别过滤
         if self._allowed_levels is not None:
-            level_index = source_model.index(source_row, 2, source_parent)
-            level_name = source_model.data(level_index)
-            if level_name:
-                try:
-                    level = LogLevel[level_name]
-                    if level not in self._allowed_levels:
-                        return False
-                except KeyError:
-                    pass
-
-        # 模块过滤
-        if self._module_filter:
-            module_index = source_model.index(source_row, 3, source_parent)
-            module = source_model.data(module_index) or ""
-            if self._module_filter.lower() not in module.lower():
+            level = model.data(model.index(source_row, 0, source_parent), LOG_LEVEL_ROLE)
+            if level not in self._allowed_levels:
                 return False
+        if self._module and self._module not in self._value(model, source_row, source_parent, LOG_MODULE_ROLE):
+            return False
+        return not self._text or self._text in self._value(
+            model, source_row, source_parent, LOG_MESSAGE_ROLE
+        )
 
-        # 文本过滤
-        if self._text_filter:
-            msg_index = source_model.index(source_row, 4, source_parent)
-            message = (source_model.data(msg_index) or "").lower()
-            if self._text_filter not in message:
-                return False
-
-        return True
+    @staticmethod
+    def _value(model: object, row: int, parent: QModelIndex, role: int) -> str:
+        return str(model.data(model.index(row, 0, parent), role) or "").lower()

@@ -1,173 +1,160 @@
-"""
-串口工具栏 - 串口选择、波特率、连接控制
+"""串口工具栏：端口 / 波特率 / 刷新 / 连接 / 清空，以及命令通道（DESIGN §7）。
+
+只发射用户意图信号，不直接操作串口对象；实际动作由 :class:`DeviceController` 执行。
 """
 
 from __future__ import annotations
 
-from typing import List, Optional
-
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QComboBox,
-    QHBoxLayout,
     QLabel,
-    QPushButton,
-    QWidget,
     QLineEdit,
+    QPushButton,
+    QToolBar,
+    QWidget,
 )
 
-from serial_log_analyzer.core.models.device import SerialPortInfo, DeviceConnectionState
+from serial_log_analyzer.core.models.device import (
+    FlowControl,
+    Parity,
+    SerialConfig,
+    SerialPortInfo,
+    StopBits,
+)
+
+__all__ = ["SerialToolBar"]
+
+_BAUDRATES = ("9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600")
 
 
-BAUDRATES = ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"]
+class SerialToolBar(QToolBar):
+    """顶部串口操作工具栏。
 
-
-class SerialToolbar(QWidget):
+    信号（由控制器连接）:
+        connect_requested(SerialConfig): 请求连接。
+        disconnect_requested(): 请求断开。
+        refresh_requested(): 请求刷新串口列表。
+        clear_requested(): 请求清空日志。
+        command_submitted(str): 请求发送一行命令。
     """
-    串口连接工具栏
-    
-    信号：
-    - connect_clicked(port: str, baudrate: int)
-    - disconnect_clicked()
-    - refresh_clicked()
-    - send_command_clicked(command: str)
-    """
 
-    connect_clicked = Signal(str, int)
-    disconnect_clicked = Signal()
-    refresh_clicked = Signal()
-    send_command_clicked = Signal(str)
+    connect_requested = Signal(object)
+    disconnect_requested = Signal()
+    refresh_requested = Signal()
+    clear_requested = Signal()
+    command_submitted = Signal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._settings = {}
-        self._setup_ui()
-        self._state = DeviceConnectionState.DISCONNECTED
-
-    def _setup_ui(self) -> None:
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 8, 16, 8)
-        layout.setSpacing(10)
-
-        # 串口选择
-        layout.addWidget(QLabel("串口:"))
-        self.port_combo = QComboBox()
-        self.port_combo.setMinimumWidth(180)
-        self.port_combo.setFixedHeight(32)
-        layout.addWidget(self.port_combo)
-
-        # 刷新按钮
-        self.refresh_btn = QPushButton("刷新")
-        self.refresh_btn.setFixedHeight(32)
-        self.refresh_btn.clicked.connect(self.refresh_clicked.emit)
-        layout.addWidget(self.refresh_btn)
-
-        # 波特率
-        layout.addWidget(QLabel("波特率:"))
-        self.baud_combo = QComboBox()
-        self.baud_combo.addItems(BAUDRATES)
-        self.baud_combo.setCurrentText("115200")
-        self.baud_combo.setMinimumWidth(110)
-        self.baud_combo.setFixedHeight(32)
-        layout.addWidget(self.baud_combo)
-
-        # 高级设置按钮
-        self.settings_btn = QPushButton("⚙ 设置")
-        self.settings_btn.setFixedHeight(32)
-        self.settings_btn.clicked.connect(self._open_settings_dialog)
-        layout.addWidget(self.settings_btn)
-
-        # 连接/断开按钮
-        self.connect_btn = QPushButton("连接")
-        self.connect_btn.setCheckable(True)
-        self.connect_btn.setFixedHeight(32)
-        self.connect_btn.setMinimumWidth(80)
-        self.connect_btn.clicked.connect(self._on_connect_clicked)
-        layout.addWidget(self.connect_btn)
-
-        layout.addStretch()
-
-        # 命令输入
-        layout.addWidget(QLabel("命令:"))
-        self.command_input = QLineEdit()
-        self.command_input.setPlaceholderText("输入命令...")
-        self.command_input.setMaximumWidth(220)
-        self.command_input.setFixedHeight(32)
-        self.command_input.returnPressed.connect(self._on_send_command)
-        layout.addWidget(self.command_input)
-
-        self.send_btn = QPushButton("发送")
-        self.send_btn.setFixedHeight(32)
-        self.send_btn.clicked.connect(self._on_send_command)
-        layout.addWidget(self.send_btn)
+        self._build()
 
     # ------------------------------------------------------------------
     # 外部接口
     # ------------------------------------------------------------------
 
-    def update_ports(self, ports: List[SerialPortInfo]) -> None:
-        """更新串口列表"""
-        current = self.port_combo.currentText()
+    def set_ports(self, ports: list[SerialPortInfo]) -> None:
+        """填充串口下拉列表，尽量保留当前选择。"""
+
+        current = self.port_combo.currentData()
         self.port_combo.clear()
-        for port in ports:
-            label = f"{port.name} - {port.description}" if port.description else port.name
-            self.port_combo.addItem(label, port.name)
-
+        for info in ports:
+            label = f"{info.name} - {info.description}" if info.description else info.name
+            self.port_combo.addItem(label, info.name)
         if current:
-            idx = self.port_combo.findData(current.split(" - ")[0])
-            if idx >= 0:
-                self.port_combo.setCurrentIndex(idx)
+            index = self.port_combo.findData(current)
+            if index >= 0:
+                self.port_combo.setCurrentIndex(index)
 
-    def set_state(self, state: DeviceConnectionState, message: str = "") -> None:
-        """更新连接状态显示"""
-        self._state = state
-        is_connected = state == DeviceConnectionState.CONNECTED
-        is_connecting = state == DeviceConnectionState.CONNECTING
+    def set_connected(self, connected: bool) -> None:
+        """按连接状态切换按钮与控件可用性。"""
 
-        self.connect_btn.blockSignals(True)
-        self.connect_btn.setChecked(is_connected or is_connecting)
-        if is_connected:
-            self.connect_btn.setText("断开")
-        elif is_connecting:
-            self.connect_btn.setText("连接中...")
-        else:
-            self.connect_btn.setText("连接")
-        self.connect_btn.blockSignals(False)
+        self.connect_btn.setEnabled(not connected)
+        self.disconnect_btn.setEnabled(connected)
+        self.port_combo.setEnabled(not connected)
+        self.baud_combo.setEnabled(not connected)
 
-        self.port_combo.setEnabled(not is_connected)
-        self.baud_combo.setEnabled(not is_connected)
-        self.refresh_btn.setEnabled(not is_connected)
+    def current_config(self) -> SerialConfig:
+        """按当前界面选择构造 :class:`SerialConfig`。"""
+
+        port = self.port_combo.currentData() or self.port_combo.currentText().strip()
+        if not port:
+            raise ValueError("请选择串口")
+        return SerialConfig(
+            port=str(port),
+            baudrate=int(self.baud_combo.currentText()),
+            data_bits=8,
+            parity=Parity.NONE,
+            stop_bits=StopBits.ONE,
+            flow_control=FlowControl.NONE,
+        )
+
+    def set_command_reply(self, text: str) -> None:
+        """显示最近一条命令响应（DESIGN §7 的命令回复区）。"""
+
+        self.reply_label.setText(text)
+
+    def restore(self, port: str, baudrate: str) -> None:
+        """按上次设置恢复端口与波特率选择。"""
+
+        if baudrate:
+            index = self.baud_combo.findText(str(baudrate))
+            if index >= 0:
+                self.baud_combo.setCurrentIndex(index)
+        if port:
+            index = self.port_combo.findData(port)
+            if index >= 0:
+                self.port_combo.setCurrentIndex(index)
 
     # ------------------------------------------------------------------
-    # 内部槽函数
+    # 构建与槽函数
     # ------------------------------------------------------------------
 
-    def _on_connect_clicked(self, checked: bool) -> None:
-        if checked:
-            port = self.port_combo.currentData() or self.port_combo.currentText().split(" - ")[0]
-            baudrate = int(self.baud_combo.currentText())
-            self.connect_clicked.emit(port, baudrate)
-        else:
-            self.disconnect_clicked.emit()
+    def _build(self) -> None:
+        self.addWidget(QLabel(" 串口 "))
+        self.port_combo = QComboBox()
+        self.port_combo.setMinimumWidth(200)
+        self.addWidget(self.port_combo)
 
-    def _on_send_command(self) -> None:
-        cmd = self.command_input.text().strip()
-        if cmd:
-            self.send_command_clicked.emit(cmd)
-            self.command_input.clear()
+        self.addWidget(QLabel(" 波特率 "))
+        self.baud_combo = QComboBox()
+        self.baud_combo.addItems(_BAUDRATES)
+        self.baud_combo.setCurrentText("115200")
+        self.addWidget(self.baud_combo)
 
-    def _open_settings_dialog(self) -> None:
-        """打开串口设置对话框"""
-        try:
-            from ..dialogs.serial_settings_dialog import SerialSettingsDialog
-        except ImportError:
-            # demo环境下回退：直接导入
-            import sys
-            sys.path.insert(0, r"C:\Users\Administrator\Doubao\chats\2026-10-10\new-chat\SerialLogAnalyzer")
-            from ui.dialogs.serial_settings_dialog import SerialSettingsDialog
+        self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn.clicked.connect(self.refresh_requested.emit)
+        self.addWidget(self.refresh_btn)
 
-        dialog = SerialSettingsDialog(self, current_settings=self._settings)
-        if dialog.exec():
-            self._settings = dialog.get_settings()
-            # 同步波特率到工具栏
-            self.baud_combo.setCurrentText(str(self._settings["baudrate"]))
+        self.connect_btn = QPushButton("连接")
+        self.connect_btn.clicked.connect(lambda: self.connect_requested.emit(self.current_config()))
+        self.addWidget(self.connect_btn)
+
+        self.disconnect_btn = QPushButton("断开")
+        self.disconnect_btn.setEnabled(False)
+        self.disconnect_btn.clicked.connect(self.disconnect_requested.emit)
+        self.addWidget(self.disconnect_btn)
+
+        self.clear_btn = QPushButton("清空")
+        self.clear_btn.clicked.connect(self.clear_requested.emit)
+        self.addWidget(self.clear_btn)
+
+        self.addSeparator()
+        self.addWidget(QLabel(" 命令 "))
+        self.command_edit = QLineEdit()
+        self.command_edit.setPlaceholderText("PING / VERSION / HELP / TEST <name>")
+        self.command_edit.setMinimumWidth(220)
+        self.command_edit.returnPressed.connect(self._on_command)
+        self.addWidget(self.command_edit)
+        self.send_btn = QPushButton("发送")
+        self.send_btn.clicked.connect(self._on_command)
+        self.addWidget(self.send_btn)
+
+        self.reply_label = QLabel("")
+        self.addWidget(self.reply_label)
+
+    def _on_command(self) -> None:
+        command = self.command_edit.text().strip()
+        if command:
+            self.command_edit.clear()
+            self.command_submitted.emit(command)

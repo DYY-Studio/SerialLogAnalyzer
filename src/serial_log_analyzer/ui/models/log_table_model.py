@@ -1,21 +1,28 @@
-"""
-日志表格数据模型 - 基于 QAbstractTableModel
-负责批量插入、更新、删除日志条目，高效渲染大量日志数据
+"""日志表格数据模型：把 ``LogEntry`` 映射到 ``QAbstractTableModel``。
+
+职责边界：只做展示映射与批量变更通知，不保存业务状态——容量由 ``core.LogPipeline``
+负责，截断后的行由 ``PipelineUpdate.dropped_sequences`` 驱动移除。
 """
 
 from __future__ import annotations
 
-from typing import List, Optional
+import time
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
-from PySide6.QtGui import QColor, QBrush
+from PySide6.QtGui import QBrush, QColor
 
 from serial_log_analyzer.core.models.logs import LogEntry, LogLevel
 
+__all__ = ["COLUMN_HEADERS", "LEVEL_COLORS", "LOG_LEVEL_ROLE", "LOG_MESSAGE_ROLE", "LOG_MODULE_ROLE", "LogTableModel"]
 
-# 日志级别对应的颜色配置（浅色主题优化）
-LEVEL_COLORS = {
-    LogLevel.VERBOSE: QColor(150, 160, 175),
+# 供过滤代理读取原始字段，避免依赖展示文案。
+LOG_LEVEL_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+LOG_MODULE_ROLE = int(Qt.ItemDataRole.UserRole) + 2
+LOG_MESSAGE_ROLE = int(Qt.ItemDataRole.UserRole) + 3
+
+# 级别着色（浅色主题）。
+LEVEL_COLORS: dict[LogLevel, QColor] = {
+    LogLevel.VERBOSE: QColor(120, 130, 145),
     LogLevel.DEBUG: QColor(49, 130, 206),
     LogLevel.INFO: QColor(56, 161, 105),
     LogLevel.WARN: QColor(214, 158, 46),
@@ -23,68 +30,73 @@ LEVEL_COLORS = {
     LogLevel.UNKNOWN: QColor(128, 90, 213),
 }
 
-LEVEL_HEADERS = ["序号", "时间", "级别", "模块", "消息"]
+# 级别展示文案（用户可见文案用中文）。
+LEVEL_LABELS: dict[LogLevel, str] = {
+    LogLevel.VERBOSE: "详细",
+    LogLevel.DEBUG: "调试",
+    LogLevel.INFO: "信息",
+    LogLevel.WARN: "警告",
+    LogLevel.ERROR: "错误",
+    LogLevel.UNKNOWN: "未知",
+}
+
+COLUMN_HEADERS = ("序号", "时间", "级别", "模块", "消息")
 
 
 class LogTableModel(QAbstractTableModel):
-    """
-    日志表格数据模型
-    
-    特性：
-    - 环形缓冲：超过最大行数时自动移除最旧的日志
-    - 批量更新：配合 PipelineUpdate 一次性插入/更新多条
-    - 级别着色：不同日志级别显示不同颜色
+    """日志表格模型：批量插入 / 更新 / 移除，按级别着色。
+
+    信号:
+        row_count_changed(int): 行数变化后发出，供状态栏展示。
     """
 
-    # 行数变化时发出信号（用于状态栏更新）
     row_count_changed = Signal(int)
 
-    def __init__(self, parent=None, max_rows: int = 100000):
+    def __init__(self, parent: object | None = None) -> None:
         super().__init__(parent)
-        self._entries: List[LogEntry] = []
-        self._max_rows = max_rows
+        self._entries: list[LogEntry] = []
 
     # ------------------------------------------------------------------
-    # 核心数据接口
+    # 数据变更（由 LogView 依据 PipelineUpdate 调用）
     # ------------------------------------------------------------------
 
-    def add_entries(self, entries: List[LogEntry]) -> int:
-        """批量添加日志条目，返回实际添加的数量"""
+    def add_entries(self, entries: list[LogEntry]) -> int:
+        """批量追加条目，返回追加数量。"""
+
         if not entries:
             return 0
-
-        start_row = len(self._entries)
-        end_row = start_row + len(entries) - 1
-
-        self.beginInsertRows(QModelIndex(), start_row, end_row)
+        start = len(self._entries)
+        self.beginInsertRows(QModelIndex(), start, start + len(entries) - 1)
         self._entries.extend(entries)
         self.endInsertRows()
-
-        # 超过最大行数时，从前面移除
-        dropped = self._trim_excess()
-
         self.row_count_changed.emit(len(self._entries))
-        return len(entries) - dropped
+        return len(entries)
 
-    def update_entry(self, sequence: int, updated: LogEntry) -> bool:
-        """根据序列号更新某条日志（用于 continuation 行合并）"""
-        for i, entry in enumerate(self._entries):
-            if entry.sequence == sequence:
-                self._entries[i] = updated
-                self.dataChanged.emit(
-                    self.index(i, 0),
-                    self.index(i, self.columnCount() - 1),
-                )
-                return True
-        return False
+    def update_entries(self, entries: list[LogEntry]) -> int:
+        """按 ``sequence`` 原地更新条目（continuation 合并），返回更新数量。"""
 
-    def remove_entries(self, sequences: List[int]) -> int:
-        """按序列号批量移除日志"""
-        seq_set = set(sequences)
-        keep = [e for e in self._entries if e.sequence not in seq_set]
+        positions = {entry.sequence: position for position, entry in enumerate(self._entries)}
+        updated = 0
+        for entry in entries:
+            position = positions.get(entry.sequence)
+            if position is None:
+                continue
+            self._entries[position] = entry
+            self.dataChanged.emit(
+                self.index(position, 0), self.index(position, self.columnCount() - 1)
+            )
+            updated += 1
+        return updated
+
+    def remove_sequences(self, sequences: list[int]) -> int:
+        """按 ``sequence`` 批量移除（容量截断），返回移除数量。"""
+
+        dropped = set(sequences)
+        if not dropped:
+            return 0
+        keep = [entry for entry in self._entries if entry.sequence not in dropped]
         removed = len(self._entries) - len(keep)
-
-        if removed > 0:
+        if removed:
             self.beginResetModel()
             self._entries = keep
             self.endResetModel()
@@ -92,91 +104,86 @@ class LogTableModel(QAbstractTableModel):
         return removed
 
     def clear(self) -> None:
-        """清空所有日志"""
-        if self._entries:
-            self.beginResetModel()
-            self._entries.clear()
-            self.endResetModel()
-            self.row_count_changed.emit(0)
+        """清空表格。"""
 
-    def entry_at(self, row: int) -> Optional[LogEntry]:
-        """获取指定行的日志条目"""
+        if not self._entries:
+            return
+        self.beginResetModel()
+        self._entries.clear()
+        self.endResetModel()
+        self.row_count_changed.emit(0)
+
+    # ------------------------------------------------------------------
+    # 查询
+    # ------------------------------------------------------------------
+
+    def entry_at(self, row: int) -> LogEntry | None:
+        """返回指定行的条目；越界时为 ``None``。"""
+
         if 0 <= row < len(self._entries):
             return self._entries[row]
         return None
 
-    def entries_at_rows(self, rows: List[int]) -> List[LogEntry]:
-        """获取多行的日志条目"""
-        return [self._entries[r] for r in rows if 0 <= r < len(self._entries)]
+    def entries_at_rows(self, rows: list[int]) -> list[LogEntry]:
+        """返回多行的条目（忽略越界行），保持表格顺序。"""
 
-    def all_entries(self) -> List[LogEntry]:
-        """获取所有日志条目（用于导出）"""
+        return [self._entries[row] for row in sorted(set(rows)) if 0 <= row < len(self._entries)]
+
+    def entries(self) -> list[LogEntry]:
+        """返回全部条目（只读副本）。"""
+
         return list(self._entries)
 
     # ------------------------------------------------------------------
-    # 内部工具
+    # QAbstractTableModel
     # ------------------------------------------------------------------
 
-    def _trim_excess(self) -> int:
-        """移除超出最大行数的旧日志，返回移除数量"""
-        excess = len(self._entries) - self._max_rows
-        if excess <= 0:
-            return 0
-
-        self.beginRemoveRows(QModelIndex(), 0, excess - 1)
-        self._entries = self._entries[excess:]
-        self.endRemoveRows()
-        return excess
-
-    # ------------------------------------------------------------------
-    # QAbstractTableModel 必须实现的接口
-    # ------------------------------------------------------------------
-
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def rowCount(self, parent: QModelIndex | None = None) -> int:
         return len(self._entries)
 
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return len(LEVEL_HEADERS)
+    def columnCount(self, parent: QModelIndex | None = None) -> int:
+        return len(COLUMN_HEADERS)
 
-    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
-        if not index.isValid() or index.row() >= len(self._entries):
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object:
+        entry = self.entry_at(index.row())
+        if entry is None:
             return None
-
-        entry = self._entries[index.row()]
-        col = index.column()
-
-        if role == Qt.DisplayRole:
-            if col == 0:
-                return str(entry.sequence)
-            elif col == 1:
-                # 格式化时间戳
-                import time
-                t = entry.received_at
-                return time.strftime("%H:%M:%S", time.localtime(t)) + f".{int((t % 1) * 1000):03d}"
-            elif col == 2:
-                return entry.level.name
-            elif col == 3:
-                return entry.module or "-"
-            elif col == 4:
-                return entry.message
-
-        elif role == Qt.ForegroundRole:
-            if col == 2:
-                color = LEVEL_COLORS.get(entry.level)
-                if color:
-                    return QBrush(color)
-
-        elif role == Qt.ToolTipRole:
-            # 悬停显示完整内容
-            if col == 4:
-                return entry.raw
-            return None
-
+        column = index.column()
+        if role == Qt.ItemDataRole.DisplayRole:
+            return self._display(entry, column)
+        if role == Qt.ItemDataRole.ForegroundRole and column == 2:
+            color = LEVEL_COLORS.get(entry.level)
+            return QBrush(color) if color is not None else None
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return entry.raw if column == 4 else None
+        if role == LOG_LEVEL_ROLE:
+            return entry.level
+        if role == LOG_MODULE_ROLE:
+            return entry.module or ""
+        if role == LOG_MESSAGE_ROLE:
+            return entry.message
         return None
 
-    def headerData(self, section: int, orientation, role: int = Qt.DisplayRole):
-        if role != Qt.DisplayRole:
-            return None
-        if orientation == Qt.Horizontal and 0 <= section < len(LEVEL_HEADERS):
-            return LEVEL_HEADERS[section]
+    def headerData(
+        self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole
+    ) -> object:
+        if (
+            role == Qt.ItemDataRole.DisplayRole
+            and orientation == Qt.Orientation.Horizontal
+            and 0 <= section < len(COLUMN_HEADERS)
+        ):
+            return COLUMN_HEADERS[section]
         return None
+
+    @staticmethod
+    def _display(entry: LogEntry, column: int) -> str:
+        if column == 0:
+            return str(entry.sequence)
+        if column == 1:
+            moment = entry.received_at
+            return f"{time.strftime('%H:%M:%S', time.localtime(moment))}.{int(moment % 1 * 1000):03d}"
+        if column == 2:
+            return LEVEL_LABELS.get(entry.level, entry.level.name)
+        if column == 3:
+            return entry.module or "-"
+        return entry.message

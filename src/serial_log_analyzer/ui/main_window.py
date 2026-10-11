@@ -1,160 +1,108 @@
-"""
-主窗口 - 应用顶层界面
+"""主窗口：只负责布局、菜单、工具栏与状态栏。
+
+不持有业务状态、不解析日志、不发 LLM 请求；所有动作委托给控制器，
+退出清理通过构造时注入的回调执行。
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from collections.abc import Callable
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
     QSplitter,
     QStatusBar,
-    QMessageBox,
+    QVBoxLayout,
+    QWidget,
 )
 
-from .widgets.serial_toolbar import SerialToolbar
-from .widgets.log_view import LogView
-from .widgets.analysis_panel import AnalysisPanel
-from .models.log_table_model import LogTableModel
-from .models.log_filter_model import LogFilterModel
-from .controllers.main_controller import MainController
-from .controllers.device_controller import DeviceController
-from .controllers.analysis_controller import AnalysisController
+from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
+from serial_log_analyzer.ui.widgets.log_view import LogView
+from serial_log_analyzer.ui.widgets.serial_toolbar import SerialToolBar
+
+__all__ = ["MainWindow"]
 
 
 class MainWindow(QMainWindow):
+    """应用主窗口。
+
+    参数:
+        log_view: 中部日志视图。
+        analysis_panel: 右侧分析面板。
+        serial_toolbar: 顶部串口工具栏。
+        parent: 可选父窗口。
+        on_close: 关闭前的清理回调（由组合根注入，例如断开设备、取消请求）。
+
+    信号（由组合根连接，窗口不自己构造对话框）:
+        settings_requested(): 请求打开设置对话框。
+        provider_requested(): 请求打开模型服务对话框。
+        credential_requested(): 请求打开凭据对话框。
     """
-    主窗口
-    
-    布局：
-    - 顶部：串口工具栏
-    - 中间：左右分割（日志表格 | 分析面板）
-    - 底部：状态栏
-    """
+
+    settings_requested = Signal()
+    provider_requested = Signal()
+    credential_requested = Signal()
 
     def __init__(
         self,
-        device_controller: DeviceController,
-        analysis_controller: AnalysisController,
-        parent=None,
-    ):
+        log_view: LogView,
+        analysis_panel: AnalysisPanel,
+        serial_toolbar: SerialToolBar,
+        parent: QMainWindow | None = None,
+        *,
+        on_close: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__(parent)
-        self._device_controller = device_controller
-        self._analysis_controller = analysis_controller
-
+        self._on_close = on_close
+        self.log_view = log_view
+        self.analysis_panel = analysis_panel
+        self.serial_toolbar = serial_toolbar
         self.setWindowTitle("SerialLogAnalyzer - 串口日志分析工具")
         self.resize(1200, 800)
+        self.addToolBar(serial_toolbar)
+        self._build_menu()
 
-        self._setup_ui()
-        self._setup_models()
-        self._setup_controllers()
-        self._connect_signals()
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.addWidget(log_view)
+        self.splitter.addWidget(analysis_panel)
+        self.splitter.setStretchFactor(0, 7)
+        self.splitter.setStretchFactor(1, 3)
+        self.splitter.setSizes([840, 360])
 
-    # ------------------------------------------------------------------
-    # UI 构建
-    # ------------------------------------------------------------------
-
-    def _setup_ui(self) -> None:
-        """构建界面"""
         central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.splitter)
         self.setCentralWidget(central)
-        main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
 
-        # 顶部工具栏
-        self.toolbar = SerialToolbar()
-        main_layout.addWidget(self.toolbar)
-
-        # 中间分割区域
-        splitter = QSplitter(Qt.Horizontal)
-
-        # 左侧：日志视图
-        self.log_view = LogView()
-        splitter.addWidget(self.log_view)
-
-        # 右侧：分析面板
-        self.analysis_panel = AnalysisPanel()
-        splitter.addWidget(self.analysis_panel)
-
-        # 设置分割比例（左:右 = 7:3）
-        splitter.setStretchFactor(0, 7)
-        splitter.setStretchFactor(1, 3)
-        splitter.setSizes([800, 400])
-
-        main_layout.addWidget(splitter)
-
-        # 状态栏
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("就绪")
 
-    def _setup_models(self) -> None:
-        """创建数据模型"""
-        self.log_table_model = LogTableModel()
-        self.log_filter_model = LogFilterModel()
-        self.log_view.set_models(self.log_table_model, self.log_filter_model)
+    def show_status(self, message: str) -> None:
+        """在状态栏显示一条消息。"""
 
-    def _setup_controllers(self) -> None:
-        """创建主控制器并注入依赖"""
-        self.main_controller = MainController()
-        self.main_controller.set_device_controller(self._device_controller)
-        self.main_controller.set_analysis_controller(self._analysis_controller)
-        self.main_controller.status_message.connect(self.status_bar.showMessage)
+        self.status_bar.showMessage(message)
 
-    def _connect_signals(self) -> None:
-        """连接所有信号"""
-        # 工具栏信号
-        self.toolbar.connect_clicked.connect(self._device_controller.connect)
-        self.toolbar.disconnect_clicked.connect(self._device_controller.disconnect)
-        self.toolbar.refresh_clicked.connect(self._device_controller.refresh_ports)
-        self.toolbar.send_command_clicked.connect(self._device_controller.send_command)
+    def _build_menu(self) -> None:
+        """构建菜单栏：只发射意图信号，对话框由组合根打开。"""
 
-        # 设备控制器信号
-        self._device_controller.ports_updated.connect(self.toolbar.update_ports)
-        self._device_controller.connection_state_changed.connect(self.toolbar.set_state)
-        self._device_controller.log_entries_received.connect(self._on_logs_received)
-        self._device_controller.log_entry_updated.connect(self.log_table_model.update_entry)
-        self._device_controller.log_entries_removed.connect(self.log_table_model.remove_entries)
+        config_menu = self.menuBar().addMenu("配置")
 
-        # 日志视图信号
-        self.log_view.selection_changed.connect(self.main_controller.on_selection_changed)
-        self.log_view.export_requested.connect(self.main_controller.on_export_clicked)
-        self.log_view.clear_requested.connect(
-            lambda: self.main_controller.on_clear_clicked(self.log_table_model)
-        )
+        def _add(title: str, signal: Signal) -> None:
+            action = QAction(title, self)
+            action.triggered.connect(signal.emit)
+            config_menu.addAction(action)
 
-        # 分析面板信号
-        self.analysis_panel.analyze_clicked.connect(self.main_controller.on_analyze_clicked)
-        self.analysis_panel.send_message_clicked.connect(self.main_controller.on_send_message)
-        self.analysis_panel.new_session_clicked.connect(
-            lambda: self.main_controller.on_new_session(self.analysis_panel)
-        )
+        _add("设置…", self.settings_requested)
+        _add("模型服务…", self.provider_requested)
+        _add("凭据…", self.credential_requested)
 
-        # 分析控制器信号
-        self._analysis_controller.stream_chunk_received.connect(
-            self.analysis_panel.append_stream_chunk
-        )
-        self._analysis_controller.analysis_state_changed.connect(
-            self.analysis_panel.set_state
-        )
+    def closeEvent(self, event: object) -> None:
+        """窗口关闭：执行清理回调。"""
 
-        # 表格行数变化更新状态栏
-        self.log_table_model.row_count_changed.connect(self._on_row_count_changed)
-
-    # ------------------------------------------------------------------
-    # 内部槽函数
-    # ------------------------------------------------------------------
-
-    def _on_logs_received(self, entries: list) -> None:
-        """接收到新日志"""
-        added = self.log_table_model.add_entries(entries)
-        # 自动滚动到底部
-        self.log_view.scroll_to_bottom()
-
-    def _on_row_count_changed(self, count: int) -> None:
-        """更新状态栏的日志计数"""
-        self.status_bar.showMessage(f"共 {count} 条日志")
+        if self._on_close is not None:
+            self._on_close()
+        super().closeEvent(event)
