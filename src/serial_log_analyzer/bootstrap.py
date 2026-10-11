@@ -14,46 +14,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from serial_log_analyzer.core.llm.client import LLMClient
-
-__all__ = ["build_application", "build_llm_client", "main"]
-
-
-def build_llm_client(
-    profile_id: str, manager: object, *, project_root: Path | None = None
-) -> LLMClient:
-    """组装读取本地 .env 的 LLM 客户端，供应用或独立调用使用。
-
-    参数:
-        profile_id: 服务配置 ID，例如 sensenova 或 internlm。
-        manager: 调用方持有的唯一 QNetworkAccessManager；需要运行 Qt 事件循环。
-        project_root: .env 与仓库资源所在目录；源码运行时默认使用仓库根目录。
-    异常:
-        ConfigError: .env、资源、服务配置或网络 manager 非法。
-        CredentialError: 密钥缺失时在 client.send 调用前抛出。
-    """
-    from serial_log_analyzer.core.llm.adapter_loader import load_adapter
-    from serial_log_analyzer.core.llm.client import LLMClient
-    from serial_log_analyzer.core.llm.profile_loader import load_profile
-    from serial_log_analyzer.core.llm.request import RequestBuilder
-    from serial_log_analyzer.core.services.credential_resolver import CredentialResolver
-    from serial_log_analyzer.io.credentials.environment_reader import DotEnvEnvironmentReader
-    from serial_log_analyzer.io.llm.qt_http_transport import QtHttpTransport
-    from serial_log_analyzer.io.resources import CompositeResourceLoader
-
-    root = project_root if project_root is not None else Path(__file__).resolve().parents[2]
-    resources = CompositeResourceLoader.from_environment(root)
-    profile = load_profile(resources, profile_id)
-    adapter = load_adapter(resources, profile.adapter_id)
-    environment = DotEnvEnvironmentReader(root / ".env")
-    credentials = CredentialResolver(None, environment)
-    return LLMClient(
-        RequestBuilder(adapter, profile, credentials), adapter, QtHttpTransport(manager)
-    )
+__all__ = ["build_application", "main"]
 
 
 def build_application(argv: list[str] | None = None) -> object:

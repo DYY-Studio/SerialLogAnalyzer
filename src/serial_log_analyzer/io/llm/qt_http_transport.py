@@ -14,7 +14,6 @@ from serial_log_analyzer.core.errors import (
     NetworkError,
     NetworkTimeoutError,
 )
-from serial_log_analyzer.core.llm.config import timeout
 from serial_log_analyzer.core.models.provider import HttpRequest
 from serial_log_analyzer.core.ports import (
     BytesHandler,
@@ -111,7 +110,7 @@ class QtHttpTransport:
 
         参数为请求及字节、完成、错误回调；本地非法请求抛出 ConfigError。
         """
-        seconds = timeout(request.timeout_seconds)
+        seconds = request.timeout_seconds
         if seconds * 1000 > 2147483647:
             raise ConfigError("请求超时超过 Qt 计时范围")
         url = QUrl(request.url)

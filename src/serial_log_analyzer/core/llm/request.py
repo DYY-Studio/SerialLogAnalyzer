@@ -13,7 +13,6 @@ import math
 from urllib.parse import quote
 
 from serial_log_analyzer.core.errors import ConfigError
-from serial_log_analyzer.core.llm import config as c
 from serial_log_analyzer.core.llm.adapter import JSONAdapter
 from serial_log_analyzer.core.models.analysis import AnalysisMessage, AnalysisRequest
 from serial_log_analyzer.core.models.provider import HttpRequest, ProviderProfile
@@ -32,13 +31,10 @@ def join_url(base_url: str, endpoint: str, model: str = "") -> str:
 
     返回:
         完整请求 URL。
-
-    异常:
-        ConfigError: 基地址不是合法 HTTP(S) URL。
     """
 
-    base = c.base_url(base_url)
-    path = c.endpoint(endpoint).replace("${model}", quote(model, safe=""))
+    base = base_url.rstrip("/")
+    path = endpoint.replace("${model}", quote(model, safe=""))
     return base + "/" + path.lstrip("/")
 
 
@@ -110,6 +106,6 @@ class RequestBuilder:
             join_url(profile.base_url, endpoint, profile.model),
             headers,
             body,
-            c.timeout(profile.request_timeout_seconds),
+            profile.request_timeout_seconds,
             profile.stream,
         )

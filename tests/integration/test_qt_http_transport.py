@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
-from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QTimer
@@ -16,11 +14,6 @@ from serial_log_analyzer.core.errors import (
     NetworkTimeoutError,
     ResponseParseError,
 )
-from serial_log_analyzer.core.llm.adapter_loader import load_adapter
-from serial_log_analyzer.core.llm.client import LLMClient
-from serial_log_analyzer.core.llm.profile_loader import load_profile
-from serial_log_analyzer.core.llm.request import RequestBuilder
-from serial_log_analyzer.core.models.analysis import AnalysisMessage, AnalysisRequest, MessageRole
 from serial_log_analyzer.core.models.provider import HttpRequest
 from serial_log_analyzer.io.llm.qt_http_transport import QtHttpTransport
 
@@ -172,72 +165,3 @@ def test_concurrent_requests(server, transport, qtbot):
     qtbot.waitUntil(lambda: bool(first[2]))
     assert first[3] == [] and len(second[3]) == 1 and not transport._active
 
-
-class Loader:
-    def __init__(self):
-        self.root = Path(__file__).resolve().parents[2]
-
-    def read_text(self, path):
-        return (self.root / path).read_text(encoding="utf-8-sig")
-
-
-class Credentials:
-    def resolve(self, credential):
-        return "test-only-placeholder"
-
-
-@pytest.mark.parametrize("stream", [True, False])
-def test_client_over_real_qt(server, transport, qtbot, stream):
-    loader = Loader()
-    adapter = load_adapter(loader, "chat-completions-basic")
-    route = "/stream" if stream else "/ok"
-    adapter = replace(adapter, endpoint=route, streaming=replace(adapter.streaming, endpoint=route))
-    profile = replace(load_profile(loader, "internlm"), base_url=server[0], stream=stream)
-    client = LLMClient(RequestBuilder(adapter, profile, Credentials()), adapter, transport)
-    done, errors, deltas = [], [], []
-    token = client.send(
-        [AnalysisMessage(MessageRole.USER, "[E] malloc failed")],
-        AnalysisRequest(),
-        on_done=done.append,
-        on_error=errors.append,
-        on_delta=deltas.append,
-    )
-    qtbot.waitUntil(lambda: bool(done or errors))
-    assert len(done) == 1 and not errors and done[0].content == ("中文" if stream else "ok")
-    token.cancel()
-    assert len(done) == 1 and not errors
-
-
-def test_client_invalid_json_over_qt(server, transport, qtbot):
-    loader = Loader()
-    adapter = replace(load_adapter(loader, "chat-completions-basic"), endpoint="/bad-json")
-    profile = replace(load_profile(loader, "internlm"), base_url=server[0], stream=False)
-    done, errors = [], []
-    client = LLMClient(RequestBuilder(adapter, profile, Credentials()), adapter, transport)
-    client.send([], AnalysisRequest(), on_done=done.append, on_error=errors.append)
-    qtbot.waitUntil(lambda: bool(errors))
-    assert not done and len(errors) == 1 and isinstance(errors[0], ResponseParseError)
-
-
-def test_bootstrap_reads_project_dotenv(tmp_path, monkeypatch, qtbot):
-    import shutil
-
-    from serial_log_analyzer.bootstrap import build_llm_client
-
-    root = Path(__file__).resolve().parents[2]
-    shutil.copytree(root / "providers", tmp_path / "providers")
-    (tmp_path / ".env").write_text(
-        "SENSENOVA_API_KEY=fake-sensenova\nINTERNLM_API_KEY=fake-internlm\n", encoding="utf-8"
-    )
-    monkeypatch.delenv("SENSENOVA_API_KEY", raising=False)
-    monkeypatch.delenv("INTERNLM_API_KEY", raising=False)
-    # 固定用户配置目录，避免测试受用户自定义 Profile 影响。
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "fake-home"))
-    manager = QNetworkAccessManager()
-    for profile_id in ("sensenova", "internlm"):
-        client = build_llm_client(profile_id, manager, project_root=tmp_path)
-        request = client._builder.build(
-            [AnalysisMessage(MessageRole.USER, "日志")], AnalysisRequest()
-        )
-        assert request.headers["Authorization"] == f"Bearer fake-{profile_id}"
-    manager.deleteLater()

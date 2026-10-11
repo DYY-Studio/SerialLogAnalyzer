@@ -16,9 +16,10 @@
 这些是文档示例，不表示账户已获得模型权限或已完成在线验证。书生别名可能随平台更新。
 SenseNova 此配置适用于 token 服务，不能直接用于另一套旧版 JWT API。
 
-两个 Profile 使用 `chat-completions-basic`，不发送 `stream_options.include_usage`。
-支持正文、可选 reasoning、独立 usage 事件和 `[DONE]`，要求收到终止事件。
-原 `openai-compatible` 保留其扩展参数及允许正常 EOF 的已有声明。
+两个 Profile 复用 `openai-compatible`（该 Adapter 的流式声明统一带 `stream_options.include_usage`），
+并以 `[DONE]` 作为终止事件。**已知风险**：SenseNova / 书生 若拒收 `stream_options`，流式请求会失败；
+届时可移除共享 Adapter 中的该项（代价：OpenAI / DeepSeek 流式不再返回 usage），或为这两个服务
+重新分出独立声明。
 
 密钥由凭据服务解析，Profile 只存变量名。项目根目录的 `.env` 已按用户要求填入本地密钥，
 该文件被 Git 忽略，不在文档或输出中复述。其他成员可复制 `.env.example` 并自行填写。
@@ -37,9 +38,10 @@ SenseNova 此配置适用于 token 服务，不能直接用于另一套旧版 JW
 
 ```python
 from serial_log_analyzer.core.llm.adapter_loader import load_adapter
-from serial_log_analyzer.core.llm.client import LLMClient
 from serial_log_analyzer.core.llm.profile_loader import load_profile
 from serial_log_analyzer.core.llm.request import RequestBuilder
+from serial_log_analyzer.core.llm.sse import SSEParser
+from serial_log_analyzer.core.llm.stream import StreamProcessor
 from serial_log_analyzer.core.models.analysis import (
     AnalysisMessage, AnalysisRequest, MessageRole,
 )
@@ -49,30 +51,35 @@ from serial_log_analyzer.io.llm.qt_http_transport import QtHttpTransport
 # resources、credentials、network_manager 由组合根注入。
 profile = load_profile(resources, "sensenova")  # 或 internlm
 adapter = load_adapter(resources, profile.adapter_id)
-builder = RequestBuilder(adapter, profile, credentials)
-client = LLMClient(builder, adapter, QtHttpTransport(network_manager))
 prompt = PromptLibrary(resources).render(
     "aggregate-anomalies", context="[E] [memory] malloc failed"
 )
-token = client.send(
-    [AnalysisMessage(MessageRole.USER, prompt)],
-    AnalysisRequest(max_output_tokens=2048),
-    on_delta=handle_delta,
-    on_done=handle_result,
-    on_error=handle_error,
+request = RequestBuilder(adapter, profile, credentials).build(
+    [AnalysisMessage(MessageRole.USER, prompt)], AnalysisRequest(max_output_tokens=2048)
 )
+
+parser = SSEParser()
+processor = StreamProcessor(adapter, on_delta, on_usage=handle_usage)
+
+def on_chunk(data: bytes) -> None:
+    for event in parser.feed(data):      # 处理跨网络分块的半行
+        processor.handle(event)          # 正文/reasoning 增量 + 终止与用量
+
+token = QtHttpTransport(network_manager).send(request, on_chunk, on_done, on_error)
 # 需要取消时：token.cancel()。结束后或重复取消为空操作。
 ```
 
-`handle_result` 收到 `AnalysisResult`；`handle_error` 收到 `AppError`。
-`on_reasoning` 为可选回调；不把 reasoning 加回会话历史。
-普通 JSON 响应由 client 缓冲（默认上限 8 MiB）；流式 SSE 单事件默认上限 1 MiB。
-`LLMClient` 实例可用于多次调用，每次调用的解析状态独立。
-多轮分析需由 AnalysisService 按顺序提供 system/user/assistant 历史，本模块不保存历史。
+- 流式：`SSEParser` 维护缓冲，`StreamProcessor` 产出正文增量、可选 reasoning 增量与用量，
+  并在终止事件或 `finalize(clean_eof=...)` 后置位 `finished`；
+- 非流式：调用方需要自行累积 `on_chunk` 分块，再用 `adapter.parse_response` /
+  `adapter.extract_usage` 解析。**这类编排（含响应体上限、终态回调只触发一次）原由已删除的
+  `LLMClient` 承担，将随 §12 的 `AnalysisService` 一起落地**；本模块目前只提供零件。
+- `on_error` 收到 `AppError`；不把 reasoning 加回会话历史。
+- 多轮分析需由 `AnalysisService` 按顺序提供 system/user/assistant 历史，本模块不保存历史。
 
-资源读取适配器与凭据解析服务已经实现，LLM 专用组合入口 `build_llm_client` 可读取 `.env`。
-AnalysisService、完整窗口与 `build_application/main` 仍未完成，完整桌面应用暂不能启动。
-测试使用假密钥或本地 Qt TCP 服务；未进行真实 API 请求。
+Adapter / Profile / Prompt 加载、`RequestBuilder`、`SSEParser`、`StreamProcessor`、
+`QtHttpTransport` 均已实现；`AnalysisService`、完整窗口与 `build_application/main`
+仍未实现，完整桌面应用暂不能启动。测试使用假密钥或本地 Qt TCP 服务；未进行真实 API 请求。
 
 ## 错误与生命周期
 
@@ -110,17 +117,8 @@ AnalysisService、完整窗口与 `build_application/main` 仍未完成，完整
 每条带有 review 检查点；两个服务应使用同一输入比较证据与分类，不用固定措辞评分。
 
 
-## 直接使用本地 .env 的组装入口
+## 本地 `.env`
 
-```python
-from serial_log_analyzer.bootstrap import build_llm_client
-
-# 在已有 Qt 应用/事件循环中传入唯一 network_manager。
-client = build_llm_client("sensenova", network_manager)
-# 或 client = build_llm_client("internlm", network_manager)
-# 然后按上面的 client.send(...) 接口调用。
-```
-
-源码运行时默认从仓库根目录读取 `.env`，不依赖终端当前目录。
-安装/打包场景请显式传入 `project_root=Path("本地配置目录")`。
-该入口仅构造客户端；client.send 才会解析密钥并发起网络请求。
+`.env` 由 `io/environment.py` 的 `DotEnvEnvironmentReader` 读取（进程环境优先，缺失时回落文件），
+组合根在建 `CredentialResolver` 时注入该读取器。`kind: environment` 的 Profile 因此既能用进程
+环境变量、也能用仓库根目录的 `.env`；`.env` 被 Git 忽略，`.env.example` 是模板。

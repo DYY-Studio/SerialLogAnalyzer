@@ -168,4 +168,5 @@ class CredentialProvider(Protocol):
     """LLM 请求所需的凭据解析端口；由凭据服务实现。"""
 
     def resolve(self, credential: CredentialRef) -> str:
-        """根据引用返回非空密钥；不可用时抛出 CredentialError。"""
+        """根据引用返回非空密钥；不可用时抛出 ``CredentialError``。"""
+
