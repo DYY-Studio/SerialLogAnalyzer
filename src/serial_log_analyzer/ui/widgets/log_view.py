@@ -24,8 +24,6 @@ from serial_log_analyzer.ui.models.log_table_model import LEVEL_LABELS, LogTable
 
 __all__ = ["LogView"]
 
-_FILTERED_LEVELS = (LogLevel.DEBUG, LogLevel.INFO, LogLevel.WARN, LogLevel.ERROR)
-
 
 class LogView(QWidget):
     """日志表格视图。
@@ -105,7 +103,7 @@ class LogView(QWidget):
         level_row = QHBoxLayout()
         level_row.setSpacing(8)
         level_row.addWidget(QLabel("级别:"))
-        for level in _FILTERED_LEVELS:
+        for level in LogLevel:
             box = QCheckBox(LEVEL_LABELS[level])
             box.setChecked(True)
             box.toggled.connect(self._apply_filters)
@@ -156,10 +154,9 @@ class LogView(QWidget):
         layout.addWidget(self.table_view, stretch=1)
 
     def _apply_filters(self) -> None:
+        # 每个级别都有自己的勾选框，因此勾选集就是唯一口径，不再有"全勾才不过滤"的特例。
         allowed = {level for level, box in self._level_boxes.items() if box.isChecked()}
-        self._filter.set_allowed_levels(
-            None if allowed == set(_FILTERED_LEVELS) else allowed
-        )
+        self._filter.set_allowed_levels(allowed)
         self._filter.set_module_filter(self.module_filter.text())
         self._filter.set_text_filter(self.text_filter.text())
 

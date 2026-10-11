@@ -77,6 +77,30 @@ def test_filters_narrow_rows_and_emit_selection(qtbot) -> None:
     assert selected and selected[-1] == [0]
 
 
+def test_level_filter_covers_every_level(qtbot) -> None:
+    window = _build_window(qtbot)
+    view = window.log_view
+    view.append_update(
+        PipelineUpdate(
+            added=(
+                _entry(0, LogLevel.VERBOSE),
+                _entry(1, LogLevel.UNKNOWN, message="???"),
+            )
+        )
+    )
+    assert set(view._level_boxes) == set(LogLevel)
+    assert view.table_view.model().rowCount() == 2
+
+    # 只留错误级：详细与未知也被过滤掉，且它们都有勾选框可以勾回来
+    for level, box in view._level_boxes.items():
+        box.setChecked(level is LogLevel.ERROR)
+    assert view.table_view.model().rowCount() == 0
+
+    for box in view._level_boxes.values():
+        box.setChecked(True)
+    assert view.table_view.model().rowCount() == 2
+
+
 def test_analysis_panel_reflects_state_and_request(qtbot) -> None:
     panel = AnalysisPanel()
     qtbot.addWidget(panel)
