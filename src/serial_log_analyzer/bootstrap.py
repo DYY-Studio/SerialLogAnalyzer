@@ -30,6 +30,7 @@ from serial_log_analyzer.core.llm.profile_loader import load_profile, load_profi
 from serial_log_analyzer.core.logs.parser import LogParser
 from serial_log_analyzer.core.logs.pipeline import LogPipeline, PipelineUpdate
 from serial_log_analyzer.core.logs.preset_loader import load_preset, load_presets
+from serial_log_analyzer.core.models.analysis import AnalysisState
 from serial_log_analyzer.core.models.device import DeviceConnectionState
 from serial_log_analyzer.core.prompts.loader import PromptLibrary
 from serial_log_analyzer.core.services.analysis import AnalysisContextBuilder, AnalysisService
@@ -172,18 +173,17 @@ def build_window(context: ApplicationContext) -> MainWindow:
     toolbar = SerialToolBar()
 
     device = DeviceController(context.session)
-    analysis = AnalysisController(
-        AnalysisService(
-            context.adapter,
-            context.http_transport,
-            context.prompts,
-            context.credentials,
-            profile=context.profile,
-        ),
-        context.context_builder,
+    service = AnalysisService(
+        context.adapter,
+        context.http_transport,
+        context.prompts,
+        context.credentials,
+        profile=context.profile,
     )
+    analysis = AnalysisController(service, context.context_builder)
     main = MainController(device, analysis, settings)
     window = MainWindow(log_view, panel, toolbar, on_close=lambda: _shutdown(main, window, settings))
+    toolbar.set_profiles(load_profiles(context.resources), context.profile.profile_id)
 
     toolbar.refresh_requested.connect(device.refresh_ports)
     toolbar.connect_requested.connect(device.connect)
@@ -207,7 +207,11 @@ def build_window(context: ApplicationContext) -> MainWindow:
     log_view.clear_requested.connect(log_view.clear)
     log_view.export_requested.connect(lambda: _export_logs(window, context))
     log_view.import_requested.connect(lambda: _import_logs(window, context))
+    log_view.autoscroll_toggled.connect(
+        lambda enabled: settings.set(SETTINGS_KEYS.AUTOSCROLL, bool(enabled))
+    )
     toolbar.serial_settings_requested.connect(lambda: _open_serial_settings(window, toolbar))
+    toolbar.profile_changed.connect(lambda profile_id: _switch_profile(window, context, service, profile_id))
 
     panel.analyze_requested.connect(lambda payload: analysis.start_analysis(*payload))
     panel.follow_up_requested.connect(analysis.follow_up)
@@ -220,6 +224,7 @@ def build_window(context: ApplicationContext) -> MainWindow:
     window.settings_requested.connect(lambda: _open_settings(window, context))
     window.provider_requested.connect(lambda: _open_provider(window, context))
     window.credential_requested.connect(lambda: _open_credential(window, context))
+    window.preset_requested.connect(lambda: _choose_preset(window, context))
 
     _restore_view(window, toolbar, log_view, settings)
     device.refresh_ports()
@@ -376,6 +381,73 @@ def _open_credential(window: MainWindow, context: ApplicationContext) -> None:
         window,
         account=credential.name or context.profile.profile_id,
     ).exec()
+
+
+def _switch_profile(
+    window: MainWindow, context: ApplicationContext, service: AnalysisService, profile_id: str
+) -> None:
+    """切换当前 LLM Profile：写设置、换 Adapter 与请求构建器。"""
+
+    from serial_log_analyzer.core.errors import AppError
+
+    if not profile_id or profile_id == context.profile.profile_id:
+        return
+    try:
+        profile = load_profile(context.resources, profile_id)
+        adapter = load_adapter(context.resources, profile.adapter_id)
+        service.set_profile(profile, adapter)
+    except AppError as exc:
+        window.serial_toolbar.set_current_profile(context.profile.profile_id)
+        window.show_status(f"切换 Profile 失败：{exc}")
+        return
+    context.profile = profile
+    context.adapter = adapter
+    context.settings.set(SETTINGS_KEYS.CURRENT_PROFILE, profile_id)
+    window.analysis_panel.set_state(AnalysisState.IDLE)
+    window.show_status(f"已切换到 Profile {profile_id}（{profile.model}）")
+
+
+def _choose_preset(window: MainWindow, context: ApplicationContext) -> None:
+    """让用户从内置 Preset 中选一个并切换。"""
+
+    from PySide6.QtWidgets import QInputDialog
+
+    presets = sorted(load_presets(context.resources), key=lambda item: item.preset_id)
+    if not presets:
+        window.show_status("没有可用的日志 Preset")
+        return
+    labels = [f"{item.preset_id} · {item.display_name}" for item in presets]
+    current = next(
+        (index for index, item in enumerate(presets) if item.preset_id == context.preset.preset_id),
+        0,
+    )
+    choice, accepted = QInputDialog.getItem(window, "切换日志 Preset", "Preset", labels, current, False)
+    if accepted:
+        _switch_preset(window, context, presets[labels.index(choice)].preset_id)
+
+
+def _switch_preset(window: MainWindow, context: ApplicationContext, preset_id: str) -> None:
+    """切换日志 Preset：重建流水线并清空表格（连接中不允许）。"""
+
+    from serial_log_analyzer.core.errors import AppError
+
+    if not preset_id or preset_id == context.preset.preset_id:
+        return
+    try:
+        preset = load_preset(context.resources, preset_id)
+        pipeline = LogPipeline(
+            LogParser(preset), capacity=_capacity(context.settings)
+        )
+        context.session.set_pipeline(pipeline)
+    except AppError as exc:
+        window.show_status(f"切换 Preset 失败：{exc}")
+        return
+    context.preset = preset
+    context.pipeline = pipeline
+    context.context_builder.set_pipeline(pipeline)
+    window.log_view.clear()
+    context.settings.set(SETTINGS_KEYS.CURRENT_PRESET, preset_id)
+    window.show_status(f"已切换到 Preset {preset_id}，日志已清空")
 
 
 def _restore_view(window: MainWindow, toolbar: SerialToolBar, log_view: LogView, settings: Any) -> None:

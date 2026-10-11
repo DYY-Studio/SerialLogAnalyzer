@@ -64,6 +64,28 @@ def test_invalid_capacity_fails_loudly(qapp, fake_settings) -> None:
         bootstrap.build_application(["-platform", "offscreen"])
 
 
+def test_switch_profile_and_preset_stay_in_sync(qapp, fake_settings) -> None:
+    from serial_log_analyzer.io.settings.qt_settings_store import SETTINGS_KEYS as KEYS
+
+    context = bootstrap.build_application(["-platform", "offscreen"])
+    window = bootstrap.build_window(context)
+    previous_pipeline = context.pipeline
+
+    index = window.serial_toolbar.profile_combo.findData("internlm")
+    window.serial_toolbar.profile_combo.setCurrentIndex(index)
+
+    assert context.profile.profile_id == "internlm"
+    assert context.adapter.adapter_id == "openai-compatible"
+    assert fake_settings.values[KEYS.CURRENT_PROFILE] == "internlm"
+
+    bootstrap._switch_preset(window, context, "hi3861-timestamped")
+
+    assert context.preset.preset_id == "hi3861-timestamped"
+    assert context.pipeline is not previous_pipeline
+    assert len(context.pipeline) == 0
+    assert fake_settings.values[KEYS.CURRENT_PRESET] == "hi3861-timestamped"
+
+
 def test_build_window_wires_the_ui(qapp, fake_settings) -> None:
     context = bootstrap.build_application(["-platform", "offscreen"])
 

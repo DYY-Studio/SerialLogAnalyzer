@@ -214,6 +214,8 @@ export MY_DEEPSEEK_API_KEY=sk-...
 - 保存后**立即生效**的项：自动滚动、日志容量（超出部分当场裁掉并同步表格）、应用日志级别；
   导出目录与当前 Profile / Preset 在下次使用时读取。
 - 串口高级参数（数据位 / 校验位 / 停止位 / 流控）不落盘，只在本次会话内生效。
+- 当前 LLM Profile 可在工具栏切换（换用对应 Adapter、写回 `llm/current_profile`）；
+  「配置 → 切换日志 Preset…」切换 `logs/current_preset` 并**清空当前日志**（连接中不允许切换）。
 
 ## 7. 日志导出与导入
 
