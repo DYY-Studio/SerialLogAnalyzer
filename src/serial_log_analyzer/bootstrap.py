@@ -183,7 +183,7 @@ def build_window(context: ApplicationContext) -> MainWindow:
     analysis = AnalysisController(service, context.context_builder)
     main = MainController(device, analysis, settings)
     window = MainWindow(log_view, panel, toolbar, on_close=lambda: _shutdown(main, window, settings))
-    toolbar.set_profiles(load_profiles(context.resources), context.profile.profile_id)
+    panel.set_profiles(load_profiles(context.resources), context.profile.profile_id)
 
     toolbar.refresh_requested.connect(device.refresh_ports)
     toolbar.connect_requested.connect(device.connect)
@@ -211,7 +211,7 @@ def build_window(context: ApplicationContext) -> MainWindow:
         lambda enabled: settings.set(SETTINGS_KEYS.AUTOSCROLL, bool(enabled))
     )
     toolbar.serial_settings_requested.connect(lambda: _open_serial_settings(window, toolbar))
-    toolbar.profile_changed.connect(lambda profile_id: _switch_profile(window, context, service, profile_id))
+    panel.profile_changed.connect(lambda profile_id: _switch_profile(window, context, service, profile_id))
 
     panel.analyze_requested.connect(lambda payload: analysis.start_analysis(*payload))
     panel.follow_up_requested.connect(analysis.follow_up)
@@ -406,7 +406,7 @@ def _refresh_profiles(
             context.adapter = adapter
         except AppError as exc:
             window.show_status(f"Profile 改动未能即时生效：{exc}")
-    window.serial_toolbar.set_profiles(profiles, context.profile.profile_id)
+    window.analysis_panel.set_profiles(profiles, context.profile.profile_id)
 
 
 def _open_credential(window: MainWindow, context: ApplicationContext) -> None:
@@ -437,7 +437,7 @@ def _switch_profile(
         adapter = load_adapter(context.resources, profile.adapter_id)
         service.set_profile(profile, adapter)
     except AppError as exc:
-        window.serial_toolbar.set_current_profile(context.profile.profile_id)
+        window.analysis_panel.set_current_profile(context.profile.profile_id)
         window.show_status(f"切换 Profile 失败：{exc}")
         return
     context.profile = profile

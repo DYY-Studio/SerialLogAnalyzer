@@ -142,24 +142,24 @@ def test_toolbar_emits_config_and_command(qtbot) -> None:
     assert commands == ["PING"]
 
 
-def test_toolbar_profile_combo_emits_change(qtbot) -> None:
+def test_panel_profile_combo_emits_change(qtbot) -> None:
     class _Profile:
         def __init__(self, profile_id: str) -> None:
             self.profile_id = profile_id
             self.model = f"{profile_id}-model"
 
-    toolbar = SerialToolBar()
-    qtbot.addWidget(toolbar)
+    panel = AnalysisPanel()
+    qtbot.addWidget(panel)
     seen: list[str] = []
-    toolbar.profile_changed.connect(seen.append)
+    panel.profile_changed.connect(seen.append)
 
-    toolbar.set_profiles([_Profile("deepseek"), _Profile("internlm")], "internlm")
-    assert toolbar.current_profile() == "internlm"
+    panel.set_profiles([_Profile("deepseek"), _Profile("internlm")], "internlm")
+    assert panel.current_profile() == "internlm"
 
-    toolbar.set_current_profile("deepseek")
+    panel.set_current_profile("deepseek")
     assert seen == []  # 程序化切换不触发信号
 
-    toolbar.profile_combo.setCurrentIndex(1)
+    panel.profile_combo.setCurrentIndex(1)
     assert seen == ["internlm"]
 
 

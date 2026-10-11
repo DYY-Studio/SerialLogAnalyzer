@@ -25,6 +25,7 @@ from serial_log_analyzer.core.models.analysis import (
     ContextSelector,
     MessageRole,
 )
+from serial_log_analyzer.core.models.provider import ProviderProfile
 from serial_log_analyzer.core.prompts.loader import PromptGoal
 
 __all__ = ["AnalysisPanel"]
@@ -51,12 +52,14 @@ class AnalysisPanel(QWidget):
         follow_up_requested(str): 追问文本。
         cancel_requested(): 请求取消。
         reset_requested(): 请求清空会话。
+        profile_changed(str): 用户切换了 LLM Profile（携带 profile_id）。
     """
 
     analyze_requested = Signal(object)
     follow_up_requested = Signal(str)
     cancel_requested = Signal()
     reset_requested = Signal()
+    profile_changed = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -105,6 +108,34 @@ class AnalysisPanel(QWidget):
         for goal in goals:
             self.goal_combo.addItem(goal.display_name, goal.goal_id)
 
+    def set_profiles(self, profiles: list[ProviderProfile], current: str = "") -> None:
+        """填充 LLM Profile 下拉并选中 ``current``（不存在时选第一个）。"""
+
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.clear()
+        for profile in profiles:
+            self.profile_combo.addItem(
+                f"{profile.profile_id} · {profile.model}", profile.profile_id
+            )
+        index = self.profile_combo.findData(current)
+        self.profile_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.profile_combo.blockSignals(False)
+
+    def current_profile(self) -> str:
+        """返回当前选中的 Profile 标识。"""
+
+        return str(self.profile_combo.currentData() or "")
+
+    def set_current_profile(self, profile_id: str) -> None:
+        """在不触发信号的前提下把下拉切到指定 Profile。"""
+
+        index = self.profile_combo.findData(profile_id)
+        if index < 0:
+            return
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.setCurrentIndex(index)
+        self.profile_combo.blockSignals(False)
+
     # ------------------------------------------------------------------
     # 构建与槽函数
     # ------------------------------------------------------------------
@@ -113,6 +144,16 @@ class AnalysisPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
+
+        profile_row = QHBoxLayout()
+        profile_row.addWidget(QLabel("模型:"))
+        self.profile_combo = QComboBox()
+        self.profile_combo.setObjectName("panel-profile")
+        self.profile_combo.currentIndexChanged.connect(
+            lambda _index: self.profile_changed.emit(self.current_profile())
+        )
+        profile_row.addWidget(self.profile_combo, stretch=1)
+        layout.addLayout(profile_row)
 
         context_row = QHBoxLayout()
         context_row.addWidget(QLabel("上下文:"))

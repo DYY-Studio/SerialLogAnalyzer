@@ -22,7 +22,6 @@ from serial_log_analyzer.core.models.device import (
     SerialPortInfo,
     StopBits,
 )
-from serial_log_analyzer.core.models.provider import ProviderProfile
 
 __all__ = ["SerialToolBar"]
 
@@ -39,7 +38,6 @@ class SerialToolBar(QToolBar):
         clear_requested(): 请求清空日志。
         command_submitted(str): 请求发送一行命令。
         serial_settings_requested(): 请求打开串口高级设置。
-        profile_changed(str): 用户切换了 LLM Profile（携带 profile_id）。
     """
 
     connect_requested = Signal(object)
@@ -48,7 +46,6 @@ class SerialToolBar(QToolBar):
     clear_requested = Signal()
     command_submitted = Signal(str)
     serial_settings_requested = Signal()
-    profile_changed = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -121,32 +118,6 @@ class SerialToolBar(QToolBar):
 
         self.reply_label.setText(text)
 
-    def set_profiles(self, profiles: list[ProviderProfile], current: str = "") -> None:
-        """填充 LLM Profile 下拉列表并选中 ``current``（不存在时选第一个）。"""
-
-        self.profile_combo.blockSignals(True)
-        self.profile_combo.clear()
-        for profile in profiles:
-            self.profile_combo.addItem(f"{profile.profile_id} · {profile.model}", profile.profile_id)
-        index = self.profile_combo.findData(current)
-        self.profile_combo.setCurrentIndex(index if index >= 0 else 0)
-        self.profile_combo.blockSignals(False)
-
-    def current_profile(self) -> str:
-        """返回当前选中的 Profile 标识。"""
-
-        return str(self.profile_combo.currentData() or "")
-
-    def set_current_profile(self, profile_id: str) -> None:
-        """在不触发信号的前提下把下拉框切到指定 Profile。"""
-
-        index = self.profile_combo.findData(profile_id)
-        if index < 0:
-            return
-        self.profile_combo.blockSignals(True)
-        self.profile_combo.setCurrentIndex(index)
-        self.profile_combo.blockSignals(False)
-
     def restore(self, port: str, baudrate: str) -> None:
         """按上次设置恢复端口与波特率选择。"""
 
@@ -195,15 +166,6 @@ class SerialToolBar(QToolBar):
         self.settings_btn = QPushButton("串口设置…")
         self.settings_btn.clicked.connect(self.serial_settings_requested.emit)
         self.addWidget(self.settings_btn)
-
-        self.addSeparator()
-        self.addWidget(QLabel(" Profile "))
-        self.profile_combo = QComboBox()
-        self.profile_combo.setMinimumWidth(220)
-        self.profile_combo.currentIndexChanged.connect(
-            lambda _index: self.profile_changed.emit(self.current_profile())
-        )
-        self.addWidget(self.profile_combo)
 
         self.addSeparator()
         self.addWidget(QLabel(" 命令 "))
