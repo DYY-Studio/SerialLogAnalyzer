@@ -115,6 +115,30 @@ def test_http_success(server, transport, qtbot):
     assert not transport._active and done == [True] and errors == []
 
 
+def test_get_request_sends_no_body(server, transport, qtbot):
+    chunks, done, errors = [], [], []
+    token = transport.send(
+        HttpRequest(
+            "GET",
+            server[0] + "/models",
+            headers={"Authorization": "Bearer k"},
+            timeout_seconds=1,
+        ),
+        chunks.append,
+        lambda: done.append(True),
+        errors.append,
+    )
+    qtbot.waitUntil(lambda: bool(done or errors))
+
+    header, body = server[1][0]
+    assert done == [True] and errors == []
+    assert body == b""
+    assert header.startswith(b"GET /models HTTP/1.1")
+    assert b"authorization: bearer k" in header.lower()
+    token.cancel()
+    assert not transport._active
+
+
 @pytest.mark.parametrize("status", [302, 401, 429, 500])
 def test_status(server, transport, qtbot, status):
     _, chunks, done, errors = send(transport, server[0] + f"/status/{status}")

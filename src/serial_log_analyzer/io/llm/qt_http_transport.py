@@ -106,7 +106,7 @@ class QtHttpTransport:
         on_done: VoidHandler,
         on_error: ErrorHandler,
     ) -> CancellationToken:
-        """发送 POST JSON 请求；返回取消令牌，失败回调与成功回调合计仅执行一次。
+        """发送 GET / POST 请求；返回取消令牌，失败回调与成功回调合计仅执行一次。
 
         参数为请求及字节、完成、错误回调；本地非法请求抛出 ConfigError。
         """
@@ -115,24 +115,29 @@ class QtHttpTransport:
             raise ConfigError("请求超时超过 Qt 计时范围")
         url = QUrl(request.url)
         if (
-            request.method != "POST"
+            request.method not in {"GET", "POST"}
             or not url.isValid()
             or url.scheme() not in {"http", "https"}
             or not url.host()
             or url.userInfo()
             or url.hasFragment()
         ):
-            raise ConfigError("仅支持无凭据的 HTTP(S) POST 请求")
-        try:
-            body = json.dumps(request.body, ensure_ascii=False, allow_nan=False).encode("utf-8")
-        except (ValueError, TypeError) as exc:
-            raise ConfigError("请求体无法序列化为 JSON") from exc
+            raise ConfigError("仅支持无凭据的 HTTP(S) GET/POST 请求")
+        method_body: bytes | None = None
+        if request.method == "POST":
+            try:
+                method_body = json.dumps(
+                    request.body, ensure_ascii=False, allow_nan=False
+                ).encode("utf-8")
+            except (ValueError, TypeError) as exc:
+                raise ConfigError("请求体无法序列化为 JSON") from exc
         qt_request = QNetworkRequest(url)
         qt_request.setAttribute(
             QNetworkRequest.Attribute.RedirectPolicyAttribute,
             QNetworkRequest.RedirectPolicy.ManualRedirectPolicy,
         )
-        qt_request.setRawHeader(b"Content-Type", b"application/json")
+        if method_body is not None:
+            qt_request.setRawHeader(b"Content-Type", b"application/json")
         for name, value in request.headers.items():
             if (
                 not isinstance(name, str)
@@ -145,7 +150,11 @@ class QtHttpTransport:
                 qt_request.setRawHeader(name.encode("ascii"), value.encode("utf-8"))
             except UnicodeError as exc:
                 raise ConfigError("HTTP 请求头名称必须为 ASCII") from exc
-        reply = self._manager.post(qt_request, body)
+        reply = (
+            self._manager.get(qt_request)
+            if method_body is None
+            else self._manager.post(qt_request, method_body)
+        )
         pending = _Pending(self, reply, seconds, on_chunk, on_done, on_error)
         self._active.add(pending)
         return pending
