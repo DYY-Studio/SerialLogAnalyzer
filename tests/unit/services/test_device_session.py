@@ -58,6 +58,25 @@ def _handlers(**kwargs) -> DeviceSessionHandlers:
     )
 
 
+def test_session_requires_handlers_before_connect(parser) -> None:
+    session = DeviceSession(FakeTransport(), LogPipeline(parser))
+
+    with pytest.raises(SerialConnectionError):
+        session.connect(SerialConfig(port="COM1"))
+
+
+def test_handlers_can_be_installed_after_construction(parser) -> None:
+    states: list[DeviceConnectionState] = []
+    session = DeviceSession(FakeTransport(), LogPipeline(parser))
+    session.set_handlers(_handlers(on_state=lambda state, message: states.append(state)))
+
+    session.connect(SerialConfig(port="COM1"))
+    session.disconnect()
+
+    assert states == [DeviceConnectionState.CONNECTING, DeviceConnectionState.CONNECTED,
+                      DeviceConnectionState.DISCONNECTED]
+
+
 @pytest.fixture
 def pipe(parser) -> LogPipeline:
     return LogPipeline(parser)

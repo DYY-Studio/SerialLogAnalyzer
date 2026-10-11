@@ -1,8 +1,9 @@
-"""凭据解析：按优先级从多个来源取得 API Key。
+"""凭据解析：运行时输入优先，其次只读 Profile 声明的那个来源。
 
 职责：
     实现 ``docs/protocols/credentials.md`` 的解析规则：先看本次会话的运行时输入，
-    再按 Profile 声明的 ``kind`` 取首选来源，最后回退到另一个来源；任一来源命中即停止。
+    未命中时只读取 Profile 中 ``kind`` 声明的来源，**不做跨来源回落**；两者都没取到
+    非空值时抛出 ``CredentialError``，并在消息中说明已尝试的来源与替代办法。
     本类不直接访问系统钥匙串或环境变量，两者都由构造函数注入，因此可在纯单元测试中覆盖。
 
 参数：
@@ -10,13 +11,10 @@
     environment: ``core/ports.py`` 的 ``EnvironmentReader`` 实现。
 
 异常：
-    ``CredentialError``：所有来源均未命中，或来源读取失败且无可用回退。
+    ``CredentialError``：声明的来源未命中或读取失败。
 """
 
 from __future__ import annotations
-
-from collections.abc import Callable
-from dataclasses import dataclass
 
 from serial_log_analyzer.core.errors import CredentialError
 from serial_log_analyzer.core.models.provider import CredentialKind, CredentialRef
@@ -24,17 +22,15 @@ from serial_log_analyzer.core.ports import EnvironmentReader, KeyringStore
 
 __all__ = ["CredentialResolver"]
 
-
-@dataclass(frozen=True)
-class _Source:
-    """一个候选来源：中文标签 + 惰性读取函数。"""
-
-    label: str
-    read: Callable[[], str | None]
+_HINTS = {
+    CredentialKind.KEYRING: "可把该 Profile 的 credential.kind 改为 environment 或 runtime，或把密钥存入系统钥匙串",
+    CredentialKind.ENVIRONMENT: "请设置该环境变量，或把该 Profile 的 credential.kind 改为 keyring 或 runtime",
+    CredentialKind.RUNTIME: "请在界面输入本次会话密钥",
+}
 
 
 class CredentialResolver:
-    """凭据解析器（无状态缓存，运行时输入仅存内存）。
+    """凭据解析器（不缓存持久来源，运行时输入仅存内存）。
 
     参数：
         keyring: 系统钥匙串适配器。
@@ -52,7 +48,7 @@ class CredentialResolver:
         运行时输入只保存在内存中，不会写入系统钥匙串。
 
         参数：
-            credential_id: 凭据名称，通常来自用户选择或 Profile 的 ``name``。
+            credential_id: 凭据名称，取 ``CredentialRef.name``（缺省为 ``profile_id``）。
             secret: 凭据内容；``None`` 或空串表示清除。
         """
         identifier = str(credential_id).strip()
@@ -74,29 +70,43 @@ class CredentialResolver:
             凭据内容（已去除首尾空白）。
 
         异常：
-            CredentialError: 所有来源都未命中；错误信息中包含已尝试的来源与失败原因。
+            CredentialError: 运行时输入与 ``kind`` 声明的来源都未命中；错误信息中包含
+                已尝试的来源与失败原因。
         """
         attempts: list[str] = []
-        for source in self._sources(credential):
+        identifier = self._runtime_id(credential)
+        if identifier:
+            secret = self._runtime.get(identifier)
+            if secret:
+                return secret
+            attempts.append(f"本次会话输入（{identifier}，未命中）")
+
+        if credential.kind is not CredentialKind.RUNTIME:
+            label = self._source_label(credential)
             try:
-                value = source.read()
+                value = self._read_declared(credential)
             except CredentialError as exc:
-                attempts.append(f"{source.label}（{exc}）")
-                continue
-            text = (value or "").strip()
-            if text:
-                return text
-            attempts.append(f"{source.label}（未命中）")
-        detail = "、".join(attempts) if attempts else "未配置任何来源"
-        raise CredentialError(f"未找到可用凭据（{self._describe(credential)}）：已尝试 {detail}")
+                attempts.append(f"{label}（{exc}）")
+            else:
+                text = (value or "").strip()
+                if text:
+                    return text
+                attempts.append(f"{label}（未命中）")
+
+        raise CredentialError(self._failure(credential, attempts))
 
     def describe_sources(self, credential: CredentialRef) -> str:
-        """返回中文来源链描述，例如 ``本次会话输入 → 系统钥匙串（demo）→ 环境变量 DEMO_KEY``。
+        """返回中文来源描述，例如 ``本次会话输入（demo） → 系统钥匙串（demo）``。
 
         参数：
             credential: Profile 中声明的凭据引用。
         """
-        labels = [source.label for source in self._sources(credential)]
+        labels: list[str] = []
+        identifier = self._runtime_id(credential)
+        if identifier:
+            labels.append(f"本次会话输入（{identifier}）")
+        if credential.kind is not CredentialKind.RUNTIME:
+            labels.append(self._source_label(credential))
         return " → ".join(labels) if labels else "未配置任何来源"
 
     def keyring_available(self) -> bool:
@@ -110,6 +120,30 @@ class CredentialResolver:
         """本次会话是否已登记某个凭据（不读取内容本身）。"""
         return str(credential_id).strip() in self._runtime
 
+    def _runtime_id(self, credential: CredentialRef) -> str:
+        """运行时输入的键：``name``（加载器保证 keyring / runtime 有值），否则 ``env_var``。"""
+        return (credential.name or credential.env_var).strip()
+
+    def _source_label(self, credential: CredentialRef) -> str:
+        """``kind`` 声明的来源在消息中的名称。"""
+        if credential.kind is CredentialKind.KEYRING:
+            suffix = "" if self.keyring_available() else "，不可用"
+            return f"系统钥匙串（{credential.name}{suffix}）"
+        return f"环境变量 {credential.env_var}"
+
+    def _read_declared(self, credential: CredentialRef) -> str | None:
+        """读取 ``kind`` 声明的来源；来源不可用时抛出 ``CredentialError``。"""
+        if credential.kind is CredentialKind.KEYRING:
+            if not self.keyring_available():
+                raise CredentialError("系统钥匙串不可用")
+            return self._keyring.read(credential.name)
+        return self._environment.get(credential.env_var)
+
+    def _failure(self, credential: CredentialRef, attempts: list[str]) -> str:
+        """构造未命中错误：已尝试的来源 + 可操作的替代办法。"""
+        detail = "、".join(attempts) if attempts else "未配置任何来源"
+        return f"未找到可用凭据（{self._describe(credential)}）：已尝试 {detail}；{_HINTS[credential.kind]}"
+
     def _describe(self, credential: CredentialRef) -> str:
         """渲染凭据引用，用于错误信息。"""
         parts = [f"kind={credential.kind.value}"]
@@ -118,56 +152,3 @@ class CredentialResolver:
         if credential.env_var:
             parts.append(f"env_var={credential.env_var}")
         return "，".join(parts)
-
-    def _sources(self, credential: CredentialRef) -> list[_Source]:
-        """按优先级展开候选来源列表。"""
-        sources: list[_Source] = []
-        for identifier in self._runtime_ids(credential):
-            runtime_id = identifier
-            sources.append(
-                _Source(
-                    label=f"本次会话输入（{runtime_id}）",
-                    read=lambda runtime_id=runtime_id: self._runtime.get(runtime_id),
-                )
-            )
-        keyring_source, env_source = self._keyring_source(credential), self._env_source(credential)
-        preferred = [keyring_source, env_source]
-        if credential.kind is CredentialKind.ENVIRONMENT:
-            preferred.reverse()
-        sources.extend(source for source in preferred if source is not None)
-        return sources
-
-    def _runtime_ids(self, credential: CredentialRef) -> list[str]:
-        """运行时输入可能使用的键：``name`` 与 ``env_var``。"""
-        candidates = [credential.name, credential.env_var]
-        result: list[str] = []
-        for item in candidates:
-            identifier = (item or "").strip()
-            if identifier and identifier not in result:
-                result.append(identifier)
-        return result
-
-    def _keyring_source(self, credential: CredentialRef) -> _Source | None:
-        """构造钥匙串来源；account 名称为空或后端不可用时返回 ``None``。"""
-        account = (credential.name or credential.env_var or "").strip()
-        if not account:
-            return None
-        if not self.keyring_available():
-            return _Source(
-                label=f"系统钥匙串（{account}，不可用）",
-                read=lambda: None,
-            )
-        return _Source(
-            label=f"系统钥匙串（{account}）",
-            read=lambda account=account: self._keyring.read(account),
-        )
-
-    def _env_source(self, credential: CredentialRef) -> _Source | None:
-        """构造环境变量来源；未声明环境变量名时返回 ``None``。"""
-        env_var = (credential.env_var or "").strip()
-        if not env_var:
-            return None
-        return _Source(
-            label=f"环境变量 {env_var}",
-            read=lambda env_var=env_var: self._environment.get(env_var),
-        )

@@ -1,49 +1,47 @@
 schema_version: 3
 adapter_id: google-gemini
-endpoint: "/models/${model}:generateContent"
-
+endpoint: /models/${model}:generateContent
 headers:
-  x-goog-api-key: "${api_key}"
-  Content-Type: "application/json"
-
+  x-goog-api-key: ${api_key}
+  Content-Type: application/json
 body:
   system_instruction:
     parts:
-      - text: "${system}"
-  contents: "${messages}"
+    - text: ${system}
+  contents: ${messages}
   generationConfig:
-    temperature: "${temperature}"
-    maxOutputTokens: "${max_output_tokens}"
-
+    temperature: ${temperature}
+    maxOutputTokens: ${max_output_tokens}
 messages_format: gemini
-
-response_content_pointer: "/candidates/0/content/parts/-1/text"
-
+response_content_pointer: /candidates/0/content/parts/-1/text
 models:
-  endpoint: "/models"
-  response_models_pointer: "/models"
-  response_model_id: "name"
-  response_model_display: "displayName"
-  response_model_strip_prefix: "models/"
-
+  endpoint: /models
+  response_models_pointer: /models
+  response_model_id: name
+  response_model_display: displayName
+  response_model_strip_prefix: models/
 usage:
-  input_tokens_pointer: "/usageMetadata/promptTokenCount"
-  output_tokens_pointer: "/usageMetadata/candidatesTokenCount"
-  total_tokens_pointer: "/usageMetadata/totalTokenCount"
-
+  input_tokens_pointer: /usageMetadata/promptTokenCount
+  output_tokens_pointer: /usageMetadata/candidatesTokenCount
+  total_tokens_pointer: /usageMetadata/totalTokenCount
 streaming:
   transport: sse
-  endpoint: "/models/${model}:streamGenerateContent?alt=sse"
+  endpoint: /models/${model}:streamGenerateContent?alt=sse
   request_body: {}
   content_events:
-    - pointer: "/candidates/0/content/parts/-1/text"
+  - pointer: /candidates/0/content/parts
+    text_blocks: true
   reasoning_events: []
   terminal:
     when:
-      pointer: "/candidates/0/finishReason"
+      pointer: /candidates/0/finishReason
       exists: true
   error_events: []
   usage:
-    input_tokens_pointers: ["/usageMetadata/promptTokenCount"]
-    output_tokens_pointers: ["/usageMetadata/candidatesTokenCount"]
-    total_tokens_pointers: ["/usageMetadata/totalTokenCount"]
+    input_tokens_pointers:
+    - /usageMetadata/promptTokenCount
+    output_tokens_pointers:
+    - /usageMetadata/candidatesTokenCount
+    total_tokens_pointers:
+    - /usageMetadata/totalTokenCount
+response_text_blocks_pointer: /candidates/0/content/parts

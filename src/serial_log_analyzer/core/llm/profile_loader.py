@@ -162,19 +162,20 @@ def _parse_credential(raw: Any, profile_id: str = "") -> CredentialRef:
         {kind: environment, env_var: <VAR>}
         {kind: runtime}
 
-    ``kind`` 之外的字段是回退来源：``kind: keyring`` 也可以同时声明 ``env_var``，
-    此时钥匙串未命中会回退到该环境变量（见 ``docs/protocols/credentials.md``）。
+    只允许声明属于该 ``kind`` 的来源字段，**不做跨来源回落**：``read`` 只读这一个来源。
+    ``kind: keyring`` 未声明 ``name``、``kind: runtime`` 未声明来源字段时，都用 ``profile_id``
+    作为账号名 / 运行时输入键（见 ``docs/protocols/credentials.md``）。
 
     参数:
         raw: ``credential`` 段的原始值；``None`` 时按 ``runtime`` 处理。
-        profile_id: 所属 Profile 标识；``kind: keyring`` 未声明 ``name`` 时用作 account。
+        profile_id: 所属 Profile 标识，用作缺省标识。
 
     异常:
-        ConfigError: ``kind`` 未知、字段未知或缺少对应必填字段。
+        ConfigError: ``kind`` 未知、字段未知、声明了不属于该 ``kind`` 的字段，或缺少必填字段。
     """
 
     if raw is None:
-        return CredentialRef(kind=CredentialKind.RUNTIME)
+        raw = {}
     if not isinstance(raw, dict):
         raise ConfigError("credential 必须是对象")
     unknown = set(raw) - _CREDENTIAL_FIELDS
@@ -193,13 +194,21 @@ def _parse_credential(raw: Any, profile_id: str = "") -> CredentialRef:
     env_var = _optional_str(raw.get("env_var"), "credential.env_var")
 
     if kind is CredentialKind.KEYRING:
-        name = name or profile_id
-        if not name:
+        if env_var:
+            raise ConfigError("credential.kind=keyring 只能声明 name，不能声明 env_var")
+        account = name or profile_id
+        if not account:
             raise ConfigError("credential.kind=keyring 时必须声明 name（或由 Profile 提供默认 account）")
-    if kind is CredentialKind.ENVIRONMENT and not env_var:
-        raise ConfigError("credential.kind=environment 时必须声明 env_var")
-
-    return CredentialRef(kind=kind, name=name, env_var=env_var)
+        return CredentialRef(kind=kind, name=account)
+    if kind is CredentialKind.ENVIRONMENT:
+        if name:
+            raise ConfigError("credential.kind=environment 只能声明 env_var，不能声明 name")
+        if not env_var:
+            raise ConfigError("credential.kind=environment 时必须声明 env_var")
+        return CredentialRef(kind=kind, env_var=env_var)
+    if name or env_var:
+        raise ConfigError("credential.kind=runtime 不接受 name / env_var")
+    return CredentialRef(kind=kind, name=profile_id)
 
 
 def _require_str(data: dict[str, Any], field: str, source_path: str) -> str:

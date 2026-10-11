@@ -117,7 +117,7 @@ Qt Main Thread
 | LLM Profile | `providers/profiles/*.yaml` | YAML |
 | Prompt 模板 | `prompts/*.md` | Markdown + `string.Template` |
 | 界面偏好 | `QSettings` | 系统注册表 / plist / ini |
-| API Key | 系统 Keychain（回退环境变量） | 见 `docs/protocols/credentials.md` |
+| API Key | 由 Profile 的 `credential.kind` 决定（Keychain / 环境变量 / 运行时输入） | 见 `docs/protocols/credentials.md` |
 
 资源查找顺序：用户配置目录 → 仓库/内置资源。同 ID 时用户资源覆盖内置资源。
 
@@ -155,7 +155,7 @@ SLA_HW_PORT=COM3 uv run pytest tests/integration/test_hardware_link.py -v
 |---|---|
 | 串口列表为空 | 确认驱动与线缆；macOS 检查 `/dev/cu.*` 权限 |
 | 日志粘行 | 确认 Preset 正则与板上换行符（应为 `\r\n`） |
-| Keychain 不可用 | Linux 无 SecretService 时会自动回退环境变量，界面会给出提示 |
+| Keychain 不可用 | Linux 无 SecretService 时 `kind: keyring` 的 Profile 取不到密钥；界面提示改用 `environment` / `runtime`，不跨来源回落 |
 | 流式无输出 | 检查 profile `stream` 与 adapter `streaming` 声明是否匹配 |
 | 自建 Preset / Profile 没生效 | 运行 `python -m serial_log_analyzer.diagnostics`，对照报告里的资源根目录与配置错误 |
 | 导出的日志找不到 | 看设置里的 `logs/export_dir`，留空则用 `SLA_EXPORT_DIR` / `<仓库根>/exports` |

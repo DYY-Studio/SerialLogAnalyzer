@@ -64,20 +64,29 @@ class DeviceSession:
     参数:
         transport: 串口传输实现（由 ``io`` 提供）。
         pipeline: 日志流水线。
-        handlers: 对外回调。
+        handlers: 对外回调；省略时需在连接前用 :meth:`set_handlers` 安装。
     """
 
     def __init__(
         self,
         transport: SerialTransport,
         pipeline: LogPipeline,
-        handlers: DeviceSessionHandlers,
+        handlers: DeviceSessionHandlers | None = None,
     ) -> None:
         self._transport = transport
         self._pipeline = pipeline
         self._handlers = handlers
         self._framer = LineFramer()
         self._state = DeviceConnectionState.DISCONNECTED
+
+    def set_handlers(self, handlers: DeviceSessionHandlers) -> None:
+        """安装对外回调；由 ``ui`` 控制器在构造后注入。
+
+        参数:
+            handlers: 设备会话回调集合。
+        """
+
+        self._handlers = handlers
 
     @property
     def state(self) -> DeviceConnectionState:
@@ -103,6 +112,8 @@ class DeviceSession:
             SerialConnectionError: 打开失败。
         """
 
+        if self._handlers is None:
+            raise SerialConnectionError("未安装会话回调，无法连接设备")
         self._set_state(DeviceConnectionState.CONNECTING, f"正在连接 {config.port}")
         try:
             self._transport.set_handlers(self._on_bytes, self._on_transport_error)
@@ -158,7 +169,8 @@ class DeviceSession:
         self._handlers.on_error(error)
 
     def _set_state(self, state: DeviceConnectionState, message: str) -> None:
-        """更新状态并通知。"""
+        """更新状态并通知（未安装回调时只更新状态）。"""
 
         self._state = state
-        self._handlers.on_state(state, message)
+        if self._handlers is not None:
+            self._handlers.on_state(state, message)

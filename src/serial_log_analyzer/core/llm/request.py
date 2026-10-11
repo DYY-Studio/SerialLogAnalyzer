@@ -9,10 +9,14 @@
 
 from __future__ import annotations
 
+import math
+from urllib.parse import quote
+
+from serial_log_analyzer.core.errors import ConfigError
 from serial_log_analyzer.core.llm.adapter import JSONAdapter
 from serial_log_analyzer.core.models.analysis import AnalysisMessage, AnalysisRequest
 from serial_log_analyzer.core.models.provider import HttpRequest, ProviderProfile
-from serial_log_analyzer.core.services.credential_resolver import CredentialResolver
+from serial_log_analyzer.core.ports import CredentialProvider
 
 __all__ = ["RequestBuilder", "join_url"]
 
@@ -27,12 +31,11 @@ def join_url(base_url: str, endpoint: str, model: str = "") -> str:
 
     返回:
         完整请求 URL。
-
-    异常:
-        ConfigError: 基地址不是合法 HTTP(S) URL。
     """
 
-    raise NotImplementedError
+    base = base_url.rstrip("/")
+    path = endpoint.replace("${model}", quote(model, safe=""))
+    return base + "/" + path.lstrip("/")
 
 
 class RequestBuilder:
@@ -48,9 +51,15 @@ class RequestBuilder:
         self,
         adapter: JSONAdapter,
         profile: ProviderProfile,
-        credentials: CredentialResolver,
+        credentials: CredentialProvider,
     ) -> None:
-        raise NotImplementedError
+        if adapter.adapter_id != profile.adapter_id:
+            raise ConfigError("Profile 与 Adapter 不匹配")
+        if profile.stream and not adapter.streaming_supported:
+            raise ConfigError("当前 Adapter 不支持流式")
+        self._adapter = adapter
+        self._profile = profile
+        self._credentials = credentials
 
     def build(
         self,
@@ -71,4 +80,32 @@ class RequestBuilder:
             ConfigError: 占位符或字段冲突。
         """
 
-        raise NotImplementedError
+        if (
+            type(request.temperature) not in (int, float)
+            or not math.isfinite(request.temperature)
+            or request.temperature < 0
+        ):
+            raise ConfigError("temperature 必须是有限非负数")
+        if type(request.max_output_tokens) is not int or request.max_output_tokens < 0:
+            raise ConfigError("输出 token 上限必须为非负整数")
+        profile = self._profile
+        adapter = self._adapter
+        headers, body = adapter.build_request(
+            api_key=self._credentials.resolve(profile.credential),
+            model=profile.model,
+            messages=messages,
+            temperature=request.temperature,
+            max_output_tokens=request.max_output_tokens,
+            stream=profile.stream,
+            extra_body=profile.extra_body,
+            extra_headers=profile.extra_headers,
+        )
+        endpoint = adapter.streaming.endpoint if profile.stream else adapter.endpoint
+        return HttpRequest(
+            "POST",
+            join_url(profile.base_url, endpoint, profile.model),
+            headers,
+            body,
+            profile.request_timeout_seconds,
+            profile.stream,
+        )

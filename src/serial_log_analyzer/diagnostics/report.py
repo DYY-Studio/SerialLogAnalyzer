@@ -123,7 +123,7 @@ def _keyring_text(available: bool | None) -> str:
     """把钥匙串可用性渲染为中文文本。"""
     if available is None:
         return "未探测"
-    return "可用" if available else "不可用（将回退环境变量）"
+    return "可用" if available else "不可用（不跨来源回落，需改用其它 kind）"
 
 
 def _section(title: str, items: tuple[str, ...]) -> list[str]:

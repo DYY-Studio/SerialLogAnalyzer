@@ -261,7 +261,7 @@ fallback:
 ## 9. LLM 声明（YAML）
 
 - 声明格式为 YAML，不提供其他格式的兼容层。
-- `providers/adapters/*.yaml` 字段：`schema_version / adapter_id / endpoint / messages_format / headers / body / response_content_pointer / response_reasoning_content_pointers / models / usage / streaming`。
+- `providers/adapters/*.yaml` 字段：`schema_version / adapter_id / endpoint / messages_format / headers / body / response_content_pointer / response_reasoning_content_pointers / response_text_blocks_pointer / default_max_output_tokens / models / usage / streaming`。
 - 内置四个 adapter：`openai-compatible`、`openai-responses`、`anthropic`、`google-gemini`。
 - `providers/profiles/*.yaml`：
 
@@ -273,8 +273,7 @@ base_url: https://api.openai.com/v1
 model: gpt-4o-mini
 credential:
   kind: keyring            # keyring | environment | runtime
-  name: openai-default     # keyring 账号名；environment 时忽略
-  env_var: OPENAI_API_KEY  # kind=environment 时使用
+  name: openai-default     # keyring 账号名；缺省取 profile_id
 stream: true
 request_timeout_seconds: 120
 extra_body: {}
@@ -282,6 +281,7 @@ extra_headers: {}
 ```
 
 - `body` / `headers` 占位符：`${model} ${system} ${messages} ${temperature} ${max_output_tokens} ${stream} ${api_key}`。
+- `extra_body` / `extra_headers` 属于每一次请求；只对流式合法的字段（如 `stream_options`）必须放在 `streaming.request_body`。
 - `streaming`：`transport（仅 sse） / endpoint / request_body / content_events[{pointer,when}] / terminal{sentinel|when} / error_events[{when,message_pointer,status_pointer}]`。
 - v1 至少内置 `openai-compatible` 可用流式声明。
 
@@ -321,10 +321,10 @@ class AnalysisState(Enum): IDLE, STREAMING, DONE, ERROR
 
 - `QSettings`：窗口尺寸、splitter、最近串口/波特率、当前 profile、UI 选项。
 - `providers/profiles/*.yaml`：结构复杂配置。
-- 凭据三种 kind：`keyring`（`{kind: keyring, name}`）、`environment`（`{kind: environment, env_var}`）、`runtime`（`{kind: runtime}`，每次运行时输入）。
-- 解析优先级：`runtime 输入` → `keyring` → `environment`；任一命中即停止。
+- 凭据三种 kind：`keyring`（`{kind: keyring, name}`，缺省账号名取 `profile_id`）、`environment`（`{kind: environment, env_var}`，取值来自进程环境或仓库根目录的本地 `.env`）、`runtime`（`{kind: runtime}`，每次运行时输入，键取 `profile_id`）。
+- 解析顺序：`runtime 输入`（仅当前会话、仅存内存）→ `kind` 声明的**唯一**来源；**不跨来源回落**，未命中即 `CredentialError`，提示改用其他来源。
 - 运行时输入仅用于当前会话，**不自动写入 Keychain**；由用户手动保存。
-- Keyring 不可用时 `available=False`，UI 置灰 keyring 选项、回退 env/runtime 并提示。
+- Keyring 不可用时 `available=False`，UI 置灰 keyring 选项并提示改用 `environment` / `runtime`。
 - `keyring` 库 service 名固定为 `SerialLogAnalyzer`，账号名即 credential `name`。
 - 日志存储：**仅手动导入/导出**（`io/storage/log_file_store.py`）；内存环形缓冲；无 Session 概念。
 

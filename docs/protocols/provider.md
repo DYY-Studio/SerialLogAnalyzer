@@ -76,6 +76,8 @@ streaming:
 | `body` | 否 | 请求体模板；缺省为空；字符串值若为占位符须独占该值 |
 | `response_content_pointer` | 是 | 非流式正文路径（扩展 JSON Pointer） |
 | `response_reasoning_content_pointers` | 否 | 思考正文候选路径，按序尝试 |
+| `response_text_blocks_pointer` | 否 | 正文块数组路径；声明时按序拼接其中全部文本块，跳过 thought / refusal（Anthropic、OpenAI Responses 需要） |
+| `default_max_output_tokens` | 否 | 非负整数，默认 `0`；请求上限为 `0` 时用它填充 `${max_output_tokens}`，两者都为 `0` 才移除该字段（Anthropic 必填） |
 | `models` | 否 | 模型列表接口声明，见 1.2 |
 | `usage` | 否 | 用量字段路径，见 1.2 |
 | `streaming` | 否 | 流式声明；缺省表示不支持流式 |
@@ -109,7 +111,7 @@ streaming:
 | `${system}` | body | 系统消息文本（多条 system 以空行拼接） |
 | `${messages}` | body | 已按 `messages_format` 转换的消息数组 |
 | `${temperature}` | body | 采样温度 |
-| `${max_output_tokens}` | body | 最大输出 token；值为 `0` 时该字段整体从请求体移除（运行期待实现） |
+| `${max_output_tokens}` | body | 最大输出 token；请求上限为 `0` 时取 Adapter 的 `default_max_output_tokens`，两者都为 `0` 时该字段整体从请求体移除 |
 | `${stream}` | body | 是否流式 |
 
 “推荐位置”只是约定，**加载期使用统一白名单**：只要占位符在白名单内，
@@ -125,15 +127,18 @@ streaming:
 | `transport` | 是 | 当前仅支持 `sse` |
 | `endpoint` | 是 | 流式端点；可与 `endpoint` 不同 |
 | `request_body` | 否 | 流式请求追加字段；与非流式 `body` 冲突时报错 |
-| `content_events` | 是 | 正文增量规则数组：`{pointer, when?}` |
-| `reasoning_events` | 否 | 思考正文增量规则数组 |
+| `content_events` | 是 | 正文增量规则数组：`{pointer, when?, text_blocks?}` |
+| `reasoning_events` | 否 | 思考正文增量规则数组；规则字段同 `content_events` |
 | `terminal` | 是 | 终止条件：`{sentinel: "[DONE]"}` 或 `{when: {pointer, equals\|exists}}` |
 | `allow_clean_eof` | 否 | 服务端未发终止事件即关闭连接时是否视为正常结束 |
 | `error_events` | 否 | `{when, message_pointer, status_pointer?}` 数组 |
 | `usage` | 否 | 流式用量指针数组：`input_tokens_pointers` / `output_tokens_pointers` / `total_tokens_pointers` |
 
 `streaming.usage` 的三个子键都是**候选指针数组**（同一数值在不同服务端可能出现在不同位置），
-至少一个数组非空，否则报 `ConfigError`；候选按序尝试。消费端（`core/llm/stream.py`）尚未实现。
+至少一个数组非空，否则报 `ConfigError`；候选按序尝试，由 `core/llm/stream.py` 消费。
+
+只对流式请求合法的字段（如 `stream_options`）必须写在 `streaming.request_body`：
+Profile 的 `extra_body` 会合并进**每一次**请求，用它承载流式专属字段会让非流式请求也带上该字段。
 
 条件 `when` 的形态：
 
@@ -154,9 +159,8 @@ stream: true
 request_timeout_seconds: 120
 
 credential:
-  kind: keyring          # keyring | environment | runtime
-  name: deepseek         # keyring 账号名
-  env_var: DEEPSEEK_API_KEY  # kind=environment 时使用
+  kind: keyring          # keyring | environment | runtime，只读这一个来源
+  name: deepseek         # keyring 账号名，缺省取 profile_id
 
 extra_body: {}
 extra_headers: {}

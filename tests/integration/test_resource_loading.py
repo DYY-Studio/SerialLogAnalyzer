@@ -42,7 +42,13 @@ def test_shipped_resources_are_loadable(loader):
         "anthropic",
         "google-gemini",
     }
-    assert {item.profile_id for item in profiles} == {"deepseek", "ollama-local", "openai-default"}
+    assert {item.profile_id for item in profiles} == {
+        "deepseek",
+        "internlm",
+        "ollama-local",
+        "openai-default",
+        "sensenova",
+    }
 
 
 def test_every_profile_can_find_its_adapter(loader):
@@ -56,7 +62,12 @@ def test_prompt_library_exposes_shipped_goals(loader):
     library = PromptLibrary(loader)
 
     goals = library.goals()
-    assert {goal.goal_id for goal in goals} == {"explain-logs", "locate-error", "suggest-fix"}
+    assert {goal.goal_id for goal in goals} == {
+        "aggregate-anomalies",
+        "explain-logs",
+        "locate-error",
+        "suggest-fix",
+    }
     assert all(goal.display_name for goal in goals)
 
     text = library.render("locate-error", context="[E] [wifi] disconnect")
@@ -70,7 +81,7 @@ def test_diagnostics_report_has_no_config_errors(loader, tmp_path):
     assert report.ok is True
     assert len(report.presets) == 2
     assert len(report.adapters) == 4
-    assert len(report.profiles) == 3
+    assert len(report.profiles) == 5
 
 
 def test_user_configuration_overrides_bundled_preset(monkeypatch, tmp_path):

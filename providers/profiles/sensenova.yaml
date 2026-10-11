@@ -1,0 +1,13 @@
+# 官方文档示例配置；需确认账户授权的模型并在本地环境设置密钥。
+schema_version: 1
+profile_id: sensenova
+adapter_id: openai-compatible
+base_url: https://token.sensenova.cn/v1
+model: sensenova-6.7-flash-lite
+stream: true
+request_timeout_seconds: 120
+credential:
+  kind: environment
+  env_var: SENSENOVA_API_KEY
+extra_body: {}
+extra_headers: {}
