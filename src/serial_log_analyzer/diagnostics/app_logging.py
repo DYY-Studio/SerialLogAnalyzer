@@ -62,13 +62,16 @@ def log_file_path() -> Path:
     return user_log_dir() / "serial-log-analyzer.log"
 
 
-def configure_logging(*, level: str = "INFO", log_file: Path | str | None = None) -> None:
+def configure_logging(
+    *, level: str = "INFO", log_file: Path | str | None = None, reset: bool = False
+) -> None:
     """配置应用日志输出；重复调用是幂等的（先移除旧 handler）。
 
     参数：
         level: 默认级别，可被 ``SLA_LOG_LEVEL`` 覆盖。
         log_file: 启用文件日志时写入的路径，可被 ``SLA_LOG_FILE`` 覆盖；
             为 ``None`` 且环境变量未设置时只输出到 stderr。
+        reset: 启用文件日志时先清空已有内容（只在启动那一次用，否则会中途抹掉本次运行记录）。
     """
     global _log_file
 
@@ -95,6 +98,11 @@ def configure_logging(*, level: str = "INFO", log_file: Path | str | None = None
 
     _log_file = None
     if target is not None:
+        if reset:
+            try:
+                target.write_text("", encoding="utf-8")
+            except OSError as exc:
+                logger.warning("无法清空日志文件，沿用已有内容：%s（%s）", target, exc)
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             file_handler = RotatingFileHandler(

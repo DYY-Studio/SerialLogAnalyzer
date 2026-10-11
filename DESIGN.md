@@ -335,7 +335,7 @@ class AnalysisState(Enum): IDLE, STREAMING, DONE, ERROR
 
 ## 13. 设置 / 凭据 / 存储
 
-- `QSettings`：窗口尺寸、工具栏 / 停靠布局、最近串口/波特率、当前 profile、UI 选项。
+- `QSettings`：窗口尺寸、最近串口/波特率、当前 profile、UI 选项。
 - `providers/profiles/*.yaml`：结构复杂配置。
 - 凭据三种 kind：`keyring`（`{kind: keyring, name}`，缺省账号名取 `profile_id`）、`environment`（`{kind: environment, env_var}`，取值来自进程环境或仓库根目录的本地 `.env`）、`runtime`（`{kind: runtime}`，每次运行时输入，键取 `profile_id`）。
 - 解析顺序：`runtime 输入`（仅当前会话、仅存内存）→ `kind` 声明的**唯一**来源；**不跨来源回落**，未命中即 `CredentialError`，提示改用其他来源。
@@ -390,8 +390,9 @@ v1 不做：自定义标题栏、动画、多窗口工作区、复杂主题系�
 （顶部一行切换当前 Profile，换用对应 Adapter 并写回设置）；波特率在工具栏下拉里设置（可编辑），
 数据位 / 校验位 / 停止位 / 流控在工具栏「串口参数…」，仅本次会话有效。
 右侧「LLM 分析」与底部「命令 / 应用日志」都是 `QDockWidget`：可拖动、可拖出成浮动窗口、可关闭，
-关掉后由「视图」菜单恢复；布局随 `window/state`（`saveState`/`restoreState`）持久化。
-命令与应用日志共用底部区域、以标签页切换，避免多占一块高度。
+关掉后由「视图」菜单恢复。**停靠布局不做持久化**：每次启动都是设计好的默认排布（分析面板贯通
+上下，命令与应用日志在底部同页）——`restoreState` 会把角落归属改回去、也会把新增面板藏起来，
+和这套排布相冲突；窗口几何仍然记忆（`window/geometry`）。
 右下角归右侧停靠区，因此分析面板贯通上下、命令面板只占左下，输出区能拿到尽量多的高度。
 
 ## 17. 建议模块划分

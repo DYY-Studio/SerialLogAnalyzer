@@ -167,19 +167,19 @@ def test_analysis_panel_first_turn_then_follow_up(qtbot) -> None:
     assert panel.turns_label.text() == ""
 
 
-def test_restore_layout_reapplies_bottom_right_corner(qtbot) -> None:
-    """恢复旧布局不能让右下角归属回退（否则分析面板不再贯通上下）。"""
+def test_docks_start_in_the_designed_layout(qtbot) -> None:
+    """停靠布局不持久化：每次启动都应是设计好的排布，新面板不能被旧存档藏起来。"""
 
     from PySide6.QtCore import Qt
 
     window = _build_window(qtbot)
-    state = window.saveState()
-    # 模拟旧版本存下来的状态：右下角归底部停靠区
-    window.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.BottomDockWidgetArea)
+    window.show()
 
-    window.restore_layout(state)
-
+    # 右下角归右侧 => 分析面板贯通上下、命令/应用日志只占左下
     assert window.corner(Qt.Corner.BottomRightCorner) is Qt.DockWidgetArea.RightDockWidgetArea
+    assert window.analysis_dock.isHidden() is False
+    assert window.command_dock.isHidden() is False
+    assert window.app_log_dock.isHidden() is False
 
 
 def test_menu_actions_emit_intent_signals(qtbot) -> None:

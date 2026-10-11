@@ -130,7 +130,9 @@ def build_application(argv: list[str] | None = None) -> ApplicationContext:
 
     settings = QtSettingsStore()
     configure_logging(
-        level=str(settings.get(SETTINGS_KEYS.LOG_LEVEL, "INFO")), log_file=log_file_path()
+        level=str(settings.get(SETTINGS_KEYS.LOG_LEVEL, "INFO")),
+        log_file=log_file_path(),
+        reset=True,  # 每次启动一份干净的日志
     )
 
     root = repo_root()
@@ -536,14 +538,15 @@ def _switch_preset(window: MainWindow, context: ApplicationContext, preset_id: s
 
 
 def _restore_view(window: MainWindow, toolbar: SerialToolBar, log_view: LogView, settings: Any) -> None:
-    """按设置恢复窗口几何、工具栏/停靠布局、串口选择、自动滚动与分析细节折叠。"""
+    """按设置恢复窗口几何、串口选择、自动滚动与分析细节折叠。
+
+    停靠布局**不持久化**：默认排布本身就是设计的一部分（分析面板贯通上下、命令与应用日志
+    在底部同页），而 ``restoreState`` 既会把角落归属改回去，也会把新增面板藏起来。
+    """
 
     geometry = settings.get(SETTINGS_KEYS.WINDOW_GEOMETRY)
     if geometry is not None:
         window.restoreGeometry(geometry)
-    state = settings.get(SETTINGS_KEYS.WINDOW_STATE)
-    if state is not None:
-        window.restore_layout(state)
     window.analysis_panel.set_details_expanded(
         bool(settings.get(SETTINGS_KEYS.CHAT_DETAILS_EXPANDED, False))
     )
@@ -559,7 +562,6 @@ def _shutdown(main_controller: MainController, window: MainWindow, settings: Any
 
     main_controller.shutdown()
     settings.set(SETTINGS_KEYS.WINDOW_GEOMETRY, window.saveGeometry())
-    settings.set(SETTINGS_KEYS.WINDOW_STATE, window.saveState())
 
 
 def main(argv: list[str] | None = None) -> int:

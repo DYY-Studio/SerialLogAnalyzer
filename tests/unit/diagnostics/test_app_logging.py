@@ -98,6 +98,18 @@ def test_read_tail_without_file_logging_is_empty():
     assert read_tail() == []
 
 
+def test_reset_truncates_previous_content(tmp_path):
+    target = tmp_path / "app.log"
+    configure_logging(level="INFO", log_file=target)
+    get_logger("test").info("上一次运行")
+
+    configure_logging(level="INFO", log_file=target, reset=True)
+
+    assert target.read_text(encoding="utf-8") == ""
+    get_logger("test").info("本次运行")
+    assert target.read_text(encoding="utf-8").count("本次运行") == 1
+
+
 def test_environment_level_override(tmp_path, monkeypatch):
     monkeypatch.setenv("SLA_LOG_LEVEL", "warning")
     target = tmp_path / "app.log"

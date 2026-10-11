@@ -105,16 +105,6 @@ class MainWindow(QMainWindow):
 
         self.status_bar.showMessage(message)
 
-    def restore_layout(self, state: object) -> None:
-        """恢复工具栏 / 停靠布局。
-
-        右下角归属是固定策略而不是用户状态，而 ``restoreState`` 会把它一起带回来，
-        因此恢复之后必须重新声明，否则分析面板不再贯通上下。
-        """
-
-        self.restoreState(state)
-        self._apply_dock_corners()
-
     def _apply_dock_corners(self) -> None:
         """右下角交给右侧停靠区：分析面板贯通上下，命令面板只占左下。"""
 

@@ -199,7 +199,6 @@ export MY_DEEPSEEK_API_KEY=sk-...
 | 键 | 含义 | 默认 |
 |---|---|---|
 | `window/geometry` | 主窗口几何 | 系统决定 |
-| `window/state` | 工具栏 / 停靠面板布局 | 系统决定 |
 | `device/last_port` | 最近使用的串口 | 空 |
 | `device/last_baudrate` | 最近波特率 | 空 |
 | `llm/current_profile` | 当前 Profile | 首个可用 |
@@ -276,7 +275,7 @@ uv run python -m serial_log_analyzer.diagnostics --log-file app.log --no-log-tai
 
 - logger 名 `serial_log_analyzer`，通过 `get_logger(name)` 获取子 logger；
 - 默认同时输出到 stderr 与文件：`<用户配置目录>/logs/serial-log-analyzer.log`（1 MB × 3 轮转，UTF-8），
-  行格式 `时间 级别 logger: 消息`；`SLA_LOG_FILE` 可覆盖路径；
+  **每次启动清空上次内容**，行格式 `时间 级别 logger: 消息`；`SLA_LOG_FILE` 可覆盖路径；
 - 界面「视图 → 应用日志」面板显示该文件的尾部（可见时每秒刷新，带「刷新」按钮与可复制的路径）；
 - `SLA_LOG_LEVEL` / 设置里的「应用日志级别」决定写哪些级别的记录；启动时会写一条 INFO
   （preset / profile / 日志路径），其余模块目前还没有日志点，设 `DEBUG` 暂不会多出内容；
