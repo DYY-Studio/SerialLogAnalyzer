@@ -162,18 +162,15 @@ extra_headers: {}
 
 ```yaml
 credential:
-  kind: keyring        # keyring | environment | runtime，只读这一个来源
+  kind: keyring        # keyring | environment，只读这一个来源
   name: my-deepseek    # 钥匙串 account；缺省时取 profile_id
 ```
 
-`kind: environment` 时写 `env_var: MY_DEEPSEEK_API_KEY` 代替 `name`；`kind: runtime` 不写来源字段。
+`kind: environment` 时写 `env_var: MY_DEEPSEEK_API_KEY` 代替 `name`；`kind` 缺省为 `keyring`。
 同一个 `credential` 段**只能有一个来源字段**，多写会报 `ConfigError`。
 
-解析顺序（`core/services/credential_resolver.py`）：
-
-1. **本次会话的运行时输入**（对话框里临时输入，只存内存，键为 `name`，缺省为 `profile_id`）；
-2. 未命中时读 `kind` 声明的那个来源，**不跨来源回落**；
-3. 两者都没取到非空值时抛 `CredentialError`，错误信息列出已尝试的来源、失败原因与可换用的其他来源。
+解析（`core/services/credential_resolver.py`）：只读 `kind` 声明的那个来源，**不跨来源回落**；
+取不到非空值时抛 `CredentialError`，错误信息列出已尝试的来源、失败原因与可换用的另一来源。
 
 约定：
 
@@ -181,8 +178,7 @@ credential:
 - `kind: environment` 的值来自进程环境；进程里没有该变量时可读仓库根目录的本地 `.env`
   （`.env.example` 是模板，`.env` 被 Git 忽略）。
 - 钥匙串不可用时（无 SecretService、后端为 fail/null 等）：`available=False`，界面把保存选项置灰，
-  并提示声明 `kind: keyring` 的 Profile 取不到密钥，需要改用 `environment` 或 `runtime` 来源。
-- 运行时输入**不会自动写入**钥匙串；只有用户显式勾选「保存到系统钥匙串」才调用 `save`。
+  并提示声明 `kind: keyring` 的 Profile 取不到密钥，需要改用 `environment` 来源。
 - 「清除已保存的密钥」会删除钥匙串中的条目（需二次确认）。
 
 也可以只靠环境变量运行，不触碰钥匙串：

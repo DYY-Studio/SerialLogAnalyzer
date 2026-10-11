@@ -64,10 +64,8 @@ def _timeout_value(seconds: float) -> float | int:
 
 
 def _credential_value(profile: ProviderProfile) -> dict[str, str]:
-    """把凭据引用序列化为 ``credential`` 段：每种 ``kind`` 只写一个来源字段。
+    """把凭据引用序列化为 ``credential`` 段：``kind`` 只写一个来源字段。"""
 
-    ``kind: runtime`` 的 ``name`` 是加载器从 ``profile_id`` 派生的运行时键，不写回文件。
-    """
     credential = profile.credential
     if credential.kind is CredentialKind.KEYRING:
         if credential.env_var:
@@ -75,12 +73,8 @@ def _credential_value(profile: ProviderProfile) -> dict[str, str]:
         if not credential.name:
             raise ConfigError(f"Profile {profile.profile_id} 的 keyring 凭据缺少 name")
         return {"kind": credential.kind.value, "name": credential.name}
-    if credential.kind is CredentialKind.ENVIRONMENT:
-        if credential.name:
-            raise ConfigError(f"Profile {profile.profile_id} 的 environment 凭据不能声明 name")
-        if not credential.env_var:
-            raise ConfigError(f"Profile {profile.profile_id} 的 environment 凭据缺少 env_var")
-        return {"kind": credential.kind.value, "env_var": credential.env_var}
-    if credential.env_var:
-        raise ConfigError(f"Profile {profile.profile_id} 的 runtime 凭据不接受 env_var")
-    return {"kind": credential.kind.value}
+    if credential.name:
+        raise ConfigError(f"Profile {profile.profile_id} 的 environment 凭据不能声明 name")
+    if not credential.env_var:
+        raise ConfigError(f"Profile {profile.profile_id} 的 environment 凭据缺少 env_var")
+    return {"kind": credential.kind.value, "env_var": credential.env_var}

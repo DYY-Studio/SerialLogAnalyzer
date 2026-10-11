@@ -173,7 +173,7 @@ stream: true
 request_timeout_seconds: 120
 
 credential:
-  kind: keyring          # keyring | environment | runtime，只读这一个来源
+  kind: keyring          # keyring | environment，只读这一个来源
   name: deepseek         # keyring 账号名，缺省取 profile_id
 
 extra_body: {}
@@ -189,7 +189,7 @@ extra_headers: {}
 | `model` | 是 | 模型名 |
 | `stream` | 否 | 流式开关，默认 `true`；Adapter 未声明 `streaming` 且此处为 `true` 时报错 |
 | `request_timeout_seconds` | 否 | 正数，默认 `120`；布尔值非法 |
-| `credential` | 否 | 凭据引用，见 `credentials.md`；缺省等价于 `{kind: runtime}` |
+| `credential` | 否 | 凭据引用，见 `credentials.md`；缺省等价于 `{kind: keyring}`（账号名取 `profile_id`） |
 | `extra_body` | 否 | 追加请求体字段；与 Adapter 模板字段冲突时报 `ConfigError` |
 | `extra_headers` | 否 | 追加请求头；与 Adapter 模板头同名（大小写不敏感）时报 `ConfigError` |
 

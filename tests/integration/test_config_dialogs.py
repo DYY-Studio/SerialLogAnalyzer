@@ -156,7 +156,7 @@ def test_provider_dialog_switches_profile(qtbot, tmp_path) -> None:
 
     assert dialog.selected_profile_id() == "ollama-local"
     assert dialog.findChild(QLineEdit, "provider-base-url").text().startswith("http://localhost")
-    assert "运行时临时输入" in dialog.findChild(QLabel, "provider-credential").text()
+    assert "环境变量：OLLAMA_API_KEY" in dialog.findChild(QLabel, "provider-credential").text()
 
 
 def test_provider_dialog_saves_edits_to_user_config(qtbot, tmp_path, monkeypatch) -> None:
@@ -294,20 +294,6 @@ def test_provider_dialog_fetches_models_with_edited_fields(qtbot, tmp_path) -> N
 
 
 # --------------------------------------------------------------------------- API Key 对话框
-
-
-def test_credential_dialog_runtime_only_by_default(qtbot) -> None:
-    backend = FakeKeyringBackend()
-    dialog = CredentialDialog(KeyringStoreAdapter(backend=backend), "deepseek")
-    qtbot.addWidget(dialog)
-    dialog.findChild(QLineEdit, "credential-secret").setText("sk-runtime")
-
-    dialog.accept()
-
-    assert dialog.result() == int(QDialog.DialogCode.Accepted)
-    assert dialog.secret() == "sk-runtime"
-    assert dialog.save_to_keyring() is False
-    assert backend.values == {}
 
 
 def test_credential_dialog_saves_to_keyring_when_checked(qtbot) -> None:

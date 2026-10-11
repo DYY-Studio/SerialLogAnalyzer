@@ -61,15 +61,6 @@ def _keyring_ref(name: str = "demo") -> CredentialRef:
     return CredentialRef(kind=CredentialKind.KEYRING, name=name)
 
 
-def test_runtime_input_wins_over_declared_source():
-    keyring = FakeKeyring({"demo": "from-keyring"})
-    resolver = _resolver(keyring, FakeEnvironment())
-    resolver.set_runtime_secret("demo", "from-runtime")
-
-    assert resolver.resolve(_keyring_ref()) == "from-runtime"
-    assert keyring.reads == []
-
-
 def test_keyring_kind_reads_keyring():
     keyring = FakeKeyring({"demo": "from-keyring"})
     resolver = _resolver(keyring, FakeEnvironment())
@@ -94,21 +85,9 @@ def test_keyring_miss_does_not_fall_back_to_environment():
         resolver.resolve(_keyring_ref())
 
     message = str(excinfo.value)
-    assert "本次会话输入（demo，未命中）" in message
     assert "系统钥匙串（demo）（未命中）" in message
     assert "环境变量 DEMO_KEY" not in message
     assert "credential.kind 改为 environment" in message
-
-
-def test_runtime_kind_without_input_raises():
-    resolver = _resolver(FakeKeyring({"demo": "from-keyring"}), FakeEnvironment())
-
-    with pytest.raises(CredentialError) as excinfo:
-        resolver.resolve(CredentialRef(kind=CredentialKind.RUNTIME, name="demo"))
-
-    message = str(excinfo.value)
-    assert "本次会话输入（demo，未命中）" in message
-    assert "请在界面输入本次会话密钥" in message
 
 
 def test_keyring_unavailable_is_reported_without_fallback():
@@ -116,9 +95,7 @@ def test_keyring_unavailable_is_reported_without_fallback():
     resolver = _resolver(keyring, FakeEnvironment({"DEMO_KEY": "from-env"}))
 
     assert resolver.keyring_available() is False
-    assert resolver.describe_sources(_keyring_ref()) == (
-        "本次会话输入（demo） → 系统钥匙串（demo，不可用）"
-    )
+    assert resolver.describe_sources(_keyring_ref()) == "系统钥匙串（demo，不可用）"
 
     with pytest.raises(CredentialError) as excinfo:
         resolver.resolve(_keyring_ref())
@@ -139,38 +116,17 @@ def test_keyring_read_failure_is_reported_without_fallback():
     assert "环境变量 DEMO_KEY" not in message
 
 
-def test_credential_without_any_identifier_raises():
+def test_credential_without_identifier_raises():
     resolver = _resolver(FakeKeyring(), FakeEnvironment())
 
     with pytest.raises(CredentialError) as excinfo:
-        resolver.resolve(CredentialRef(kind=CredentialKind.RUNTIME))
+        resolver.resolve(CredentialRef(kind=CredentialKind.KEYRING))
 
     message = str(excinfo.value)
-    assert "未配置任何来源" in message
-    assert resolver.describe_sources(CredentialRef(kind=CredentialKind.RUNTIME)) == (
-        "未配置任何来源"
+    assert "系统钥匙串（未指定）（未命中）" in message
+    assert resolver.describe_sources(CredentialRef(kind=CredentialKind.KEYRING)) == (
+        "系统钥匙串（未指定）"
     )
-
-
-def test_runtime_secret_uses_environment_variable_name_for_environment_kind():
-    resolver = _resolver(FakeKeyring(), FakeEnvironment({"DEMO_KEY": "from-env"}))
-    resolver.set_runtime_secret("DEMO_KEY", "from-runtime")
-
-    credential = CredentialRef(kind=CredentialKind.ENVIRONMENT, env_var="DEMO_KEY")
-
-    assert resolver.resolve(credential) == "from-runtime"
-
-
-def test_runtime_secret_can_be_cleared_and_blank_ids_are_ignored():
-    resolver = _resolver(FakeKeyring(), FakeEnvironment())
-    resolver.set_runtime_secret("demo", "secret")
-    assert resolver.has_runtime_secret("demo") is True
-
-    resolver.set_runtime_secret("demo", "   ")
-    assert resolver.has_runtime_secret("demo") is False
-
-    resolver.set_runtime_secret("", "secret")
-    assert resolver.has_runtime_secret("") is False
 
 
 def test_values_are_stripped_before_returned():
@@ -196,12 +152,6 @@ def test_keyring_probe_failure_counts_as_unavailable():
 def test_describe_sources_lists_declared_source_only():
     resolver = _resolver(FakeKeyring(), FakeEnvironment())
     environment_credential = CredentialRef(kind=CredentialKind.ENVIRONMENT, env_var="DEMO_KEY")
-    runtime_credential = CredentialRef(kind=CredentialKind.RUNTIME, name="ollama-local")
 
-    assert resolver.describe_sources(_keyring_ref()) == (
-        "本次会话输入（demo） → 系统钥匙串（demo）"
-    )
-    assert resolver.describe_sources(environment_credential) == (
-        "本次会话输入（DEMO_KEY） → 环境变量 DEMO_KEY"
-    )
-    assert resolver.describe_sources(runtime_credential) == "本次会话输入（ollama-local）"
+    assert resolver.describe_sources(_keyring_ref()) == "系统钥匙串（demo）"
+    assert resolver.describe_sources(environment_credential) == "环境变量 DEMO_KEY"

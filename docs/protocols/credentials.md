@@ -3,34 +3,30 @@
 API Key 等敏感信息**不得**明文写入仓库、配置文件或日志。本规范定义凭据的来源、
 优先级与界面行为。
 
-## 1. 三种来源
+## 1. 两种来源
 
 | kind | 形态 | 说明 |
 |---|---|---|
 | `keyring` | `{kind: keyring, name: <account>}` | 系统钥匙串（推荐） |
 | `environment` | `{kind: environment, env_var: <VAR>}` | 环境变量：进程环境优先，缺失时读本地 `.env`（见 §7） |
-| `runtime` | `{kind: runtime}` | 每次运行时由用户输入，仅存内存 |
 
 补充约定：
 
-- `kind` 可省略，缺省为 `runtime`；取值不区分大小写（内部统一按小写解析）；
+- `kind` 可省略，缺省为 `keyring`（账号名取 `profile_id`）；取值不区分大小写（内部统一按小写解析）；
 - 每个 Profile 只能声明一个来源字段：`kind: keyring` 用 `name`（缺省取 `profile_id`），
-  `kind: environment` 必须提供 `env_var`，`kind: runtime` 不声明任何来源字段
-  （运行时输入的键取 `profile_id`）；
-- 声明了不属于该 `kind` 的来源字段（如 `kind: keyring` 再写 `env_var`）时报 `ConfigError`，
-  不做跨来源回落；
-- 配置文件解析失败或 `kind` 非法时报 `ConfigError`（不会静默降级为运行时输入）。
+  `kind: environment` 必须提供 `env_var`；
+- 声明了不属于该 `kind` 的来源字段（如 `kind: keyring` 再写 `env_var`）时报 `ConfigError`；
+- 配置文件解析失败或 `kind` 非法时报 `ConfigError`（不会退回到另一个来源）。
 
-## 2. 解析顺序
+## 2. 解析
 
 ```text
-1. 运行时输入（本次会话内存中的值，键为 name，缺省为 profile_id）
-2. kind 声明的那个来源（唯一，不回落到另一来源）
+只读 kind 声明的那个来源（唯一，不回落到另一来源）
 ```
 
-`kind` 决定密钥存在哪：`keyring` 只读钥匙串、`environment` 只读环境变量、`runtime` 只认运行时输入。
-两者都取不到非空字符串（去除首尾空白后非空）时抛出 `CredentialError`，错误消息中列出
-已尝试的来源、失败原因，以及可换用的其他来源，便于用户排查。
+`kind` 决定密钥存在哪：`keyring` 只读钥匙串、`environment` 只读环境变量。取不到非空字符串
+（去除首尾空白后非空）时抛出 `CredentialError`，错误消息中列出已尝试的来源、失败原因，
+以及可换用的另一来源，便于用户排查。
 
 ## 3. 系统钥匙串约定
 
@@ -45,10 +41,10 @@ SecretService（GNOME Keyring / KWallet）。
 
 ## 4. 界面行为
 
-- Keyring 可用时：凭据对话框提供“保存到系统钥匙串”勾选项；
-- 用户输入密钥后默认**仅本次会话有效**，不自动落盘；勾选保存时才写入钥匙串；
-- Keyring 不可用（如 headless Linux）时：勾选项置灰，并提示声明了 `kind: keyring` 的 Profile 取不到密钥，
-  需要改用 `environment` 或 `runtime` 来源；
+- Keyring 可用时：凭据对话框提供“保存到系统钥匙串”选项；
+- 用户输入的密钥只有勾选保存时才写入钥匙串，不自动落盘；
+- Keyring 不可用（如 headless Linux）时：保存选项置灰，并提示声明了 `kind: keyring` 的 Profile 取不到密钥，
+  需要改用 `environment` 来源；
 - 密钥输入框使用密码遮蔽，且不回显已保存的密钥内容（只显示“已保存”状态）。
 
 ## 5. 禁止事项

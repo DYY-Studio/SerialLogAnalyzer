@@ -1,8 +1,7 @@
 """凭据管理对话框：输入 / 更新 / 删除某 Profile 的 API Key。
 
 行为约定（见 ``DESIGN.md`` §13）：
-- 输入内容默认仅用于本次会话，不自动写入系统钥匙串；
-- 用户勾选“保存到系统钥匙串”时才调用 :meth:`KeyringStore.save`；
+- 输入内容不会自动写入系统钥匙串；勾选“保存到系统钥匙串”时才调用 :meth:`KeyringStore.save`；
 - 钥匙串不可用时置灰保存选项，并提示声明 kind: keyring 的 Profile 需改用其他来源；
 """
 
@@ -69,7 +68,7 @@ class CredentialDialog(QDialog):
         self._save.setObjectName("credential-save-keyring")
         self._save.setEnabled(self._available)
         if not self._available:
-            self._save.setToolTip("系统钥匙串不可用，密钥仅用于本次会话")
+            self._save.setToolTip("系统钥匙串不可用，无法保存")
 
         self._hint = QLabel(_hint_text(self._available))
         self._hint.setObjectName("credential-hint")
@@ -165,10 +164,10 @@ def _hint_text(available: bool) -> str:
     """生成钥匙串可用性提示。"""
     if available:
         return (
-            "未勾选「保存到系统钥匙串」时，密钥仅用于本次会话，不会写入系统钥匙串；"
+            "未勾选「保存到系统钥匙串」时不会写入钥匙串（本次输入也不会保留）；"
             "未提供密钥时按 Profile 的 credential.kind 取值（只读该来源，不跨来源回落）。"
         )
     return (
-        "系统钥匙串不可用：密钥仅用于本次会话，无法保存；"
-        "声明了 kind: keyring 的 Profile 因此取不到密钥，需要改用 environment 或 runtime 来源。"
+        "系统钥匙串不可用：无法保存；"
+        "声明了 kind: keyring 的 Profile 因此取不到密钥，需要改用 environment 来源。"
     )

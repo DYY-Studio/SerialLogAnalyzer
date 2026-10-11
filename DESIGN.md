@@ -273,7 +273,7 @@ adapter_id: openai-compatible
 base_url: https://api.openai.com/v1
 model: gpt-4o-mini
 credential:
-  kind: keyring            # keyring | environment | runtime
+  kind: keyring            # keyring | environment
   name: openai-default     # keyring 账号名；缺省取 profile_id
 stream: true
 request_timeout_seconds: 120
@@ -337,10 +337,9 @@ class AnalysisState(Enum): IDLE, STREAMING, DONE, ERROR
 
 - `QSettings`：窗口尺寸与停靠布局、最近串口/波特率、当前 profile、UI 选项。
 - `providers/profiles/*.yaml`：结构复杂配置。
-- 凭据三种 kind：`keyring`（`{kind: keyring, name}`，缺省账号名取 `profile_id`）、`environment`（`{kind: environment, env_var}`，取值来自进程环境或仓库根目录的本地 `.env`）、`runtime`（`{kind: runtime}`，每次运行时输入，键取 `profile_id`）。
-- 解析顺序：`runtime 输入`（仅当前会话、仅存内存）→ `kind` 声明的**唯一**来源；**不跨来源回落**，未命中即 `CredentialError`，提示改用其他来源。
-- 运行时输入仅用于当前会话，**不自动写入 Keychain**；由用户手动保存。
-- Keyring 不可用时 `available=False`，UI 置灰 keyring 选项并提示改用 `environment` / `runtime`。
+- 凭据两种 kind：`keyring`（`{kind: keyring, name}`，缺省账号名取 `profile_id`）、`environment`（`{kind: environment, env_var}`，取值来自进程环境或仓库根目录的本地 `.env`）；`kind` 缺省为 `keyring`。
+- 解析：只读 `kind` 声明的**唯一**来源，**不跨来源回落**，未命中即 `CredentialError` 并提示改用另一来源。
+- Keyring 不可用时 `available=False`，UI 置灰保存选项并提示改用 `environment`。
 - `keyring` 库 service 名固定为 `SerialLogAnalyzer`，账号名即 credential `name`。
 - 日志存储：**仅手动导入/导出**（`io/storage/log_file_store.py`）；内存环形缓冲；无 Session 概念。
 

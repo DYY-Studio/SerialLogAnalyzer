@@ -25,7 +25,6 @@ class CredentialKind(Enum):
 
     KEYRING = "keyring"
     ENVIRONMENT = "environment"
-    RUNTIME = "runtime"
 
 
 @dataclass(frozen=True)

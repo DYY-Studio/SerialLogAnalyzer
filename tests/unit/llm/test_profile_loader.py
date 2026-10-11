@@ -69,7 +69,7 @@ def test_minimal_profile_uses_documented_defaults(make_loader):
     assert profile.request_timeout_seconds == 120.0
     assert profile.extra_body == {}
     assert profile.extra_headers == {}
-    assert profile.credential == CredentialRef(kind=CredentialKind.RUNTIME, name="demo")
+    assert profile.credential == CredentialRef(kind=CredentialKind.KEYRING, name="demo")
 
 
 def test_profile_with_all_fields_is_parsed(make_loader):
@@ -96,22 +96,13 @@ def test_profile_with_all_fields_is_parsed(make_loader):
     assert profile.extra_headers == {"X-Trace": "1"}
 
 
-def test_missing_credential_section_defaults_to_runtime(make_loader):
+def test_missing_credential_section_defaults_to_keyring(make_loader):
     data = _base()
     data["credential"] = None
 
     profile = load_profile(_loader(make_loader, data), "demo")
 
-    assert profile.credential == CredentialRef(kind=CredentialKind.RUNTIME, name="demo")
-
-
-def test_runtime_credential_uses_profile_id_as_runtime_key(make_loader):
-    data = _base()
-    data["credential"] = {"kind": "runtime"}
-
-    profile = load_profile(_loader(make_loader, data), "demo")
-
-    assert profile.credential == CredentialRef(kind=CredentialKind.RUNTIME, name="demo")
+    assert profile.credential == CredentialRef(kind=CredentialKind.KEYRING, name="demo")
 
 
 def test_keyring_without_name_uses_profile_id(make_loader):
@@ -144,6 +135,7 @@ def test_environment_credential_requires_env_var(make_loader):
         {"kind": "keyring", "env_var": "DEMO_API_KEY"},
         {"kind": "environment", "name": "demo-account"},
         {"kind": "environment", "env_var": "DEMO_KEY", "name": "demo-account"},
+        {"kind": "runtime"},
         {"kind": "runtime", "name": "demo-account"},
         {"kind": "runtime", "env_var": "DEMO_API_KEY"},
         ["keyring"],
