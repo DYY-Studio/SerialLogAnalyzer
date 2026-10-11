@@ -135,6 +135,17 @@ def _code_family(document: QTextDocument) -> str | None:
     return inline
 
 
+def _mono_fragments(document: QTextDocument, mono: str):
+    """逐个吐出用导入器等宽族排版的片段 ``(块, 片段)``（代码块与行内代码都是）。"""
+
+    block = document.begin()
+    while block.isValid():
+        for fragment in _fragments(block):
+            if fragment.isValid() and mono in (fragment.charFormat().fontFamilies() or ()):
+                yield block, fragment
+        block = block.next()
+
+
 def _code_ranges(document: QTextDocument) -> list[tuple[int, int]]:
     """连续代码行的区间 ``(起, 止)``，止为最后一行的末字符位置。"""
 
@@ -216,7 +227,6 @@ class MarkdownRenderer:
         document.setMarkdown(markdown)
         mono = _code_family(document)
         self._style_blocks(document)
-        self._style_headings(document)
         self._style_inline_code(document, mono)
         self._heading_rules(document)
         self._style_code_frames(document)
@@ -227,17 +237,31 @@ class MarkdownRenderer:
     # ------------------------------------------------------------------
 
     def _style_blocks(self, document: QTextDocument) -> None:
-        """块级：间距与行高；代码块自身的底色与内缩交给外面的 frame。"""
+        """块级：间距与行高，标题顺带按层级放大字号。
+
+        代码块自身的底色与内缩交给外面的 frame（逐行加底色会在行间留缝）。
+        """
 
         cursor = QTextCursor(document)
         cursor.beginEditBlock()
         block = document.begin()
         while block.isValid():
             fmt = block.blockFormat()
-            if fmt.headingLevel():
+            level = fmt.headingLevel()
+            if level:
                 fmt.setTopMargin(self._point_size * 0.8)
                 fmt.setBottomMargin(self._point_size * 0.4)
                 fmt.setLineHeight(125, _PROPORTIONAL)
+                scale = _HEADING_SCALES.get(level, 1.0)
+                for fragment in _fragments(block):
+                    if fragment.isValid():
+                        char = fragment.charFormat()
+                        char.setFontPointSize(self._point_size * scale)
+                        _span_of(
+                            document,
+                            fragment.position(),
+                            fragment.position() + fragment.length(),
+                        ).mergeCharFormat(char)
             elif fmt.nonBreakableLines():
                 fmt.setLeftMargin(0)
                 fmt.setRightMargin(0)
@@ -257,48 +281,18 @@ class MarkdownRenderer:
             block = block.next()
         cursor.endEditBlock()
 
-    def _style_headings(self, document: QTextDocument) -> None:
-        """标题字号按层级放大。"""
-
-        cursor = QTextCursor(document)
-        cursor.beginEditBlock()
-        block = document.begin()
-        while block.isValid():
-            scale = _HEADING_SCALES.get(block.blockFormat().headingLevel())
-            if scale:
-                for fragment in _fragments(block):
-                    if fragment.isValid():
-                        char = fragment.charFormat()
-                        char.setFontPointSize(self._point_size * scale)
-                        _span_of(
-                            document,
-                            fragment.position(),
-                            fragment.position() + fragment.length(),
-                        ).mergeCharFormat(char)
-            block = block.next()
-        cursor.endEditBlock()
-
     def _style_inline_code(self, document: QTextDocument, mono: str | None) -> None:
         """行内代码加底色（方角：Qt 不支持圆角）。"""
 
         if mono is None:
             return
         targets: list[tuple[int, int, QTextCharFormat]] = []
-        block = document.begin()
-        while block.isValid():
-            if not block.blockFormat().nonBreakableLines():
-                for fragment in _fragments(block):
-                    if fragment.isValid() and mono in (fragment.charFormat().fontFamilies() or ()):
-                        char = QTextCharFormat(fragment.charFormat())
-                        char.setBackground(self._tint)
-                        targets.append(
-                            (
-                                fragment.position(),
-                                fragment.position() + fragment.length(),
-                                char,
-                            )
-                        )
-            block = block.next()
+        for block, fragment in _mono_fragments(document, mono):
+            if block.blockFormat().nonBreakableLines():
+                continue
+            char = QTextCharFormat(fragment.charFormat())
+            char.setBackground(self._tint)
+            targets.append((fragment.position(), fragment.position() + fragment.length(), char))
 
         cursor = QTextCursor(document)
         cursor.beginEditBlock()
@@ -360,15 +354,11 @@ class MarkdownRenderer:
         cjk = _cjk_mono_family()
         if mono is None or cjk is None:
             return
-        targets: list[tuple[int, str, QTextCharFormat]] = []
-        block = document.begin()
-        while block.isValid():
-            for fragment in _fragments(block):
-                if not fragment.isValid() or mono not in (fragment.charFormat().fontFamilies() or ()):
-                    continue
-                if not fragment.text().isascii():
-                    targets.append((fragment.position(), fragment.text(), fragment.charFormat()))
-            block = block.next()
+        targets = [
+            (fragment.position(), fragment.text(), fragment.charFormat())
+            for _block, fragment in _mono_fragments(document, mono)
+            if not fragment.text().isascii()
+        ]
 
         cursor = QTextCursor(document)
         cursor.beginEditBlock()
