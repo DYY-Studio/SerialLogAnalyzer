@@ -105,7 +105,7 @@ def test_build_window_wires_the_ui(qapp, fake_settings) -> None:
     window = bootstrap.build_window(context)
 
     assert window.windowTitle().startswith("SerialLogAnalyzer")
-    assert window.analysis_panel.goal_combo.count() == 4
+    assert window.analysis_panel.goal_combo.count() == 5  # 4 个内置目标 + 「无」
     assert window.serial_toolbar.baud_combo.currentText() == "115200"
     assert window.analysis_dock.widget() is window.analysis_panel
     assert window.command_dock.widget() is window.command_panel

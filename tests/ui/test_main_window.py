@@ -18,6 +18,7 @@ from serial_log_analyzer.core.models.analysis import (
 )
 from serial_log_analyzer.core.models.device import FlowControl, Parity, StopBits
 from serial_log_analyzer.core.models.logs import LogEntry, LogLevel
+from serial_log_analyzer.core.prompts.loader import PromptGoal
 from serial_log_analyzer.ui.main_window import MainWindow
 from serial_log_analyzer.ui.models.log_table_model import LogTableModel
 from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
@@ -165,6 +166,27 @@ def test_analysis_panel_first_turn_then_follow_up(qtbot) -> None:
     panel.new_session_btn.click()
     assert panel.context_combo.isEnabled() is True and panel.goal_combo.isEnabled() is True
     assert panel.turns_label.text() == ""
+
+
+def test_analysis_panel_none_goal_sends_no_template(qtbot) -> None:
+    """目标下拉首项「无」：goal_id 为空，不会套目标模板（对照测试用）。"""
+
+    panel = AnalysisPanel()
+    qtbot.addWidget(panel)
+    panel.set_goals([PromptGoal("explain-logs", "解释日志", "模板：$context")])
+    requests: list[object] = []
+    panel.analyze_requested.connect(requests.append)
+
+    assert panel.goal_combo.itemText(0) == "无" and panel.goal_combo.itemData(0) == ""
+    assert panel.goal_combo.itemData(1) == "explain-logs"
+    assert panel.goal_combo.currentData() == "explain-logs"  # 缺省仍是第一个真实目标
+
+    panel.goal_combo.setCurrentIndex(0)  # 显式选「无」
+    panel.message_edit.setPlainText("ping")
+    panel.send_btn.click()
+
+    request, _selector = requests[-1]
+    assert request.goal_id == ""
 
 
 def test_docks_start_in_the_designed_layout(qtbot) -> None:

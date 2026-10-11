@@ -331,7 +331,7 @@ class AnalysisState(Enum): IDLE, STREAMING, DONE, ERROR
   决定（默认折叠），设置保存后立即生效。
 - 思考不回传请求（见 `docs/llm-integration.md`），但留在卡片上，所以历史轮次的思考在界面里仍然看得到；
   `AnalysisMessage.summary` 只用于展示，请求只发 `role` + `content`。
-- Prompt：`prompts/*.md`，内置目标（定位错误 / 解释日志 / 给出修复建议）+ 自由输入；`string.Template`（`$context $goal $language`）安全替换。
+- Prompt：`prompts/*.md`，内置目标（定位错误 / 解释日志 / 给出修复建议）+ 自由输入；`string.Template`（`$context $goal $language`）安全替换；界面目标下拉首项是「无」= 不套模板，只发输入与上下文，便于做对照测试。
 
 ## 13. 设置 / 凭据 / 存储
 

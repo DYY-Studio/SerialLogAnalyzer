@@ -134,11 +134,14 @@ class AnalysisPanel(QWidget):
         self.chat.set_details_expanded(expanded)
 
     def set_goals(self, goals: list[PromptGoal]) -> None:
-        """填充预设分析目标下拉列表。"""
+        """填充预设分析目标下拉列表；首项「无」= 不套目标模板，缺省仍选第一个真实目标。"""
 
         self.goal_combo.clear()
+        self.goal_combo.addItem("无", "")
         for goal in goals:
             self.goal_combo.addItem(goal.display_name, goal.goal_id)
+        if goals:
+            self.goal_combo.setCurrentIndex(1)
 
     def set_profiles(self, profiles: list[ProviderProfile], current: str = "") -> None:
         """填充 LLM Profile 下拉并选中 ``current``（不存在时选第一个）。"""
