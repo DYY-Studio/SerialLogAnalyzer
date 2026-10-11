@@ -59,7 +59,7 @@ def _profile(resources, profile_id: str = "sensenova"):
     """把 Profile 的凭据换成运行时输入，避免测试依赖环境变量或钥匙串。"""
 
     profile = load_profile(resources, profile_id)
-    return replace(profile, credential=CredentialRef(CredentialKind.RUNTIME, name=profile_id))
+    return replace(profile, credential=CredentialRef(CredentialKind.KEYRING, name=profile_id))
 
 
 def _builder(resources, profile_id: str = "sensenova") -> RequestBuilder:

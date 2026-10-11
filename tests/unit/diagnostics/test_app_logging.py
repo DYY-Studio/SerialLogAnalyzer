@@ -12,6 +12,7 @@ from serial_log_analyzer.diagnostics.app_logging import (
     current_log_file,
     get_logger,
     log_file_path,
+    read_tail,
 )
 from serial_log_analyzer.io.paths import user_log_dir
 
@@ -75,6 +76,38 @@ def test_repeated_configuration_is_idempotent(tmp_path):
     configure_logging(level="INFO", log_file=target)
 
     assert len(_logger().handlers) == 2
+
+
+def test_read_tail_returns_last_lines(tmp_path):
+    target = tmp_path / "app.log"
+    configure_logging(level="INFO", log_file=target)
+    logger = get_logger("test")
+    for index in range(5):
+        logger.info("第 %d 条", index)
+
+    tail = read_tail(2)
+
+    assert len(tail) == 2
+    assert "第 3 条" in tail[0] and "第 4 条" in tail[1]
+
+
+def test_read_tail_without_file_logging_is_empty():
+    configure_logging(level="INFO", log_file=None)
+
+    assert current_log_file() is None
+    assert read_tail() == []
+
+
+def test_reset_truncates_previous_content(tmp_path):
+    target = tmp_path / "app.log"
+    configure_logging(level="INFO", log_file=target)
+    get_logger("test").info("上一次运行")
+
+    configure_logging(level="INFO", log_file=target, reset=True)
+
+    assert target.read_text(encoding="utf-8") == ""
+    get_logger("test").info("本次运行")
+    assert target.read_text(encoding="utf-8").count("本次运行") == 1
 
 
 def test_environment_level_override(tmp_path, monkeypatch):

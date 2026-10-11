@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -32,6 +33,7 @@ _LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 _DEFAULT_LOG_LEVEL = "INFO"
 _MIN_CAPACITY = 1_000
 _MAX_CAPACITY = 1_000_000
+_MAX_HISTORY_ROUNDS = 50
 
 
 class SettingsDialog(QDialog):
@@ -46,6 +48,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self._settings = settings
         self.setWindowTitle("设置")
+        self.setMinimumWidth(440)
 
         self._autoscroll = QCheckBox("自动滚动到最新日志")
         self._autoscroll.setObjectName("settings-autoscroll")
@@ -60,6 +63,20 @@ class SettingsDialog(QDialog):
         self._log_level.setObjectName("settings-log-level")
         self._log_level.addItems(_LOG_LEVELS)
 
+        self._details_expanded = QCheckBox("思考 / 参考内容")
+        self._details_expanded.setObjectName("settings-details-expanded")
+
+        self._history_rounds = QSpinBox()
+        self._history_rounds.setObjectName("settings-history-rounds")
+        self._history_rounds.setRange(0, _MAX_HISTORY_ROUNDS)
+        self._history_rounds.setSuffix(" 轮")
+        self._history_rounds.setSpecialValueText("全部携带")
+        self._details_expanded.setToolTip("「思考」与「参考内容」折叠块默认展开还是收起")
+        self._history_rounds.setToolTip(
+            "只裁剪发给模型的历史：保留首轮 + 最近 N 轮，界面仍显示完整会话；\n"
+            "裁剪会让服务端前缀缓存失效，通常不比全部携带省。"
+        )
+
         self._export_dir = QLineEdit()
         self._export_dir.setObjectName("settings-export-dir")
         self._export_dir.setPlaceholderText("留空使用默认导出目录")
@@ -71,17 +88,19 @@ class SettingsDialog(QDialog):
         export_row.addWidget(self._export_dir)
         export_row.addWidget(browse)
 
-        form = QFormLayout()
-        form.addRow("日志容量", self._capacity)
-        form.addRow("自动滚动", self._autoscroll)
-        form.addRow("应用日志级别", self._log_level)
-        form.addRow("默认导出目录", export_row)
+        log_group = QGroupBox("日志")
+        log_form = QFormLayout(log_group)
+        log_form.addRow("容量", self._capacity)
+        log_form.addRow("自动滚动", self._autoscroll)
+        log_form.addRow("应用日志级别", self._log_level)
+        log_form.addRow("导出目录", export_row)
 
-        hint = QLabel(
-            "这些偏好保存在本机系统配置中。模型服务与 API Key 分别由「模型服务」与"
-            "「API Key」对话框管理。"
-        )
-        hint.setWordWrap(True)
+        llm_group = QGroupBox("LLM 分析")
+        llm_form = QFormLayout(llm_group)
+        llm_form.addRow("默认展开", self._details_expanded)
+        llm_form.addRow("携带历史", self._history_rounds)
+
+        hint = QLabel("偏好保存在本机系统配置；模型服务与 API Key 由各自对话框管理。")
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
@@ -90,7 +109,8 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
-        layout.addLayout(form)
+        layout.addWidget(log_group)
+        layout.addWidget(llm_group)
         layout.addWidget(hint)
         layout.addWidget(buttons)
 
@@ -106,6 +126,10 @@ class SettingsDialog(QDialog):
             self._settings.set(SETTINGS_KEYS.AUTOSCROLL, self._autoscroll.isChecked())
             self._settings.set(SETTINGS_KEYS.LOG_CAPACITY, self._capacity.value())
             self._settings.set(SETTINGS_KEYS.LOG_LEVEL, self._log_level.currentText())
+            self._settings.set(
+                SETTINGS_KEYS.CHAT_DETAILS_EXPANDED, self._details_expanded.isChecked()
+            )
+            self._settings.set(SETTINGS_KEYS.LLM_HISTORY_ROUNDS, self._history_rounds.value())
             self._settings.set(SETTINGS_KEYS.EXPORT_DIR, self._export_dir.text().strip())
             sync = getattr(self._settings, "sync", None)
             if callable(sync):
@@ -127,6 +151,12 @@ class SettingsDialog(QDialog):
         if level not in _LOG_LEVELS:
             level = _DEFAULT_LOG_LEVEL
         self._log_level.setCurrentText(level)
+        self._details_expanded.setChecked(
+            _as_bool(self._settings.get(SETTINGS_KEYS.CHAT_DETAILS_EXPANDED), False)
+        )
+        self._history_rounds.setValue(
+            _as_int(self._settings.get(SETTINGS_KEYS.LLM_HISTORY_ROUNDS), 0)
+        )
         self._export_dir.setText(str(self._settings.get(SETTINGS_KEYS.EXPORT_DIR) or ""))
 
     def _choose_export_dir(self) -> None:

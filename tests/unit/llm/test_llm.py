@@ -21,7 +21,12 @@ from serial_log_analyzer.core.llm.profile_loader import load_profile, load_profi
 from serial_log_analyzer.core.llm.request import RequestBuilder, join_url
 from serial_log_analyzer.core.llm.sse import SSEParser
 from serial_log_analyzer.core.llm.stream import StreamProcessor
-from serial_log_analyzer.core.models.analysis import AnalysisMessage, AnalysisRequest, MessageRole
+from serial_log_analyzer.core.models.analysis import (
+    AnalysisMessage,
+    AnalysisRequest,
+    MessageRole,
+    TokenUsage,
+)
 from serial_log_analyzer.core.models.provider import StreamEvent
 from serial_log_analyzer.core.prompts.loader import PromptLibrary
 
@@ -271,7 +276,7 @@ def test_sse_errors_and_reset():
 
 def test_stream_terminal_and_usage(adapter):
     deltas, usages = [], []
-    processor = StreamProcessor(adapter, deltas.append, on_usage=lambda *v: usages.append(v))
+    processor = StreamProcessor(adapter, deltas.append, on_usage=usages.append)
     processor.handle(StreamEvent('{"choices":[{"delta":{"content":"甲"}}]}'))
     processor.handle(
         StreamEvent(
@@ -281,7 +286,7 @@ def test_stream_terminal_and_usage(adapter):
     processor.handle(StreamEvent("[DONE]"))
     processor.handle(StreamEvent("invalid ignored after terminal"))
     processor.finalize(clean_eof=True)
-    assert deltas == ["甲"] and usages == [(2, 3, 5)] and processor.finished
+    assert deltas == ["甲"] and usages == [TokenUsage(2, 3, 5)] and processor.finished
 
 
 def test_stream_errors(adapter):
@@ -303,7 +308,7 @@ def test_stream_errors(adapter):
 def test_final_event_content_and_usage(resources):
     adapter = load_adapter(resources, "google-gemini")
     deltas, usages = [], []
-    processor = StreamProcessor(adapter, deltas.append, on_usage=lambda *v: usages.append(v))
+    processor = StreamProcessor(adapter, deltas.append, on_usage=usages.append)
     processor.handle(
         StreamEvent(
             json.dumps(
@@ -320,17 +325,50 @@ def test_final_event_content_and_usage(resources):
             )
         )
     )
-    assert processor.finished and deltas == ["尾部"] and usages == [(2, 3, 5)]
+    assert processor.finished and deltas == ["尾部"] and usages == [TokenUsage(2, 3, 5)]
+
+
+def test_cache_hit_tokens_are_normalized(resources):
+    """各家缓存字段口径不同，归一化后都应是「输入（其中命中）」。"""
+
+    deepseek = load_adapter(resources, "openai-compatible")
+    payload = {
+        "usage": {
+            "prompt_tokens": 1200,
+            "completion_tokens": 48,
+            "total_tokens": 1248,
+            "prompt_cache_hit_tokens": 1024,
+        }
+    }
+    assert deepseek.extract_usage(payload) == TokenUsage(1200, 48, 1248, 1024)
+
+    usages: list[TokenUsage] = []
+    processor = StreamProcessor(deepseek, lambda _: None, on_usage=usages.append)
+    processor.handle(StreamEvent(json.dumps({"choices": [], **payload})))
+    assert usages == [TokenUsage(1200, 48, 1248, 1024)]
+
+    anthropic = load_adapter(resources, "anthropic")
+    # Anthropic 的 input_tokens 不含缓存部分，官方口径：总输入 = input + read + creation
+    assert anthropic.extract_usage(
+        {
+            "usage": {
+                "input_tokens": 2048,
+                "output_tokens": 503,
+                "cache_read_input_tokens": 1800,
+                "cache_creation_input_tokens": 248,
+            }
+        }
+    ) == TokenUsage(4096, 503, 4599, 1800)
 
 
 def test_split_usage(resources):
     adapter = load_adapter(resources, "anthropic")
-    usages = []
-    processor = StreamProcessor(adapter, lambda _: None, on_usage=lambda *v: usages.append(v))
+    usages: list[TokenUsage] = []
+    processor = StreamProcessor(adapter, lambda _: None, on_usage=usages.append)
     processor.handle(StreamEvent('{"type":"message_start","message":{"usage":{"input_tokens":5}}}'))
     processor.handle(StreamEvent('{"type":"message_delta","usage":{"output_tokens":3}}'))
     processor.handle(StreamEvent('{"type":"message_stop"}'))
-    assert usages[-1] == (5, 3, 8)
+    assert usages[-1] == TokenUsage(5, 3, 8)
 
 
 def test_prompt_invalid_variable(make_loader):

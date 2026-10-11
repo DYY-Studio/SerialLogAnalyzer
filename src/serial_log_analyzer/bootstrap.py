@@ -36,7 +36,13 @@ from serial_log_analyzer.core.prompts.loader import PromptLibrary
 from serial_log_analyzer.core.services.analysis import AnalysisContextBuilder, AnalysisService
 from serial_log_analyzer.core.services.credential_resolver import CredentialResolver
 from serial_log_analyzer.core.services.device_session import DeviceSession
-from serial_log_analyzer.diagnostics.app_logging import configure_logging
+from serial_log_analyzer.diagnostics.app_logging import (
+    configure_logging,
+    current_log_file,
+    get_logger,
+    log_file_path,
+    read_tail,
+)
 from serial_log_analyzer.io.credentials.keyring_store import KeyringStoreAdapter
 from serial_log_analyzer.io.environment import DotEnvEnvironmentReader
 from serial_log_analyzer.io.llm.qt_http_transport import QtHttpTransport
@@ -50,6 +56,8 @@ from serial_log_analyzer.ui.controllers.main_controller import MainController
 from serial_log_analyzer.ui.main_window import MainWindow
 from serial_log_analyzer.ui.models.log_table_model import LogTableModel
 from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
+from serial_log_analyzer.ui.widgets.app_log_panel import AppLogPanel
+from serial_log_analyzer.ui.widgets.command_panel import CommandPanel
 from serial_log_analyzer.ui.widgets.log_view import LogView
 from serial_log_analyzer.ui.widgets.serial_toolbar import SerialToolBar
 
@@ -121,7 +129,11 @@ def build_application(argv: list[str] | None = None) -> ApplicationContext:
     app.setApplicationVersion(_APP_VERSION)
 
     settings = QtSettingsStore()
-    configure_logging(level=str(settings.get(SETTINGS_KEYS.LOG_LEVEL, "INFO")))
+    configure_logging(
+        level=str(settings.get(SETTINGS_KEYS.LOG_LEVEL, "INFO")),
+        log_file=log_file_path(),
+        reset=True,  # 每次启动一份干净的日志
+    )
 
     root = repo_root()
     resources = CompositeResourceLoader.from_environment(root)
@@ -137,7 +149,7 @@ def build_application(argv: list[str] | None = None) -> ApplicationContext:
 
     profile = _current_profile(resources, settings)
     manager = QNetworkAccessManager()
-    return ApplicationContext(
+    context = ApplicationContext(
         app=app,
         resources=resources,
         settings=settings,
@@ -154,6 +166,14 @@ def build_application(argv: list[str] | None = None) -> ApplicationContext:
         prompts=PromptLibrary(resources),
         context_builder=AnalysisContextBuilder(pipeline),
     )
+    # 让「视图 → 应用日志」一开始就有内容，也便于 issue 报告看清本次运行的配置。
+    get_logger("bootstrap").info(
+        "应用启动：preset=%s profile=%s 日志=%s",
+        preset.preset_id,
+        profile.profile_id,
+        current_log_file(),
+    )
+    return context
 
 
 def build_window(context: ApplicationContext) -> MainWindow:
@@ -171,26 +191,31 @@ def build_window(context: ApplicationContext) -> MainWindow:
     panel = AnalysisPanel()
     panel.set_goals(context.prompts.goals())
     toolbar = SerialToolBar()
+    command_panel = CommandPanel()
+    app_log_panel = AppLogPanel(
+        read_lines=lambda: read_tail(200),
+        log_path=str(current_log_file() or log_file_path()),
+    )
 
     device = DeviceController(context.session)
-    service = AnalysisService(
-        context.adapter,
-        context.http_transport,
-        context.prompts,
-        context.credentials,
-        profile=context.profile,
-    )
+    service = _analysis_service(context)
     analysis = AnalysisController(service, context.context_builder)
+    service.set_history_rounds(_history_rounds(settings))
     main = MainController(device, analysis, settings)
-    window = MainWindow(log_view, panel, toolbar, on_close=lambda: _shutdown(main, window, settings))
-    toolbar.set_profiles(load_profiles(context.resources), context.profile.profile_id)
+    window = MainWindow(
+        log_view,
+        panel,
+        toolbar,
+        command_panel,
+        app_log_panel,
+        on_close=lambda: _shutdown(main, window, settings),
+    )
+    panel.set_profiles(load_profiles(context.resources), context.profile.profile_id)
 
     toolbar.refresh_requested.connect(device.refresh_ports)
     toolbar.connect_requested.connect(device.connect)
     toolbar.disconnect_requested.connect(device.disconnect)
-    toolbar.clear_requested.connect(device.clear_logs)
-    toolbar.clear_requested.connect(log_view.clear)
-    toolbar.command_submitted.connect(device.send_command)
+    command_panel.command_submitted.connect(device.send_command)
     device.ports_refreshed.connect(toolbar.set_ports)
 
     def _on_connection(state: object, message: str) -> None:
@@ -200,18 +225,20 @@ def build_window(context: ApplicationContext) -> MainWindow:
     device.connection_changed.connect(_on_connection)
     device.log_update.connect(log_view.append_update)
     device.error_occurred.connect(window.show_status)
-    device.command_reply.connect(lambda reply: toolbar.set_command_reply(reply.text))
+    device.command_reply.connect(command_panel.append_reply)
 
     log_view.selection_changed.connect(analysis.selected_sequences)
-    log_view.clear_requested.connect(device.clear_logs)
-    log_view.clear_requested.connect(log_view.clear)
-    log_view.export_requested.connect(lambda: _export_logs(window, context))
-    log_view.import_requested.connect(lambda: _import_logs(window, context))
     log_view.autoscroll_toggled.connect(
         lambda enabled: settings.set(SETTINGS_KEYS.AUTOSCROLL, bool(enabled))
     )
+
+    window.clear_requested.connect(device.clear_logs)
+    window.clear_requested.connect(log_view.clear)
+    window.export_requested.connect(lambda: _export_logs(window, context))
+    window.import_requested.connect(lambda: _import_logs(window, context))
     toolbar.serial_settings_requested.connect(lambda: _open_serial_settings(window, toolbar))
-    toolbar.profile_changed.connect(lambda profile_id: _switch_profile(window, context, service, profile_id))
+    toolbar.error_occurred.connect(window.show_status)
+    panel.profile_changed.connect(lambda profile_id: _switch_profile(window, context, service, profile_id))
 
     panel.analyze_requested.connect(lambda payload: analysis.start_analysis(*payload))
     panel.follow_up_requested.connect(analysis.follow_up)
@@ -221,9 +248,8 @@ def build_window(context: ApplicationContext) -> MainWindow:
     analysis.state_changed.connect(panel.set_state)
     analysis.error_occurred.connect(window.show_status)
 
-    window.settings_requested.connect(lambda: _open_settings(window, context))
+    window.settings_requested.connect(lambda: _open_settings(window, context, service))
     window.provider_requested.connect(lambda: _open_provider(window, context, service))
-    window.credential_requested.connect(lambda: _open_credential(window, context))
     window.preset_requested.connect(lambda: _choose_preset(window, context))
 
     _restore_view(window, toolbar, log_view, settings)
@@ -232,13 +258,25 @@ def build_window(context: ApplicationContext) -> MainWindow:
     return window
 
 
-def _open_settings(window: MainWindow, context: ApplicationContext) -> None:
+def _analysis_service(context: ApplicationContext) -> AnalysisService:
+    """按组装结果构造分析服务（``build_window`` 与测试共用的唯一入口）。"""
+
+    return AnalysisService(
+        context.adapter,
+        context.http_transport,
+        context.prompts,
+        context.credentials,
+        profile=context.profile,
+    )
+
+
+def _open_settings(window: MainWindow, context: ApplicationContext, service: AnalysisService) -> None:
     """打开设置对话框；关闭后把可即时生效的项立即应用到界面与流水线。"""
 
     from serial_log_analyzer.ui.dialogs.settings_dialog import SettingsDialog
 
     SettingsDialog(context.settings, window).exec()
-    _apply_settings(window, context)
+    _apply_settings(window, context, service)
 
 
 def _open_serial_settings(window: MainWindow, toolbar: SerialToolBar) -> None:
@@ -251,16 +289,24 @@ def _open_serial_settings(window: MainWindow, toolbar: SerialToolBar) -> None:
         toolbar.apply_serial_settings(dialog.values())
 
 
-def _apply_settings(window: MainWindow, context: ApplicationContext) -> None:
-    """把设置里可即时生效的项应用出来：自动滚动、日志容量、应用日志级别。"""
+def _apply_settings(
+    window: MainWindow, context: ApplicationContext, service: AnalysisService
+) -> None:
+    """把设置里可即时生效的项应用出来：自动滚动、容量、日志级别、折叠、携带历史。"""
 
     settings = context.settings
     window.log_view.set_autoscroll(bool(settings.get(SETTINGS_KEYS.AUTOSCROLL, True)))
+    window.analysis_panel.set_details_expanded(
+        bool(settings.get(SETTINGS_KEYS.CHAT_DETAILS_EXPANDED, False))
+    )
+    service.set_history_rounds(_history_rounds(settings))
     context.pipeline.capacity = _capacity(settings)
     dropped = context.pipeline.enforce_capacity()
     if dropped:
         window.log_view.append_update(PipelineUpdate(dropped_sequences=dropped))
-    configure_logging(level=str(settings.get(SETTINGS_KEYS.LOG_LEVEL, "INFO")))
+    configure_logging(
+        level=str(settings.get(SETTINGS_KEYS.LOG_LEVEL, "INFO")), log_file=log_file_path()
+    )
 
 
 def _log_store(context: ApplicationContext) -> Any:
@@ -315,7 +361,7 @@ def _export_logs(window: MainWindow, context: ApplicationContext) -> None:
     from serial_log_analyzer.io.storage.log_file_store import ExportFormat
 
     store = _log_store(context)
-    formats = ";;".join(f"{fmt.display_name()} (*{fmt.suffix})" for fmt in ExportFormat)
+    formats = ";;".join(f"{fmt.display_name} (*{fmt.suffix})" for fmt in ExportFormat)
     path_text, selected = QFileDialog.getSaveFileName(
         window, "导出日志", str(store.suggested_path(fmt=ExportFormat.TEXT)), formats
     )
@@ -340,7 +386,7 @@ def _import_logs(window: MainWindow, context: ApplicationContext) -> None:
     from serial_log_analyzer.core.errors import AppError
 
     path_text, _ = QFileDialog.getOpenFileName(
-        window, "导入日志", str(_log_store(context).default_dir()), "日志文本 (*.log *.txt)"
+        window, "导入日志", str(_log_store(context).default_dir), "日志文本 (*.log *.txt)"
     )
     if not path_text:
         return
@@ -366,7 +412,7 @@ def _open_provider(
     """打开模型服务对话框（可新建 / 编辑 / 删除 Profile、拉取模型列表）。
 
     关闭后重读 Profile 列表：当前 Profile 已被删除时切到第一个可用项，仍存在时把
-    改动（base_url / model / extra_* 等）应用到分析服务。
+    改动（base_url / model / extra_* / 凭据来源等）应用到分析服务。
     """
 
     from serial_log_analyzer.core.llm.adapter_loader import load_adapters
@@ -379,6 +425,7 @@ def _open_provider(
         reload_profiles(),
         load_adapters(context.resources),
         window,
+        keyring=context.keyring,
         reload=reload_profiles,
         store=ProfileStore(),
         discovery=ModelDiscoveryService(context.http_transport, context.credentials),
@@ -406,21 +453,7 @@ def _refresh_profiles(
             context.adapter = adapter
         except AppError as exc:
             window.show_status(f"Profile 改动未能即时生效：{exc}")
-    window.serial_toolbar.set_profiles(profiles, context.profile.profile_id)
-
-
-def _open_credential(window: MainWindow, context: ApplicationContext) -> None:
-    """打开凭据对话框；钥匙串账号与 Profile 声明保持一致。"""
-
-    from serial_log_analyzer.ui.dialogs.credential_dialog import CredentialDialog
-
-    credential = context.profile.credential
-    CredentialDialog(
-        context.keyring,
-        context.profile.profile_id,
-        window,
-        account=credential.name or context.profile.profile_id,
-    ).exec()
+    window.analysis_panel.set_profiles(profiles, context.profile.profile_id)
 
 
 def _switch_profile(
@@ -437,7 +470,7 @@ def _switch_profile(
         adapter = load_adapter(context.resources, profile.adapter_id)
         service.set_profile(profile, adapter)
     except AppError as exc:
-        window.serial_toolbar.set_current_profile(context.profile.profile_id)
+        window.analysis_panel.set_current_profile(context.profile.profile_id)
         window.show_status(f"切换 Profile 失败：{exc}")
         return
     context.profile = profile
@@ -490,15 +523,32 @@ def _switch_preset(window: MainWindow, context: ApplicationContext, preset_id: s
     window.show_status(f"已切换到 Preset {preset_id}，日志已清空")
 
 
+def _restore_layout(window: MainWindow, settings: Any) -> None:
+    """按存档恢复停靠布局；面板集合变过就丢弃存档，改用设计好的默认排布。
+
+    Qt 的 ``restoreState`` 会把存档里不存在的面板直接隐藏，所以新增/删除面板后必须放弃旧布局，
+    否则新面板一启动就不见了。
+    """
+
+    state = settings.get(SETTINGS_KEYS.WINDOW_STATE)
+    if state is None:
+        return
+    saved = settings.get(SETTINGS_KEYS.WINDOW_DOCKS)
+    if sorted(map(str, saved or [])) != window.dock_names():
+        return
+    window.restore_layout(state)
+
+
 def _restore_view(window: MainWindow, toolbar: SerialToolBar, log_view: LogView, settings: Any) -> None:
-    """按设置恢复窗口几何、splitter、串口选择与自动滚动。"""
+    """按设置恢复窗口几何、停靠布局、串口选择、自动滚动与分析细节折叠。"""
 
     geometry = settings.get(SETTINGS_KEYS.WINDOW_GEOMETRY)
     if geometry is not None:
         window.restoreGeometry(geometry)
-    sizes = settings.get(SETTINGS_KEYS.SPLITTER_SIZES)
-    if sizes:
-        window.splitter.setSizes([int(size) for size in sizes])
+    _restore_layout(window, settings)
+    window.analysis_panel.set_details_expanded(
+        bool(settings.get(SETTINGS_KEYS.CHAT_DETAILS_EXPANDED, False))
+    )
     toolbar.restore(
         str(settings.get(SETTINGS_KEYS.LAST_PORT, "") or ""),
         str(settings.get(SETTINGS_KEYS.LAST_BAUDRATE, "115200") or "115200"),
@@ -511,7 +561,8 @@ def _shutdown(main_controller: MainController, window: MainWindow, settings: Any
 
     main_controller.shutdown()
     settings.set(SETTINGS_KEYS.WINDOW_GEOMETRY, window.saveGeometry())
-    settings.set(SETTINGS_KEYS.SPLITTER_SIZES, window.splitter.sizes())
+    settings.set(SETTINGS_KEYS.WINDOW_STATE, window.saveState())
+    settings.set(SETTINGS_KEYS.WINDOW_DOCKS, window.dock_names())
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -552,6 +603,19 @@ def _current_profile(resources: Any, settings: Any) -> Any:
     if wanted and any(item.profile_id == wanted for item in profiles):
         return load_profile(resources, wanted)
     return load_profile(resources, profiles[0].profile_id)
+
+
+def _history_rounds(settings: Any) -> int:
+    """读取「最多携带历史轮数」；``0`` 表示不限制，非法值直接失败。"""
+
+    value = settings.get(SETTINGS_KEYS.LLM_HISTORY_ROUNDS, 0)
+    try:
+        rounds = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"携带历史轮数必须是整数：{value}") from exc
+    if rounds < 0:
+        raise ConfigError(f"携带历史轮数不能为负：{rounds}")
+    return rounds
 
 
 def _capacity(settings: Any) -> int:

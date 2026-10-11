@@ -71,8 +71,8 @@ def test_switch_profile_and_preset_stay_in_sync(qapp, fake_settings) -> None:
     window = bootstrap.build_window(context)
     previous_pipeline = context.pipeline
 
-    index = window.serial_toolbar.profile_combo.findData("internlm")
-    window.serial_toolbar.profile_combo.setCurrentIndex(index)
+    index = window.analysis_panel.profile_combo.findData("internlm")
+    window.analysis_panel.profile_combo.setCurrentIndex(index)
 
     assert context.profile.profile_id == "internlm"
     assert context.adapter.adapter_id == "openai-compatible"
@@ -94,6 +94,7 @@ def test_build_window_wires_the_ui(qapp, fake_settings) -> None:
     assert window.windowTitle().startswith("SerialLogAnalyzer")
     assert window.analysis_panel.goal_combo.count() == 4
     assert window.serial_toolbar.baud_combo.currentText() == "115200"
-    assert window.splitter.count() == 2
+    assert window.analysis_dock.widget() is window.analysis_panel
+    assert window.command_dock.widget() is window.command_panel
     # 设备控制器已把回调安装到会话上
     assert context.session._handlers is not None

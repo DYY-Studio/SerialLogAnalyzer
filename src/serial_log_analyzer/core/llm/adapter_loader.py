@@ -21,6 +21,7 @@ from serial_log_analyzer.core.llm.adapter import (
     StreamCondition,
     StreamingSpec,
     StreamRule,
+    UsageSpec,
 )
 from serial_log_analyzer.core.ports import ResourceLoader
 
@@ -56,6 +57,7 @@ _MODEL_FIELDS = {
 }
 _MODEL_REQUIRED_FIELDS = ("endpoint", "response_models_pointer")
 _USAGE_FIELDS = ("input_tokens_pointer", "output_tokens_pointer", "total_tokens_pointer")
+_USAGE_LIST_FIELDS = ("input_cached_tokens_pointers", "input_extra_tokens_pointers")
 _STREAMING_FIELDS = {
     "transport",
     "endpoint",
@@ -199,7 +201,7 @@ def _validate_adapter(data: dict[str, Any], source_path: str) -> JSONAdapter:
         source_path,
     )
     models = _parse_models(data.get("models"), source_path)
-    usage_pointers = _parse_usage(data.get("usage"), source_path)
+    usage = _parse_usage(data.get("usage"), source_path)
 
     streaming: StreamingSpec | None = None
     if data.get("streaming") is not None:
@@ -217,7 +219,7 @@ def _validate_adapter(data: dict[str, Any], source_path: str) -> JSONAdapter:
         messages_format=str(messages_format),
         reasoning_pointers=reasoning_pointers,
         model_discovery=models,
-        usage_pointers=usage_pointers,
+        usage=usage,
         streaming=streaming,
         schema_version=_SCHEMA_VERSION,
         source_path=source_path,
@@ -260,7 +262,7 @@ def _validate_streaming(value: Any) -> StreamingSpec:
     if not isinstance(allow_clean_eof, bool):
         raise ConfigError("streaming.allow_clean_eof 必须是布尔值")
     error_events = _parse_error_events(value.get("error_events"))
-    usage_pointers = _parse_stream_usage(value.get("usage"))
+    usage = _parse_stream_usage(value.get("usage"))
 
     return StreamingSpec(
         endpoint=endpoint,
@@ -271,7 +273,7 @@ def _validate_streaming(value: Any) -> StreamingSpec:
         request_body=request_body,
         error_events=error_events,
         allow_clean_eof=allow_clean_eof,
-        usage_pointers=usage_pointers,
+        usage=usage,
     )
 
 
@@ -438,26 +440,34 @@ def _parse_models(value: Any, source_path: str) -> dict[str, Any] | None:
     return result
 
 
-def _parse_usage(value: Any, source_path: str) -> tuple[str | None, str | None, str | None]:
-    """校验 ``usage`` 段并返回（输入 / 输出 / 总计）指针三元组。"""
+def _parse_usage(value: Any, source_path: str) -> UsageSpec:
+    """校验非流式 ``usage`` 段并返回 :class:`UsageSpec`（前三个字段是单指针）。"""
     if value is None:
-        return (None, None, None)
+        return UsageSpec()
     mapping = _require_mapping(value, "usage", source_path)
-    unknown = set(mapping) - set(_USAGE_FIELDS)
+    unknown = set(mapping) - set(_USAGE_FIELDS) - set(_USAGE_LIST_FIELDS)
     if unknown:
         raise ConfigError(f"usage 未知字段：{sorted(unknown)}{_where(source_path)}")
-    parsed: list[str | None] = []
+    pointers: dict[str, tuple[str, ...]] = {}
     for key in _USAGE_FIELDS:
-        if key not in mapping:
-            parsed.append(None)
+        raw = mapping.get(key)
+        if raw is None:
+            pointers[key] = ()
             continue
-        raw = mapping[key]
         if not isinstance(raw, str) or not raw.strip():
             raise ConfigError(f"usage.{key} 必须是非空字符串{_where(source_path)}")
-        parsed.append(_validate_pointer(raw.strip(), f"usage.{key}", source_path))
-    if all(item is None for item in parsed):
+        pointers[key] = (_validate_pointer(raw.strip(), f"usage.{key}", source_path),)
+    cached = _pointer_tuple(mapping.get(_USAGE_LIST_FIELDS[0]), f"usage.{_USAGE_LIST_FIELDS[0]}", source_path)
+    extra = _pointer_tuple(mapping.get(_USAGE_LIST_FIELDS[1]), f"usage.{_USAGE_LIST_FIELDS[1]}", source_path)
+    if not any((*pointers.values(), cached, extra)):
         raise ConfigError(f"usage 至少需要声明一个指针{_where(source_path)}")
-    return (parsed[0], parsed[1], parsed[2])
+    return UsageSpec(
+        input=pointers[_USAGE_FIELDS[0]],
+        output=pointers[_USAGE_FIELDS[1]],
+        total=pointers[_USAGE_FIELDS[2]],
+        cached=cached,
+        extra_input=extra,
+    )
 
 
 def _parse_terminal(value: Any) -> tuple[str | None, StreamCondition | None]:
@@ -575,17 +585,29 @@ def _parse_error_events(value: Any) -> tuple[tuple[StreamCondition, str, str | N
 
 def _parse_stream_usage(
     value: Any,
-) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
-    """校验 ``streaming.usage`` 并返回候选指针三元组。"""
+) -> UsageSpec:
+    """校验 ``streaming.usage`` 并返回 :class:`UsageSpec`。"""
     if value is None:
-        return ((), (), ())
+        return UsageSpec()
     mapping = _require_mapping(value, "streaming.usage")
-    unknown = set(mapping) - set(_STREAM_USAGE_FIELDS)
+    unknown = set(mapping) - set(_STREAM_USAGE_FIELDS) - set(_USAGE_LIST_FIELDS)
     if unknown:
         raise ConfigError(f"streaming.usage 未知字段：{sorted(unknown)}")
     groups: list[tuple[str, ...]] = []
     for key in _STREAM_USAGE_FIELDS:
         groups.append(_pointer_tuple(mapping.get(key), f"streaming.usage.{key}", ""))
-    if all(not group for group in groups):
+    cached = _pointer_tuple(
+        mapping.get(_USAGE_LIST_FIELDS[0]), f"streaming.usage.{_USAGE_LIST_FIELDS[0]}", ""
+    )
+    extra = _pointer_tuple(
+        mapping.get(_USAGE_LIST_FIELDS[1]), f"streaming.usage.{_USAGE_LIST_FIELDS[1]}", ""
+    )
+    if all(not group for group in (*groups, cached, extra)):
         raise ConfigError("streaming.usage 至少需要声明一个指针")
-    return (groups[0], groups[1], groups[2])
+    return UsageSpec(
+        input=groups[0],
+        output=groups[1],
+        total=groups[2],
+        cached=cached,
+        extra_input=extra,
+    )

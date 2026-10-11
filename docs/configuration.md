@@ -147,7 +147,7 @@ extra_headers: {}
 | 删除 | 只删用户配置目录里的那份；不存在用户副本（纯内置）时明确拒绝并提示 |
 | 编辑 | `base_url` / `model` / `stream` / `request_timeout_seconds` / `adapter_id` / `extra_body` / `extra_headers` |
 | 拉取模型 | 用当前界面字段（含未保存编辑）向 `<base_url><models.endpoint>` 发 `GET`，把结果填进可编辑的模型下拉；失败弹窗提示 |
-| 凭据来源 | 只读展示；改凭据用「API Key」对话框（涉及密钥与系统钥匙串） |
+| 凭据 | 选来源（keyring / environment）与目标标识（账号名 / 变量名），随 Profile 一起落盘；密钥另外写入系统钥匙串（见 §5） |
 
 - `extra_body` / `extra_headers` 用 YAML 文本编辑：留空即不追加；不是合法映射或值不是字符串时
   明确报错且**不落盘**。
@@ -162,18 +162,15 @@ extra_headers: {}
 
 ```yaml
 credential:
-  kind: keyring        # keyring | environment | runtime，只读这一个来源
+  kind: keyring        # keyring | environment，只读这一个来源
   name: my-deepseek    # 钥匙串 account；缺省时取 profile_id
 ```
 
-`kind: environment` 时写 `env_var: MY_DEEPSEEK_API_KEY` 代替 `name`；`kind: runtime` 不写来源字段。
+`kind: environment` 时写 `env_var: MY_DEEPSEEK_API_KEY` 代替 `name`；`kind` 缺省为 `keyring`。
 同一个 `credential` 段**只能有一个来源字段**，多写会报 `ConfigError`。
 
-解析顺序（`core/services/credential_resolver.py`）：
-
-1. **本次会话的运行时输入**（对话框里临时输入，只存内存，键为 `name`，缺省为 `profile_id`）；
-2. 未命中时读 `kind` 声明的那个来源，**不跨来源回落**；
-3. 两者都没取到非空值时抛 `CredentialError`，错误信息列出已尝试的来源、失败原因与可换用的其他来源。
+解析（`core/services/credential_resolver.py`）：只读 `kind` 声明的那个来源，**不跨来源回落**；
+取不到非空值时抛 `CredentialError`，错误信息列出已尝试的来源、失败原因与可换用的另一来源。
 
 约定：
 
@@ -181,8 +178,7 @@ credential:
 - `kind: environment` 的值来自进程环境；进程里没有该变量时可读仓库根目录的本地 `.env`
   （`.env.example` 是模板，`.env` 被 Git 忽略）。
 - 钥匙串不可用时（无 SecretService、后端为 fail/null 等）：`available=False`，界面把保存选项置灰，
-  并提示声明 `kind: keyring` 的 Profile 取不到密钥，需要改用 `environment` 或 `runtime` 来源。
-- 运行时输入**不会自动写入**钥匙串；只有用户显式勾选「保存到系统钥匙串」才调用 `save`。
+  并提示声明 `kind: keyring` 的 Profile 取不到密钥，需要改用 `environment` 来源。
 - 「清除已保存的密钥」会删除钥匙串中的条目（需二次确认）。
 
 也可以只靠环境变量运行，不触碰钥匙串：
@@ -199,11 +195,13 @@ export MY_DEEPSEEK_API_KEY=sk-...
 | 键 | 含义 | 默认 |
 |---|---|---|
 | `window/geometry` | 主窗口几何 | 系统决定 |
-| `window/state` | 工具栏/停靠状态 | 系统决定 |
-| `window/splitter_sizes` | 分割条比例 | 预设比例 |
+| `window/state` | 工具栏 / 停靠面板布局（只在面板集合未变时恢复） | 系统决定 |
+| `window/docks` | 存档时的面板标识集合，用于判断面板是否增减过 | 系统决定 |
 | `device/last_port` | 最近使用的串口 | 空 |
 | `device/last_baudrate` | 最近波特率 | 空 |
 | `llm/current_profile` | 当前 Profile | 首个可用 |
+| `llm/details_expanded` | 「思考 / 参考内容」折叠块默认展开 | `false`（折叠） |
+| `llm/history_rounds` | 随请求携带的历史轮数上限（0 = 全部） | `0` |
 | `logs/current_preset` | 当前 Preset | 首个可用 |
 | `logs/autoscroll` | 自动滚动 | `true` |
 | `logs/capacity` | 日志环形缓冲容量（1000–1000000） | `100000` |
@@ -213,17 +211,21 @@ export MY_DEEPSEEK_API_KEY=sk-...
 - 复杂配置（Profile）**不放进** QSettings，统一用 YAML。
 - 布尔值经 `get_bool()` 读取，兼容 `true`/`false` 与 `0`/`1`；`get_int()` / `get_str()` 在类型不符时回退默认值。
 - 「设置」对话框只读写上述键，保存失败会提示用户并保持对话框打开。
-- 保存后**立即生效**的项：自动滚动、日志容量（超出部分当场裁掉并同步表格）、应用日志级别；
-  导出目录与当前 Profile / Preset 在下次使用时读取。
-- 串口高级参数（数据位 / 校验位 / 停止位 / 流控）不落盘，只在本次会话内生效。
-- 当前 LLM Profile 可在工具栏切换（换用对应 Adapter、写回 `llm/current_profile`）；
+- 保存后**立即生效**的项：自动滚动、日志容量（超出部分当场裁掉并同步表格）、应用日志级别、
+  分析细节折叠、携带历史轮数；导出目录与当前 Profile / Preset 在下次使用时读取。
+- `llm/history_rounds` 只裁剪**发给模型**的历史：始终保留首轮（它带着日志上下文）+ 最近 N 轮，
+  界面转录不受影响；裁剪会让服务端前缀缓存之外的部分每轮重新计费，通常并不比全带省
+  （口径与字段见 `docs/llm-integration.md` §多轮上下文、缓存与思考回传）。
+- 波特率在工具栏下拉里设置（可编辑，非正整数时不连接并给出提示）；数据位 / 校验位 / 停止位 /
+  流控在工具栏「串口参数…」对话框里设置，且不落盘，只在本次会话内生效。
+- 当前 LLM Profile 在分析面板顶部切换（换用对应 Adapter、写回 `llm/current_profile`）；
   「配置 → 切换日志 Preset…」切换 `logs/current_preset` 并**清空当前日志**（连接中不允许切换）。
 
 ## 7. 日志导出与导入
 
 内存中的日志由 `LogPipeline` 的环形缓冲保存（无 Session 概念、不自动落盘）。留档通过
-`io/storage/log_file_store.py` 的 `LogFileStore` 手动导出；日志视图的「导出」按目标后缀
-选择格式，「导入」把文本文件逐行喂回既有解析流水线（走同一个 Preset）。
+`io/storage/log_file_store.py` 的 `LogFileStore` 手动导出；菜单「文件 → 导出日志…」按目标后缀
+选择格式，「导入日志…」把文本文件逐行喂回既有解析流水线（走同一个 Preset），「清空日志」清空表格。
 
 | 格式 | 后缀 | 内容 |
 |---|---|---|
@@ -270,8 +272,12 @@ uv run python -m serial_log_analyzer.diagnostics --log-file app.log --no-log-tai
 工具自身的日志与应用无关的设备日志**严格分离**：
 
 - logger 名 `serial_log_analyzer`，通过 `get_logger(name)` 获取子 logger；
-- 默认输出到 stderr，行格式 `时间 级别 logger: 消息`；
-- 文件日志（可选）为 1 MB × 3 轮转，UTF-8，默认路径 `<用户配置目录>/logs/serial-log-analyzer.log`；
+- 默认同时输出到 stderr 与文件：`<用户配置目录>/logs/serial-log-analyzer.log`（1 MB × 3 轮转，UTF-8），
+  **每次启动清空上次内容**，行格式 `时间 级别 logger: 消息`；`SLA_LOG_FILE` 可覆盖路径；
+- 界面「视图 → 应用日志」面板显示该文件的尾部（可见时每秒刷新，带「刷新」按钮与可复制的路径）；
+- `SLA_LOG_LEVEL` / 设置里的「应用日志级别」决定写哪些级别的记录；启动时会写一条 INFO
+  （preset / profile / 日志路径），其余模块目前还没有日志点，设 `DEBUG` 暂不会多出内容；
+- `configure_logging(log_file=None)` 可关掉文件日志（诊断命令就是这么用的，避免只读命令写文件）；
 - `configure_logging()` 可重复调用（幂等），不会重复叠加 handler。
 
 ## 10. 环境变量汇总
@@ -281,7 +287,7 @@ uv run python -m serial_log_analyzer.diagnostics --log-file app.log --no-log-tai
 | `SLA_CONFIG_HOME` | 用户配置根目录（资源覆盖、Profile 保存、应用日志） | `%APPDATA%\SerialLogAnalyzer` / `~/.config/SerialLogAnalyzer` |
 | `SLA_EXPORT_DIR` | 日志导出默认目录 | `<仓库根>/exports` / `~/SerialLogAnalyzer/exports` |
 | `SLA_LOG_LEVEL` | 应用日志级别 `DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL` | `INFO`（非法值退回 `INFO` 并告警） |
-| `SLA_LOG_FILE` | 应用日志文件路径，设置后启用文件日志 | 空（仅 stderr） |
+| `SLA_LOG_FILE` | 应用日志文件路径，覆盖默认的 `<用户配置目录>/logs/serial-log-analyzer.log` | 默认路径（启用文件日志） |
 | `SLA_HW_PORT` | 硬件联调门控测试使用的串口；未设置则跳过 | 空 |
 | `<profile 的 env_var>` | 该 Profile 的 API Key | 空（仅当 `credential.kind=environment` 时使用；不跨来源回落） |
 

@@ -56,6 +56,44 @@ def test_export_infers_format_from_suffix(context, tmp_path) -> None:
     assert payload.startswith("{")  # JSONL 每行一个对象
 
 
+def test_export_dialog_path_fills_suffix_from_filter(context, tmp_path, monkeypatch) -> None:
+    """对话框路径：无后缀时按选择项补后缀（property / method 混用过，这里把它盖住）。"""
+
+    from PySide6.QtWidgets import QFileDialog
+
+    window = bootstrap.build_window(context)
+    context.pipeline.feed("[I] [main] boot done", 1.0)
+    picked = tmp_path / "picked"
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        staticmethod(lambda *args, **kwargs: (str(picked), "JSON Lines (*.jsonl)")),
+    )
+
+    bootstrap._export_logs(window, context)
+
+    written = picked.with_suffix(".jsonl")
+    assert written.is_file()
+    assert written.read_text(encoding="utf-8").startswith("{")
+
+
+def test_import_dialog_path_feeds_rows_into_view(context, tmp_path, monkeypatch) -> None:
+    from PySide6.QtWidgets import QFileDialog
+
+    window = bootstrap.build_window(context)
+    source = tmp_path / "old.log"
+    source.write_text("[I] [wifi] connected\n[E] [uart] rx overflow\n", encoding="utf-8")
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        staticmethod(lambda *args, **kwargs: (str(source), "日志文本 (*.log *.txt)")),
+    )
+
+    bootstrap._import_logs(window, context)
+
+    assert window.log_view.table_view.model().rowCount() == 2
+
+
 def test_settings_take_effect_immediately(context) -> None:
     window = bootstrap.build_window(context)
     for index in range(5):
@@ -65,7 +103,7 @@ def test_settings_take_effect_immediately(context) -> None:
 
     context.settings.values[SETTINGS_KEYS.AUTOSCROLL] = False
     context.settings.values[SETTINGS_KEYS.LOG_CAPACITY] = 2
-    bootstrap._apply_settings(window, context)
+    bootstrap._apply_settings(window, context, bootstrap._analysis_service(context))
 
     assert context.pipeline.capacity == 2
     assert len(context.pipeline.entries()) == 2

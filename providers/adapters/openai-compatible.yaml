@@ -29,6 +29,10 @@ usage:
   input_tokens_pointer: "/usage/prompt_tokens"
   output_tokens_pointer: "/usage/completion_tokens"
   total_tokens_pointer: "/usage/total_tokens"
+  # 缓存命中：OpenAI 用 prompt_tokens_details.cached_tokens，DeepSeek 另有 prompt_cache_hit_tokens
+  input_cached_tokens_pointers:
+    - "/usage/prompt_tokens_details/cached_tokens"
+    - "/usage/prompt_cache_hit_tokens"
 
 streaming:
   transport: sse
@@ -54,3 +58,6 @@ streaming:
     input_tokens_pointers: ["/usage/prompt_tokens"]
     output_tokens_pointers: ["/usage/completion_tokens"]
     total_tokens_pointers: ["/usage/total_tokens"]
+    input_cached_tokens_pointers:
+      - "/usage/prompt_tokens_details/cached_tokens"
+      - "/usage/prompt_cache_hit_tokens"

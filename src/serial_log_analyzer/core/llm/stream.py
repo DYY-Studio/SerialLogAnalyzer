@@ -3,9 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from serial_log_analyzer.core.errors import ProviderError, ResponseParseError
-from serial_log_analyzer.core.llm.adapter import JSONAdapter, _optional, _payload, _usage
+from serial_log_analyzer.core.llm.adapter import (
+    JSONAdapter,
+    UsageSpec,
+    _first_optional,
+    _optional,
+    _payload,
+    build_usage,
+)
+from serial_log_analyzer.core.models.analysis import TokenUsage
 from serial_log_analyzer.core.models.provider import StreamEvent
 
 
@@ -26,7 +35,7 @@ class StreamProcessor:
         adapter: JSONAdapter,
         on_delta: Callable[[str], None],
         on_reasoning: Callable[[str], None] | None = None,
-        on_usage: Callable[[int, int, int], None] | None = None,
+        on_usage: Callable[[TokenUsage], None] | None = None,
     ) -> None:
         if not adapter.streaming_supported:
             raise ProviderError("此 Adapter 不支持流式")
@@ -37,11 +46,36 @@ class StreamProcessor:
         self._finished = False
         self._failed = False
         self._usage_values = [None, None, None]
+        self._usage_cached: Any = None
+        self._usage_extras: dict[str, Any] = {}
+        self._last_usage: TokenUsage | None = None
 
     @property
     def finished(self) -> bool:
         """返回是否已终止（含错误）。"""
         return self._finished
+
+    def _collect_usage(self, payload: Any, spec: UsageSpec) -> TokenUsage | None:
+        """把本事件里的用量字段累积下来，并返回归一化后的用量。"""
+
+        for index, candidates in enumerate((spec.input, spec.output, spec.total)):
+            for pointer in candidates:
+                value = _optional(payload, pointer)
+                if value is not None:
+                    self._usage_values[index] = value
+                    break
+        cached = _first_optional(payload, spec.cached)
+        if cached is not None:
+            self._usage_cached = cached
+        for pointer in spec.extra_input:
+            value = _optional(payload, pointer)
+            if value is not None:
+                self._usage_extras[pointer] = value
+        return build_usage(
+            *self._usage_values,
+            cached_tokens=self._usage_cached,
+            extra_input_tokens=list(self._usage_extras.values()),
+        )
 
     def handle(self, event: StreamEvent) -> str:
         """处理事件；服务错误抛出 ProviderError，数据错误抛出 ResponseParseError。"""
@@ -56,16 +90,10 @@ class StreamProcessor:
             spec = self._adapter.streaming
             if event.data != spec.terminal_sentinel:
                 payload = _payload(event)
-                previous = self._usage_values.copy()
-                for i, candidates in enumerate(spec.usage_pointers):
-                    for pointer in candidates:
-                        value = _optional(payload, pointer)
-                        if value is not None:
-                            self._usage_values[i] = value
-                            break
-                usage = _usage(self._usage_values)
-                if usage is not None and self._usage_values != previous and self._on_usage:
-                    self._on_usage(*usage)
+                usage = self._collect_usage(payload, spec.usage)
+                if usage is not None and usage != self._last_usage and self._on_usage:
+                    self._last_usage = usage
+                    self._on_usage(usage)
             for delta in deltas:
                 self._on_delta(delta)
             if self._on_reasoning:

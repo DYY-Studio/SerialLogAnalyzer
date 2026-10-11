@@ -6,10 +6,11 @@ model: "qwen2.5:7b"
 stream: true
 request_timeout_seconds: 300
 
-# 本地服务通常不需要密钥；runtime 类型表示“运行时按提示输入”，
-# 也可直接填任意占位字符。
+# 本地服务通常不校验密钥，但凭据来源必须是真实来源：
+# 设一个非空环境变量即可（例如 OLLAMA_API_KEY=ollama）。
 credential:
-  kind: runtime
+  kind: environment
+  env_var: OLLAMA_API_KEY
 
 extra_body: {}
 extra_headers: {}

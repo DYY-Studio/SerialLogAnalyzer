@@ -4,8 +4,8 @@
 仓库里的 Preset 专指设备日志格式，与模型配置无关。
 
 Profile 的持久化以 ``providers/profiles/*.yaml``（内置）与用户配置目录的同名文件（覆盖内置）
-为准；本对话框的每一步操作都立即落盘，因此不保留“未保存编辑”。凭据来源只读展示，
-改凭据请用「API Key」对话框（涉及密钥与写入系统钥匙串）。
+为准；本对话框的每一步操作都立即落盘，因此不保留“未保存编辑”。凭据的来源与标识随 Profile
+写进 YAML，密钥只在用户点「保存到钥匙串」时写入系统钥匙串。
 """
 
 from __future__ import annotations
@@ -35,12 +35,10 @@ from PySide6.QtWidgets import (
 from serial_log_analyzer.core.errors import AppError, ConfigError
 from serial_log_analyzer.core.llm.adapter import JSONAdapter
 from serial_log_analyzer.core.llm.model_discovery import ModelDiscoveryService
-from serial_log_analyzer.core.models.provider import (
-    CredentialKind,
-    ModelOption,
-    ProviderProfile,
-)
+from serial_log_analyzer.core.models.provider import ModelOption, ProviderProfile
+from serial_log_analyzer.core.ports import KeyringStore
 from serial_log_analyzer.io.storage.profile_store import ProfileStore
+from serial_log_analyzer.ui.widgets.credential_editor import CredentialEditor
 
 __all__ = ["ProviderDialog"]
 
@@ -55,6 +53,7 @@ class ProviderDialog(QDialog):
     参数:
         profiles: 当前可用 Profile 列表。
         adapters: 可用 Adapter 列表（用于改选 Adapter 与判断拉取模型能力）。
+        keyring: 系统钥匙串适配器（凭据区写密钥用）。
         parent: 可选父窗口。
         reload: 重新读取 Profile 列表（落盘后调用，含内置与用户配置）。
         store: 用户 Profile 存储；缺省使用 :class:`ProfileStore`（用户配置目录）。
@@ -67,6 +66,7 @@ class ProviderDialog(QDialog):
         adapters: list[JSONAdapter],
         parent: QDialog | None = None,
         *,
+        keyring: KeyringStore,
         reload: Callable[[], list[ProviderProfile]],
         store: ProfileStore | None = None,
         discovery: ModelDiscoveryService | None = None,
@@ -124,9 +124,7 @@ class ProviderDialog(QDialog):
         self._extra_headers.setPlaceholderText('YAML 映射，如 {"X-Org": "team-a"}；留空表示不追加')
         self._extra_headers.setFixedHeight(70)
 
-        self._credential = QLabel()
-        self._credential.setObjectName("provider-credential")
-        self._credential.setWordWrap(True)
+        self._credential = CredentialEditor(keyring)
 
         profile_row = QHBoxLayout()
         profile_row.addWidget(self._combo, 1)
@@ -146,7 +144,7 @@ class ProviderDialog(QDialog):
         form.addRow("请求超时", self._timeout)
         form.addRow("extra_body", self._extra_body)
         form.addRow("extra_headers", self._extra_headers)
-        form.addRow("凭据来源", self._credential)
+        form.addRow("凭据", self._credential)
 
         self._status = QLabel()
         self._status.setObjectName("provider-status")
@@ -154,7 +152,7 @@ class ProviderDialog(QDialog):
 
         hint = QLabel(
             "Profile 以 providers/profiles/*.yaml 为准；保存写入用户配置目录并覆盖同 ID 的内置"
-            " Profile（内置文件本身不会被修改）。API Key 请在「API Key」对话框中设置。"
+            " Profile（内置文件本身不会被修改）。凭据来源随 Profile 落盘，密钥只写系统钥匙串。"
         )
         hint.setWordWrap(True)
 
@@ -238,6 +236,7 @@ class ProviderDialog(QDialog):
             self._timeout,
             self._extra_body,
             self._extra_headers,
+            self._credential,
             self._save_button,
         ):
             widget.setEnabled(editable)
@@ -247,7 +246,7 @@ class ProviderDialog(QDialog):
             self._model.clear()
             self._extra_body.setPlainText("")
             self._extra_headers.setPlainText("")
-            self._credential.setText("（无可用 Profile）")
+            self._credential.clear()
             self._status.setText("")
             self._fetch_button.setEnabled(False)
             return
@@ -258,7 +257,7 @@ class ProviderDialog(QDialog):
         self._timeout.setValue(_timeout_value(profile))
         self._extra_body.setPlainText(_mapping_text(profile.extra_body))
         self._extra_headers.setPlainText(_mapping_text(profile.extra_headers))
-        self._credential.setText(_credential_text(profile))
+        self._credential.load(profile.credential, profile.profile_id)
         self._status.setText("")
 
     def _fill_adapters(self, current: str) -> None:
@@ -428,6 +427,7 @@ class ProviderDialog(QDialog):
             model=model,
             stream=self._stream.isChecked(),
             request_timeout_seconds=float(self._timeout.value()),
+            credential=self._credential.credential(),
             extra_body=_parse_mapping(self._extra_body.toPlainText(), "extra_body"),
             extra_headers=headers,
         )
@@ -482,16 +482,3 @@ def _timeout_value(profile: ProviderProfile) -> int:
     except (TypeError, ValueError):  # pragma: no cover - 加载期已校验为数值
         seconds = 120
     return max(_MIN_TIMEOUT, min(_MAX_TIMEOUT, seconds))
-
-
-def _credential_text(profile: ProviderProfile) -> str:
-    """把凭据引用渲染为中文说明。"""
-
-    credential = profile.credential
-    if credential.kind is CredentialKind.KEYRING:
-        return f"系统钥匙串（account：{credential.name or '（未指定）'}）"
-    if credential.kind is CredentialKind.ENVIRONMENT:
-        return f"环境变量：{credential.env_var or '（未指定）'}"
-    if credential.kind is CredentialKind.RUNTIME:
-        return "运行时临时输入（不写入系统钥匙串）"
-    return "（未声明）"  # pragma: no cover - 枚举封闭

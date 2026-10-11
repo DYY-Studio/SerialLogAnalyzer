@@ -39,6 +39,9 @@ usage:
   input_tokens_pointer: "/usage/prompt_tokens"
   output_tokens_pointer: "/usage/completion_tokens"
   total_tokens_pointer: "/usage/total_tokens"
+  input_cached_tokens_pointers:            # 缓存命中（展示用），按序尝试取第一个命中的
+    - "/usage/prompt_tokens_details/cached_tokens"
+    - "/usage/prompt_cache_hit_tokens"
 
 streaming:
   transport: sse
@@ -104,7 +107,13 @@ streaming:
 |---|---|
 | `input_tokens_pointer` | 输入 token 数（扩展 JSON Pointer） |
 | `output_tokens_pointer` | 输出 token 数 |
-| `total_tokens_pointer` | 总 token 数 |
+| `total_tokens_pointer` | 总 token 数；未声明时按输入 + 输出补齐 |
+| `input_cached_tokens_pointers` | 缓存命中 token 的候选指针，按序尝试取第一个（展示用，不改变输入总量） |
+| `input_extra_tokens_pointers` | 这些指针上的值**全部相加**并计入输入总量，用于「`input_tokens` 不含缓存部分」的 Provider |
+
+各家的缓存字段与口径见 `docs/llm-integration.md` §4；Anthropic 的 `input_tokens` 官方口径是
+「未被缓存读/写的输入」，所以它用 `input_extra_tokens_pointers` 把 `cache_read` + `cache_creation`
+补进输入，另外单独声明 `input_cached_tokens_pointers: cache_read_input_tokens`。
 
 ### 1.3 占位符白名单
 
@@ -136,10 +145,11 @@ streaming:
 | `terminal` | 是 | 终止条件：`{sentinel: "[DONE]"}` 或 `{when: {pointer, equals\|exists}}` |
 | `allow_clean_eof` | 否 | 服务端未发终止事件即关闭连接时是否视为正常结束 |
 | `error_events` | 否 | `{when, message_pointer, status_pointer?}` 数组 |
-| `usage` | 否 | 流式用量指针数组：`input_tokens_pointers` / `output_tokens_pointers` / `total_tokens_pointers` |
+| `usage` | 否 | 流式用量指针数组：`input_tokens_pointers` / `output_tokens_pointers` / `total_tokens_pointers`（另有与非流式同名的 `input_cached_tokens_pointers` / `input_extra_tokens_pointers`） |
 
-`streaming.usage` 的三个子键都是**候选指针数组**（同一数值在不同服务端可能出现在不同位置），
-至少一个数组非空，否则报 `ConfigError`；候选按序尝试，由 `core/llm/stream.py` 消费。
+`streaming.usage` 各子键都是**候选指针数组**（同一数值在不同服务端可能出现在不同位置），
+至少一个数组非空，否则报 `ConfigError`；候选按序尝试，由 `core/llm/stream.py` 消费并归一化为
+`TokenUsage`（`input_extra_tokens_pointers` 里的值全部相加计入输入）。
 
 只对流式请求合法的字段（如 `stream_options`）必须写在 `streaming.request_body`：
 Profile 的 `extra_body` 会合并进**每一次**请求，用它承载流式专属字段会让非流式请求也带上该字段。
@@ -163,7 +173,7 @@ stream: true
 request_timeout_seconds: 120
 
 credential:
-  kind: keyring          # keyring | environment | runtime，只读这一个来源
+  kind: keyring          # keyring | environment，只读这一个来源
   name: deepseek         # keyring 账号名，缺省取 profile_id
 
 extra_body: {}
@@ -179,7 +189,7 @@ extra_headers: {}
 | `model` | 是 | 模型名 |
 | `stream` | 否 | 流式开关，默认 `true`；Adapter 未声明 `streaming` 且此处为 `true` 时报错 |
 | `request_timeout_seconds` | 否 | 正数，默认 `120`；布尔值非法 |
-| `credential` | 否 | 凭据引用，见 `credentials.md`；缺省等价于 `{kind: runtime}` |
+| `credential` | 否 | 凭据引用，见 `credentials.md`；缺省等价于 `{kind: keyring}`（账号名取 `profile_id`） |
 | `extra_body` | 否 | 追加请求体字段；与 Adapter 模板字段冲突时报 `ConfigError` |
 | `extra_headers` | 否 | 追加请求头；与 Adapter 模板头同名（大小写不敏感）时报 `ConfigError` |
 

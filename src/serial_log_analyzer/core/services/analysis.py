@@ -24,7 +24,6 @@ from serial_log_analyzer.core.logs.pipeline import LogPipeline
 from serial_log_analyzer.core.models.analysis import (
     AnalysisContext,
     AnalysisMessage,
-    AnalysisMode,
     AnalysisRequest,
     AnalysisResult,
     AnalysisState,
@@ -180,6 +179,7 @@ class AnalysisService:
         self._sse: SSEParser | None = None
         self._processor: StreamProcessor | None = None
         self._buffer = bytearray()
+        self._history_rounds = 0
 
     def set_handlers(self, handlers: AnalysisServiceHandlers) -> None:
         """安装对外回调；由 ``ui`` 控制器在构造后注入。
@@ -209,6 +209,14 @@ class AnalysisService:
         self._adapter = adapter
         self._builder = RequestBuilder(adapter, profile, self._credentials)
 
+    def set_history_rounds(self, rounds: int) -> None:
+        """设置随请求携带的历史轮数上限；``0`` 表示全部携带。
+
+        裁剪只影响发给模型的上下文，不影响界面转录（界面始终显示完整会话）。
+        """
+
+        self._history_rounds = max(0, int(rounds))
+
     @property
     def conversation(self) -> list[AnalysisMessage]:
         """当前会话的消息历史（只读副本）。"""
@@ -216,7 +224,7 @@ class AnalysisService:
         return list(self._conversation)
 
     def ask(self, request: AnalysisRequest) -> None:
-        """开始一轮新的分析；单次模式会清空既有历史。
+        """开始一轮新的分析，沿用当前会话历史（重开用 :meth:`reset`）。
 
         异常:
             ConfigError: 已有进行中的请求，或上下文/目标非法。
@@ -224,10 +232,7 @@ class AnalysisService:
         """
 
         self._ensure_idle()
-        text = self._compose(request)
-        if request.mode is AnalysisMode.SINGLE:
-            self._conversation.clear()
-        self._start(text, request)
+        self._start(self._compose(request), request, self._summary(request))
 
     def follow_up(self, text: str) -> None:
         """在当前会话中追加一轮追问。
@@ -241,7 +246,8 @@ class AnalysisService:
             raise ConfigError("尚无会话历史，无法追问")
         self._start(
             self._prompts.render_freeform(text),
-            AnalysisRequest(mode=AnalysisMode.CHAT, user_input=text),
+            AnalysisRequest(user_input=text),
+            text.strip(),
         )
 
     def cancel(self) -> None:
@@ -285,11 +291,37 @@ class AnalysisService:
             return self._prompts.render_freeform(context)
         raise ConfigError("分析内容不能为空")
 
-    def _start(self, text: str, request: AnalysisRequest) -> None:
+    def _history(self) -> list[AnalysisMessage]:
+        """按轮数上限裁剪要发给模型的历史。
+
+        始终保留首轮（它带着日志上下文），再补上最近 N 轮；切片对齐到 user 消息边界，
+        保证 user / assistant 交替合法。``0`` 表示不裁剪。
+        """
+
+        rounds = self._history_rounds
+        if rounds <= 0 or len(self._conversation) <= 1:
+            return list(self._conversation)
+        head = self._conversation[:1]
+        tail = self._conversation[1:][-2 * rounds :]
+        while tail and tail[0].role is MessageRole.ASSISTANT:
+            tail = tail[1:]
+        return [*head, *tail] if tail else head
+
+    def _summary(self, request: AnalysisRequest) -> str:
+        """给界面用的短摘要：目标名 + 用户输入；都没有时说明只有日志上下文。"""
+
+        goal = self._prompts.find(request.goal_id) if request.goal_id else None
+        parts = [goal.display_name] if goal is not None else []
+        text = request.user_input.strip()
+        if text:
+            parts.append(text)
+        return " · ".join(parts) or "（仅日志上下文）"
+
+    def _start(self, text: str, request: AnalysisRequest, summary: str) -> None:
         """发送一轮请求并进入流式状态机。"""
 
-        message = AnalysisMessage(MessageRole.USER, text)
-        http = self._builder.build([*self._conversation, message], request)
+        message = AnalysisMessage(MessageRole.USER, text, summary)
+        http = self._builder.build([*self._history(), message], request)
         self._conversation.append(message)
         self._cancelled = False
         self._buffer.clear()
@@ -307,7 +339,7 @@ class AnalysisService:
             self._sse = None
             self._processor = None
         self._handlers.on_state(AnalysisState.STREAMING)
-        self._handlers.on_result(self._result)
+        self._emit_result()
         self._active = True
         token = self._transport.send(http, self._on_chunk, self._on_done, self._on_error)
         if self._active:
@@ -320,8 +352,8 @@ class AnalysisService:
     def _append_reasoning(self, delta: str) -> None:
         self._result.reasoning = (self._result.reasoning or "") + delta
 
-    def _set_usage(self, input_tokens: int, output_tokens: int, total_tokens: int) -> None:
-        self._result.usage = TokenUsage(input_tokens, output_tokens, total_tokens)
+    def _set_usage(self, usage: TokenUsage) -> None:
+        self._result.usage = usage
 
     def _on_chunk(self, data: bytes) -> None:
         """网络分块回调：流式走 SSE 分帧，非流式累积整包。"""
@@ -337,7 +369,7 @@ class AnalysisService:
             for event in self._sse.feed(data):
                 outcome = self._processor.handle(event)
                 if outcome != StreamOutcome.IGNORED:
-                    self._handlers.on_result(self._result)
+                    self._emit_result()
                 if outcome is StreamOutcome.TERMINAL:
                     break
         except AppError as exc:
@@ -384,7 +416,13 @@ class AnalysisService:
         self._result.reasoning = reasoning
         usage = self._adapter.extract_usage(payload)
         if usage is not None:
-            self._set_usage(*usage)
+            self._set_usage(usage)
+
+    def _emit_result(self) -> None:
+        """上报结果快照；附带会话历史，供界面显示轮数。"""
+
+        self._result.conversation = list(self._conversation)
+        self._handlers.on_result(self._result)
 
     def _fail(self, error: Exception) -> None:
         """进入错误终态：结果、状态与错误各上报一次。"""
@@ -394,7 +432,7 @@ class AnalysisService:
         self._result.state = AnalysisState.ERROR
         self._result.error = str(error)
         self._close()
-        self._handlers.on_result(self._result)
+        self._emit_result()
         self._handlers.on_state(AnalysisState.ERROR)
         self._handlers.on_error(error)
 
@@ -403,7 +441,7 @@ class AnalysisService:
 
         self._close()
         self._result.state = state
-        self._handlers.on_result(self._result)
+        self._emit_result()
         self._handlers.on_state(state)
 
     def _close(self) -> None:

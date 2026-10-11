@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtWidgets import QDockWidget
+
+from serial_log_analyzer.core.device.command import CommandReply
 from serial_log_analyzer.core.logs.pipeline import PipelineUpdate
 from serial_log_analyzer.core.models.analysis import (
+    AnalysisMessage,
     AnalysisRequest,
     AnalysisResult,
     AnalysisState,
     ContextSelector,
+    MessageRole,
     TokenUsage,
 )
 from serial_log_analyzer.core.models.device import FlowControl, Parity, StopBits
@@ -15,6 +21,8 @@ from serial_log_analyzer.core.models.logs import LogEntry, LogLevel
 from serial_log_analyzer.ui.main_window import MainWindow
 from serial_log_analyzer.ui.models.log_table_model import LogTableModel
 from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
+from serial_log_analyzer.ui.widgets.app_log_panel import AppLogPanel
+from serial_log_analyzer.ui.widgets.command_panel import CommandPanel
 from serial_log_analyzer.ui.widgets.log_view import LogView
 from serial_log_analyzer.ui.widgets.serial_toolbar import SerialToolBar
 
@@ -32,7 +40,13 @@ def _entry(sequence: int, level: LogLevel = LogLevel.INFO, module: str = "wifi",
 
 
 def _build_window(qtbot) -> MainWindow:
-    window = MainWindow(LogView(LogTableModel()), AnalysisPanel(), SerialToolBar())
+    window = MainWindow(
+        LogView(LogTableModel()),
+        AnalysisPanel(),
+        SerialToolBar(),
+        CommandPanel(),
+        AppLogPanel(lambda: [], ""),
+    )
     qtbot.addWidget(window)
     return window
 
@@ -77,89 +91,224 @@ def test_filters_narrow_rows_and_emit_selection(qtbot) -> None:
     assert selected and selected[-1] == [0]
 
 
-def test_analysis_panel_reflects_state_and_request(qtbot) -> None:
+def test_level_filter_covers_every_level(qtbot) -> None:
+    window = _build_window(qtbot)
+    view = window.log_view
+    view.append_update(
+        PipelineUpdate(
+            added=(
+                _entry(0, LogLevel.VERBOSE),
+                _entry(1, LogLevel.UNKNOWN, message="???"),
+            )
+        )
+    )
+    assert set(view._level_boxes) == set(LogLevel)
+    assert view.table_view.model().rowCount() == 2
+
+    # 只留错误级：详细与未知也被过滤掉，且它们都有勾选框可以勾回来
+    for level, box in view._level_boxes.items():
+        box.setChecked(level is LogLevel.ERROR)
+    assert view.table_view.model().rowCount() == 0
+
+    for box in view._level_boxes.values():
+        box.setChecked(True)
+    assert view.table_view.model().rowCount() == 2
+
+
+def test_analysis_panel_first_turn_then_follow_up(qtbot) -> None:
     panel = AnalysisPanel()
     qtbot.addWidget(panel)
     panel.set_goals([])
-    captured: list[object] = []
-    panel.analyze_requested.connect(captured.append)
+    requests: list[object] = []
+    follow_ups: list[str] = []
+    panel.analyze_requested.connect(requests.append)
+    panel.follow_up_requested.connect(follow_ups.append)
 
-    panel.set_state(AnalysisState.STREAMING)
-    assert panel.analyze_btn.isEnabled() is False
-    assert panel.stop_btn.isEnabled() is True
+    panel.message_edit.setPlainText("看看这条")
+    panel.send_btn.click()
 
-    panel.set_result(
-        AnalysisResult(content="结论", usage=TokenUsage(3, 4, 7), state=AnalysisState.DONE)
-    )
-    assert panel.result_view.toPlainText() == "结论"
-    assert "3" in panel.usage_label.text() and "7" in panel.usage_label.text()
-
-    panel.set_state(AnalysisState.DONE)
-    panel.input_edit.setText("看看这条")
-    panel.analyze_btn.click()
-
-    request, selector = captured[-1]
+    request, selector = requests[-1]
     assert isinstance(request, AnalysisRequest) and request.user_input == "看看这条"
     assert selector is ContextSelector.SELECTED
+    assert panel.message_edit.toPlainText() == ""
+
+    panel.set_state(AnalysisState.STREAMING)
+    assert panel.send_btn.isEnabled() is False and panel.stop_btn.isEnabled() is True
+
+    panel.set_result(
+        AnalysisResult(
+            content="结论",
+            usage=TokenUsage(3, 4, 7, 2),
+            state=AnalysisState.DONE,
+            conversation=[
+                AnalysisMessage(MessageRole.USER, "看看这条"),
+                AnalysisMessage(MessageRole.ASSISTANT, "结论"),
+            ],
+        )
+    )
+    panel.set_state(AnalysisState.DONE)
+    assert "结论" in panel.chat.plain_text()
+    assert "3" in panel.usage_label.text() and "7" in panel.usage_label.text()
+    assert "缓存 2" in panel.usage_label.text()
+    assert panel.turns_label.text() == "当前会话 1 轮"
+    # 会话已开始：目标与上下文不再生效，发送走追问
+    assert panel.goal_combo.isEnabled() is False and panel.context_combo.isEnabled() is False
+
+    panel.message_edit.setPlainText("那内存呢")
+    panel.send_btn.click()
+    panel.send_btn.click()  # 空文本不再发
+    assert follow_ups == ["那内存呢"]
+
+    panel.copy_btn.click()
+    assert "结论" in QGuiApplication.clipboard().text()
+
+    panel.new_session_btn.click()
+    assert panel.context_combo.isEnabled() is True and panel.goal_combo.isEnabled() is True
+    assert panel.turns_label.text() == ""
+
+
+def test_docks_start_in_the_designed_layout(qtbot) -> None:
+    """没有存档时按设计好的默认排布：右下角归右侧、三个面板都可见。"""
+
+    from PySide6.QtCore import Qt
+
+    window = _build_window(qtbot)
+    window.show()
+
+    # 右下角归右侧 => 分析面板贯通上下、命令/应用日志只占左下
+    assert window.corner(Qt.Corner.BottomRightCorner) is Qt.DockWidgetArea.RightDockWidgetArea
+    assert window.analysis_dock.isHidden() is False
+    assert window.command_dock.isHidden() is False
+    assert window.app_log_dock.isHidden() is False
+
+
+def test_layout_is_restored_only_when_the_dock_set_matches(qtbot) -> None:
+    """面板集合一致才恢复存档；变过就丢弃，免得新面板被 Qt 藏起来。"""
+
+    from PySide6.QtCore import Qt
+
+    from serial_log_analyzer import bootstrap
+    from serial_log_analyzer.io.settings.qt_settings_store import SETTINGS_KEYS
+
+    window = _build_window(qtbot)
+    window.resize(1200, 800)
+    window.show()
+
+    # 存档：分析面板停靠在左侧
+    window.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, window.analysis_dock)
+    state = window.saveState()
+    window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, window.analysis_dock)
+
+    bootstrap._restore_layout(
+        window,
+        {SETTINGS_KEYS.WINDOW_STATE: state, SETTINGS_KEYS.WINDOW_DOCKS: window.dock_names()},
+    )
+    assert window.dockWidgetArea(window.analysis_dock) is Qt.DockWidgetArea.LeftDockWidgetArea
+    # 恢复后要重新声明角落归属，否则分析面板不再贯通上下
+    assert window.corner(Qt.Corner.BottomRightCorner) is Qt.DockWidgetArea.RightDockWidgetArea
+
+    window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, window.analysis_dock)
+    bootstrap._restore_layout(
+        window,
+        {
+            SETTINGS_KEYS.WINDOW_STATE: state,
+            SETTINGS_KEYS.WINDOW_DOCKS: ["analysis-dock", "command-dock"],  # 少一个面板
+        },
+    )
+    assert window.dockWidgetArea(window.analysis_dock) is Qt.DockWidgetArea.RightDockWidgetArea
 
 
 def test_menu_actions_emit_intent_signals(qtbot) -> None:
     window = _build_window(qtbot)
     seen: list[str] = []
+    window.export_requested.connect(lambda: seen.append("export"))
+    window.import_requested.connect(lambda: seen.append("import"))
+    window.clear_requested.connect(lambda: seen.append("clear"))
     window.settings_requested.connect(lambda: seen.append("settings"))
     window.provider_requested.connect(lambda: seen.append("provider"))
-    window.credential_requested.connect(lambda: seen.append("credential"))
 
-    actions = window.menuBar().actions()[0].menu().actions()
-    assert [action.text() for action in actions] == [
+    menus = window.menuBar().actions()
+    assert [menu.text() for menu in menus] == ["文件", "配置", "视图"]
+    file_actions = [item for item in menus[0].menu().actions() if not item.isSeparator()]
+    config_actions = menus[1].menu().actions()
+    assert [action.text() for action in file_actions] == ["导出日志…", "导入日志…", "清空日志"]
+    assert [action.text() for action in config_actions] == [
         "设置…",
         "模型服务…",
-        "凭据…",
         "切换日志 Preset…",
     ]
-    for action in actions[:3]:
+    # 「视图」里必须能开关停靠面板，否则关掉就找不回来
+    assert [action.text() for action in menus[2].menu().actions()] == ["LLM 分析", "命令", "应用日志"]
+    assert window.analysis_dock.widget() is window.analysis_panel
+    assert window.command_dock.widget() is window.command_panel
+    assert window.app_log_dock.widget() is window.app_log_panel
+    # 命令与应用日志共用底部区域，按标签页切换
+    assert window.tabifiedDockWidgets(window.command_dock) == [window.app_log_dock]
+    for dock in (window.analysis_dock, window.command_dock, window.app_log_dock):
+        assert dock.features() & QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        assert dock.features() & QDockWidget.DockWidgetFeature.DockWidgetMovable
+
+    for action in (*file_actions, *config_actions[:2]):
         action.trigger()
 
-    assert seen == ["settings", "provider", "credential"]
+    assert seen == ["export", "import", "clear", "settings", "provider"]
 
 
-def test_toolbar_emits_config_and_command(qtbot) -> None:
+def test_toolbar_emits_config(qtbot) -> None:
     toolbar = SerialToolBar()
     qtbot.addWidget(toolbar)
     configs: list[object] = []
-    commands: list[str] = []
     toolbar.connect_requested.connect(configs.append)
-    toolbar.command_submitted.connect(commands.append)
 
     toolbar.set_ports([])
     toolbar.port_combo.addItem("COM3 - USB Serial", "COM3")
     toolbar.baud_combo.setCurrentText("115200")
     toolbar.connect_btn.click()
-    toolbar.command_edit.setText("PING")
-    toolbar.send_btn.click()
 
     assert configs[0].port == "COM3" and configs[0].baudrate == 115200
-    assert commands == ["PING"]
 
 
-def test_toolbar_profile_combo_emits_change(qtbot) -> None:
+def test_command_panel_echoes_command_and_appends_reply(qtbot) -> None:
+    panel = CommandPanel()
+    qtbot.addWidget(panel)
+    sent: list[str] = []
+    panel.command_submitted.connect(sent.append)
+
+    panel.command_edit.setText("PING")
+    panel.send_btn.click()
+    assert sent == ["PING"]
+    assert panel.command_edit.text() == ""
+
+    panel.append_reply(CommandReply(text="PONG", ok=True))
+    panel.append_reply(CommandReply(text="rx overflow", ok=False, code=7))
+    assert panel.reply_view.toPlainText().splitlines() == [
+        "→ PING",
+        "← PONG",
+        "← 失败 [7] rx overflow",
+    ]
+
+    panel.send_btn.click()  # 空命令不发
+    assert sent == ["PING"]
+
+
+def test_panel_profile_combo_emits_change(qtbot) -> None:
     class _Profile:
         def __init__(self, profile_id: str) -> None:
             self.profile_id = profile_id
             self.model = f"{profile_id}-model"
 
-    toolbar = SerialToolBar()
-    qtbot.addWidget(toolbar)
+    panel = AnalysisPanel()
+    qtbot.addWidget(panel)
     seen: list[str] = []
-    toolbar.profile_changed.connect(seen.append)
+    panel.profile_changed.connect(seen.append)
 
-    toolbar.set_profiles([_Profile("deepseek"), _Profile("internlm")], "internlm")
-    assert toolbar.current_profile() == "internlm"
+    panel.set_profiles([_Profile("deepseek"), _Profile("internlm")], "internlm")
+    assert panel.current_profile() == "internlm"
 
-    toolbar.set_current_profile("deepseek")
+    panel.set_current_profile("deepseek")
     assert seen == []  # 程序化切换不触发信号
 
-    toolbar.profile_combo.setCurrentIndex(1)
+    panel.profile_combo.setCurrentIndex(1)
     assert seen == ["internlm"]
 
 
@@ -186,9 +335,9 @@ def test_toolbar_serial_settings_feed_current_config(qtbot) -> None:
     toolbar.settings_btn.click()
     assert requested == [True]
 
+    toolbar.baud_combo.setCurrentText("9600")
     toolbar.apply_serial_settings(
         {
-            "baudrate": "9600",
             "data_bits": 7,
             "parity": Parity.EVEN,
             "stop_bits": StopBits.TWO,
@@ -201,3 +350,21 @@ def test_toolbar_serial_settings_feed_current_config(qtbot) -> None:
     assert config.parity is Parity.EVEN
     assert config.stop_bits is StopBits.TWO
     assert config.flow_control is FlowControl.HARDWARE
+
+
+def test_invalid_baudrate_reports_and_skips_connect(qtbot) -> None:
+    toolbar = SerialToolBar()
+    qtbot.addWidget(toolbar)
+    toolbar.port_combo.addItem("COM4", "COM4")
+    configs: list[object] = []
+    errors: list[str] = []
+    toolbar.connect_requested.connect(configs.append)
+    toolbar.error_occurred.connect(errors.append)
+
+    toolbar.baud_combo.setCurrentText("fast")
+    toolbar.connect_btn.click()
+    toolbar.baud_combo.setCurrentText("0")
+    toolbar.connect_btn.click()
+
+    assert configs == []
+    assert len(errors) == 2 and all("波特率" in message for message in errors)

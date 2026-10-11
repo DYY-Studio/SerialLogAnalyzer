@@ -17,7 +17,7 @@ def _profile(profile_id: str = "my-local", **overrides) -> ProviderProfile:
         "adapter_id": "openai-compatible",
         "base_url": "http://127.0.0.1:11434/v1",
         "model": "qwen2.5:7b",
-        "credential": CredentialRef(kind=CredentialKind.RUNTIME),
+        "credential": CredentialRef(kind=CredentialKind.KEYRING, name="my-local"),
         "stream": True,
         "request_timeout_seconds": 300.0,
     }
@@ -43,7 +43,7 @@ def test_dump_profile_writes_expected_key_order():
     ]
     payload = yaml.safe_load(text)
     assert payload["schema_version"] == 1
-    assert payload["credential"] == {"kind": "runtime"}
+    assert payload["credential"] == {"kind": "keyring", "name": "my-local"}
     assert payload["request_timeout_seconds"] == 300
 
 
@@ -86,10 +86,6 @@ def test_dump_profile_rejects_extra_or_missing_source_field():
     with pytest.raises(ConfigError):
         dump_profile(
             _profile(credential=CredentialRef(kind=CredentialKind.ENVIRONMENT, env_var=""))
-        )
-    with pytest.raises(ConfigError):
-        dump_profile(
-            _profile(credential=CredentialRef(kind=CredentialKind.RUNTIME, env_var="DEMO_KEY"))
         )
 
 

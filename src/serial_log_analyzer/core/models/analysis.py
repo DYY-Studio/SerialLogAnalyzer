@@ -12,7 +12,6 @@ from enum import Enum
 __all__ = [
     "AnalysisContext",
     "AnalysisMessage",
-    "AnalysisMode",
     "AnalysisRequest",
     "AnalysisResult",
     "AnalysisState",
@@ -20,13 +19,6 @@ __all__ = [
     "MessageRole",
     "TokenUsage",
 ]
-
-
-class AnalysisMode(Enum):
-    """分析交互形态。"""
-
-    SINGLE = "single"
-    CHAT = "chat"
 
 
 class ContextSelector(Enum):
@@ -58,10 +50,18 @@ class MessageRole(Enum):
 
 @dataclass(frozen=True)
 class AnalysisMessage:
-    """一条对话消息。"""
+    """一条对话消息。
+
+    参数:
+        role: 消息角色。
+        content: 消息正文；user 轮为实际提交给模型的文本（首轮含目标模板与日志上下文）。
+        summary: 仅供界面展示的短摘要（user 轮为「目标 · 用户输入」）；assistant 轮为 ``None``。
+            请求只使用 ``role`` 与 ``content``，``summary`` 不参与线上行为。
+    """
 
     role: MessageRole
     content: str
+    summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -93,7 +93,6 @@ class AnalysisRequest:
     """一次分析请求的用户意图描述。
 
     参数:
-        mode: 单次或对话模式。
         goal_id: 选择的预设分析目标 ID；自由输入时为 ``None``。
         user_input: 用户自由输入文本（可选）。
         context: 日志上下文。
@@ -101,7 +100,6 @@ class AnalysisRequest:
         max_output_tokens: 最大输出 token 数；``0`` 表示使用 Adapter 默认（不出现在请求体）。
     """
 
-    mode: AnalysisMode = AnalysisMode.SINGLE
     goal_id: str | None = None
     user_input: str = ""
     context: AnalysisContext | None = None
@@ -111,11 +109,19 @@ class AnalysisRequest:
 
 @dataclass(frozen=True)
 class TokenUsage:
-    """模型返回的用量统计；字段缺失时为 ``0``。"""
+    """模型返回的用量统计；字段缺失时为 ``0``。
+
+    参数:
+        input_tokens: 输入总量，已由 Adapter 归一化（含缓存命中部分）。
+        output_tokens: 输出 token 数。
+        total_tokens: 总用量；Provider 未提供时按输入 + 输出补齐。
+        cached_tokens: 其中从服务端提示缓存读到、计费更低的输入 token 数。
+    """
 
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    cached_tokens: int = 0
 
 
 @dataclass
@@ -128,6 +134,7 @@ class AnalysisResult:
         usage: 用量统计。
         state: 当前状态。
         error: ``state == ERROR`` 时的用户可读错误信息。
+        conversation: 会话历史快照（含本轮 user 与 assistant），供界面显示轮数。
     """
 
     content: str = ""

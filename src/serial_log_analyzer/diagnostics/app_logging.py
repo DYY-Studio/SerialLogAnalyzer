@@ -29,6 +29,7 @@ __all__ = [
     "current_log_file",
     "get_logger",
     "log_file_path",
+    "read_tail",
 ]
 
 LOGGER_NAME = "serial_log_analyzer"
@@ -61,13 +62,16 @@ def log_file_path() -> Path:
     return user_log_dir() / "serial-log-analyzer.log"
 
 
-def configure_logging(*, level: str = "INFO", log_file: Path | str | None = None) -> None:
+def configure_logging(
+    *, level: str = "INFO", log_file: Path | str | None = None, reset: bool = False
+) -> None:
     """配置应用日志输出；重复调用是幂等的（先移除旧 handler）。
 
     参数：
         level: 默认级别，可被 ``SLA_LOG_LEVEL`` 覆盖。
         log_file: 启用文件日志时写入的路径，可被 ``SLA_LOG_FILE`` 覆盖；
             为 ``None`` 且环境变量未设置时只输出到 stderr。
+        reset: 启用文件日志时先清空已有内容（只在启动那一次用，否则会中途抹掉本次运行记录）。
     """
     global _log_file
 
@@ -94,6 +98,11 @@ def configure_logging(*, level: str = "INFO", log_file: Path | str | None = None
 
     _log_file = None
     if target is not None:
+        if reset:
+            try:
+                target.write_text("", encoding="utf-8")
+            except OSError as exc:
+                logger.warning("无法清空日志文件，沿用已有内容：%s（%s）", target, exc)
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             file_handler = RotatingFileHandler(
@@ -121,6 +130,27 @@ def get_logger(name: str) -> logging.Logger:
     if name == LOGGER_NAME or name.startswith(f"{LOGGER_NAME}."):
         return logging.getLogger(name)
     return logging.getLogger(f"{LOGGER_NAME}.{name}")
+
+
+def read_tail(line_count: int = 200) -> list[str]:
+    """读取当前应用日志文件的末尾若干行。
+
+    参数:
+        line_count: 最多返回的行数。
+
+    返回:
+        末尾若干行；未启用文件日志、文件不存在或不可读时返回空列表。
+        日志文件按 1 MB × 3 轮转（最多几 MB），因此直接整读再取尾部。
+    """
+
+    path = current_log_file()
+    if path is None or line_count <= 0:
+        return []
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return text.splitlines()[-line_count:]
 
 
 def current_log_file() -> Path | None:

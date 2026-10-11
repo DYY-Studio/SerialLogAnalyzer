@@ -8,7 +8,7 @@
 ## 1. 定位与命名
 
 - 项目/仓库 `SerialLogAnalyzer`，Python 包 `serial_log_analyzer`。
-- 目标：串口连接设备，实时接收/解析/展示日志；YAML Preset 声明式解析；将日志上下文提交 LLM 分析；支持单次与多轮；SSE 流式；Provider 配置驱动。
+- 目标：串口连接设备，实时接收/解析/展示日志；YAML Preset 声明式解析；将日志上下文提交 LLM 分析；支持多轮对话；SSE 流式；Provider 配置驱动。
 - 通用性：工具不绑定具体芯片或固件，不硬编码设备字段；换设备只需新增 Preset（必要时另写发送固件），PC 端代码不动。
 - 本地单机工具；不做 Web 服务化、多用户、远程访问。
 - 中文 UI + 中文文档；代码标识符英文。
@@ -218,12 +218,13 @@ DeviceSessionHandlers(
 | `HELP` | `@OK PING VERSION HELP TEST` | 帮助 |
 | `TEST <name>` | `@OK TEST <name> started` | 触发自测（wifi/uart/gpio…） |
 
-响应前缀 `@OK ...` / `@ERR <code> <msg>`，与 `[` 开头日志行不冲突；UI 命令回复区单独呈现。
+响应前缀 `@OK ...` / `@ERR <code> <msg>`，与 `[` 开头日志行不冲突；UI 在底部「命令」面板
+（输入 + 发送 + 追加式回复历史）单独呈现（见 §16）。
 PC 侧解析见 `core/device/command.py`：`is_response_line(line)`、`parse_response(line) -> CommandReply(text, ok, code)`；
 `DeviceSession` 以 `@` 前缀判定回复行，回复不写入日志表格。
 
 命令超时（v1 方案，暂未实现）：由 `ui/DeviceController` 在发送后起 `QTimer`（`board-protocol.md` §2.4 建议 2s），
-超时未见回复则在命令回复区提示；`core` 不感知超时，协议也不引入请求 id，从而不改固件即可通用。
+超时未见回复则在「命令」面板提示；`core` 不感知超时，协议也不引入请求 id，从而不改固件即可通用。
 
 ## 8. YAML Log Preset Schema（v1 单规则 + fallback + 合并）
 
@@ -272,7 +273,7 @@ adapter_id: openai-compatible
 base_url: https://api.openai.com/v1
 model: gpt-4o-mini
 credential:
-  kind: keyring            # keyring | environment | runtime
+  kind: keyring            # keyring | environment
   name: openai-default     # keyring 账号名；缺省取 profile_id
 stream: true
 request_timeout_seconds: 120
@@ -305,26 +306,40 @@ QNetworkReply.readyRead → readAll() → SSEParser.feed(bytes) -> list[payload]
 ## 12. 分析与上下文
 
 ```python
-class AnalysisMode(Enum): SINGLE, CHAT
 class ContextSelector(Enum): SELECTED, SELECTED_WITH_NEIGHBORS, RECENT, ERRORS_ONLY, MANUAL
 class AnalysisState(Enum): IDLE, STREAMING, DONE, ERROR
 
-@dataclass AnalysisRequest: mode, selector, user_input, goal_id
-@dataclass AnalysisResult: content, reasoning, usage, state
+@dataclass AnalysisMessage: role, content, summary（summary 仅用于界面展示）
+@dataclass AnalysisRequest: selector, user_input, goal_id, context, temperature, max_output_tokens
+@dataclass AnalysisResult: content, reasoning, usage, state, conversation
 ```
 
-- 单次 = 仅一条 user 消息的会话；多轮 = 保留历史（结果面板含历史 + 输入框），提供“新会话/清空”。
+- 会话始终保留历史（结果面板含历史 + 输入框），要重开点“新会话”；界面显示当前会话轮数。
+  一个 user 消息 + 一条 assistant 回复算一轮。
+- 发送框只有一个：会话未开始时发首轮（目标 + 上下文 + 文本，文本可为空），已开始时发追问
+  （只用文本，不重复发送上下文），因此「目标 / 上下文」只在首轮生效，会话开始后置灰；
+  Enter 发送、Shift+Enter 换行。
 - 上下文由 `AnalysisContextBuilder` 从 `LogPipeline` 取并叠加进新 user 消息；`SELECTED_WITH_NEIGHBORS` 窗口 N 默认 10。
+- 携带给模型的历史可用 `llm/history_rounds` 限制（0 = 全部）：始终保留首轮（含日志上下文）+ 最近 N 轮，
+  切片对齐到 user 边界；界面转录不受影响。代价（前缀缓存失效）见 `docs/llm-integration.md`。
+- 用量归一化为「输入（含缓存命中）/ 输出 / 总计」：`TokenUsage.cached_tokens` 表示命中的部分，
+  各家字段与口径由 Adapter 的 `usage` 段声明（DeepSeek / OpenAI / Gemini 的命中含在输入内，
+  Anthropic 的 `input_tokens` 不含缓存，用 `input_extra_tokens_pointers` 补进输入）。
+- 结果区是按轮次堆叠的卡片（`ui/widgets/chat_view.py`）：user 卡片显示短摘要（`AnalysisMessage.summary`，
+  如「定位错误 · 重点看 uart」），完整 prompt（目标模板 + 日志上下文）收进可折叠的「参考内容」；
+  assistant 卡片把思考收进可折叠的「思考」，正文随流式更新。折叠默认状态由 `llm/details_expanded`
+  决定（默认折叠），设置保存后立即生效。
+- 思考不回传请求（见 `docs/llm-integration.md`），但留在卡片上，所以历史轮次的思考在界面里仍然看得到；
+  `AnalysisMessage.summary` 只用于展示，请求只发 `role` + `content`。
 - Prompt：`prompts/*.md`，内置目标（定位错误 / 解释日志 / 给出修复建议）+ 自由输入；`string.Template`（`$context $goal $language`）安全替换。
 
 ## 13. 设置 / 凭据 / 存储
 
-- `QSettings`：窗口尺寸、splitter、最近串口/波特率、当前 profile、UI 选项。
+- `QSettings`：窗口尺寸与停靠布局、最近串口/波特率、当前 profile、UI 选项。
 - `providers/profiles/*.yaml`：结构复杂配置。
-- 凭据三种 kind：`keyring`（`{kind: keyring, name}`，缺省账号名取 `profile_id`）、`environment`（`{kind: environment, env_var}`，取值来自进程环境或仓库根目录的本地 `.env`）、`runtime`（`{kind: runtime}`，每次运行时输入，键取 `profile_id`）。
-- 解析顺序：`runtime 输入`（仅当前会话、仅存内存）→ `kind` 声明的**唯一**来源；**不跨来源回落**，未命中即 `CredentialError`，提示改用其他来源。
-- 运行时输入仅用于当前会话，**不自动写入 Keychain**；由用户手动保存。
-- Keyring 不可用时 `available=False`，UI 置灰 keyring 选项并提示改用 `environment` / `runtime`。
+- 凭据两种 kind：`keyring`（`{kind: keyring, name}`，缺省账号名取 `profile_id`）、`environment`（`{kind: environment, env_var}`，取值来自进程环境或仓库根目录的本地 `.env`）；`kind` 缺省为 `keyring`。
+- 解析：只读 `kind` 声明的**唯一**来源，**不跨来源回落**，未命中即 `CredentialError` 并提示改用另一来源。
+- Keyring 不可用时 `available=False`，UI 置灰保存选项并提示改用 `environment`。
 - `keyring` 库 service 名固定为 `SerialLogAnalyzer`，账号名即 credential `name`。
 - 日志存储：**仅手动导入/导出**（`io/storage/log_file_store.py`）；内存环形缓冲；无 Session 概念。
 
@@ -353,22 +368,33 @@ AppError
 ## 16. UI 布局
 
 ```text
-Menu / Toolbar
-Port │ Baud │ Refresh │ Connect
-┌─────────────────────┬─────────────────┐
-│   Log Table         │  LLM Analysis   │
-│ Time Level Module   │  Result / Chat  │
-└─────────────────────┴─────────────────┘
+Menu（文件：导出/导入/清空日志；配置：设置/模型服务/切换日志 Preset；视图：LLM 分析 / 命令 / 应用日志）
+Toolbar: Port │ Baud（可编辑）│ Refresh │ Connect │ Disconnect │ 串口参数…
+┌──────────────────────────┬───────────────┐
+│ 过滤: 级别 + 自动滚动     │ LLM 分析 dock  │
+│      模块 + 关键字        │ 模型 / 上下文 / │
+│  Log Table               │ 目标（网格对齐）│
+│  Time Level Module       │ 结果 / 用量     │
+├──────────────────────────┤ 发送框 + 发送   │
+│ 命令 dock: 命令输入 + 回复 │ 应用日志 dock（标签页）│
+└──────────────────────────┴───────────────┘
 Status bar
 ```
 
 v1 不做：自定义标题栏、动画、多窗口工作区、复杂主题系统。
 
-菜单栏「配置」提供 设置 / 模型服务 / 凭据 / 切换日志 Preset… 四个入口（保存分别走 `QSettings`、
+菜单栏「配置」提供 设置 / 模型服务 / 切换日志 Preset… 三个入口（保存分别走 `QSettings`、
 `ProfileStore` 与系统钥匙串）；「模型服务」可新建 / 删除 Profile、改选 Adapter、编辑
-`extra_body` / `extra_headers`，并用当前字段拉取服务端模型列表；工具栏可直接切换 LLM Profile
-（换用对应 Adapter 并写回设置）；串口高级参数（数据位 / 校验位 / 停止位 / 流控）在工具栏
-「串口设置…」，仅本次会话有效。
+`extra_body` / `extra_headers`、选凭据来源并写入钥匙串，并用当前字段拉取服务端模型列表。
+LLM 相关控件集中在右侧分析面板
+（顶部一行切换当前 Profile，换用对应 Adapter 并写回设置）；波特率在工具栏下拉里设置（可编辑），
+数据位 / 校验位 / 停止位 / 流控在工具栏「串口参数…」，仅本次会话有效。
+右侧「LLM 分析」与底部「命令 / 应用日志」都是 `QDockWidget`：可拖动、可拖出成浮动窗口、可关闭，
+关掉后由「视图」菜单恢复。布局随 `window/state` + `window/docks` 记忆：恢复前先比对存档里的
+面板标识集合与当前是否一致，**集合变过（新增/删除面板）就丢弃旧布局、改用默认排布**——否则
+Qt 会把存档里没有的面板直接隐藏；集合一致时按存档恢复，并在恢复后重新声明角落归属
+（`restoreState` 会把它一起带回来）。窗口几何单独存 `window/geometry`。
+右下角归右侧停靠区，因此分析面板贯通上下、命令面板只占左下，输出区能拿到尽量多的高度。
 
 ## 17. 建议模块划分
 
