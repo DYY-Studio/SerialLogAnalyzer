@@ -111,8 +111,13 @@ def test_menu_actions_emit_intent_signals(qtbot) -> None:
     window.credential_requested.connect(lambda: seen.append("credential"))
 
     actions = window.menuBar().actions()[0].menu().actions()
-    assert [action.text() for action in actions] == ["设置…", "模型服务…", "凭据…"]
-    for action in actions:
+    assert [action.text() for action in actions] == [
+        "设置…",
+        "模型服务…",
+        "凭据…",
+        "切换日志 Preset…",
+    ]
+    for action in actions[:3]:
         action.trigger()
 
     assert seen == ["settings", "provider", "credential"]
@@ -135,6 +140,40 @@ def test_toolbar_emits_config_and_command(qtbot) -> None:
 
     assert configs[0].port == "COM3" and configs[0].baudrate == 115200
     assert commands == ["PING"]
+
+
+def test_toolbar_profile_combo_emits_change(qtbot) -> None:
+    class _Profile:
+        def __init__(self, profile_id: str) -> None:
+            self.profile_id = profile_id
+            self.model = f"{profile_id}-model"
+
+    toolbar = SerialToolBar()
+    qtbot.addWidget(toolbar)
+    seen: list[str] = []
+    toolbar.profile_changed.connect(seen.append)
+
+    toolbar.set_profiles([_Profile("deepseek"), _Profile("internlm")], "internlm")
+    assert toolbar.current_profile() == "internlm"
+
+    toolbar.set_current_profile("deepseek")
+    assert seen == []  # 程序化切换不触发信号
+
+    toolbar.profile_combo.setCurrentIndex(1)
+    assert seen == ["internlm"]
+
+
+def test_log_view_autoscroll_switch_emits(qtbot) -> None:
+    view = LogView(LogTableModel())
+    qtbot.addWidget(view)
+    seen: list[bool] = []
+    view.autoscroll_toggled.connect(seen.append)
+
+    view.autoscroll_box.setChecked(False)
+
+    assert seen == [False]
+    view.set_autoscroll(True)
+    assert view.autoscroll_box.isChecked() is True and seen == [False]
 
 
 def test_toolbar_serial_settings_feed_current_config(qtbot) -> None:
