@@ -24,7 +24,6 @@ from serial_log_analyzer.core.logs.pipeline import LogPipeline
 from serial_log_analyzer.core.models.analysis import (
     AnalysisContext,
     AnalysisMessage,
-    AnalysisMode,
     AnalysisRequest,
     AnalysisResult,
     AnalysisState,
@@ -216,7 +215,7 @@ class AnalysisService:
         return list(self._conversation)
 
     def ask(self, request: AnalysisRequest) -> None:
-        """开始一轮新的分析；单次模式会清空既有历史。
+        """开始一轮新的分析，沿用当前会话历史（重开用 :meth:`reset`）。
 
         异常:
             ConfigError: 已有进行中的请求，或上下文/目标非法。
@@ -224,10 +223,7 @@ class AnalysisService:
         """
 
         self._ensure_idle()
-        text = self._compose(request)
-        if request.mode is AnalysisMode.SINGLE:
-            self._conversation.clear()
-        self._start(text, request)
+        self._start(self._compose(request), request)
 
     def follow_up(self, text: str) -> None:
         """在当前会话中追加一轮追问。
@@ -239,10 +235,7 @@ class AnalysisService:
         self._ensure_idle()
         if not self._conversation:
             raise ConfigError("尚无会话历史，无法追问")
-        self._start(
-            self._prompts.render_freeform(text),
-            AnalysisRequest(mode=AnalysisMode.CHAT, user_input=text),
-        )
+        self._start(self._prompts.render_freeform(text), AnalysisRequest(user_input=text))
 
     def cancel(self) -> None:
         """取消进行中的请求；未进行时为空操作。
@@ -307,7 +300,7 @@ class AnalysisService:
             self._sse = None
             self._processor = None
         self._handlers.on_state(AnalysisState.STREAMING)
-        self._handlers.on_result(self._result)
+        self._emit_result()
         self._active = True
         token = self._transport.send(http, self._on_chunk, self._on_done, self._on_error)
         if self._active:
@@ -337,7 +330,7 @@ class AnalysisService:
             for event in self._sse.feed(data):
                 outcome = self._processor.handle(event)
                 if outcome != StreamOutcome.IGNORED:
-                    self._handlers.on_result(self._result)
+                    self._emit_result()
                 if outcome is StreamOutcome.TERMINAL:
                     break
         except AppError as exc:
@@ -386,6 +379,12 @@ class AnalysisService:
         if usage is not None:
             self._set_usage(*usage)
 
+    def _emit_result(self) -> None:
+        """上报结果快照；附带会话历史，供界面显示轮数。"""
+
+        self._result.conversation = list(self._conversation)
+        self._handlers.on_result(self._result)
+
     def _fail(self, error: Exception) -> None:
         """进入错误终态：结果、状态与错误各上报一次。"""
 
@@ -394,7 +393,7 @@ class AnalysisService:
         self._result.state = AnalysisState.ERROR
         self._result.error = str(error)
         self._close()
-        self._handlers.on_result(self._result)
+        self._emit_result()
         self._handlers.on_state(AnalysisState.ERROR)
         self._handlers.on_error(error)
 
@@ -403,7 +402,7 @@ class AnalysisService:
 
         self._close()
         self._result.state = state
-        self._handlers.on_result(self._result)
+        self._emit_result()
         self._handlers.on_state(state)
 
     def _close(self) -> None:

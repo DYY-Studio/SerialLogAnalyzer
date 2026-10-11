@@ -18,11 +18,12 @@ from PySide6.QtWidgets import (
 )
 
 from serial_log_analyzer.core.models.analysis import (
-    AnalysisMode,
+    AnalysisMessage,
     AnalysisRequest,
     AnalysisResult,
     AnalysisState,
     ContextSelector,
+    MessageRole,
 )
 from serial_log_analyzer.core.prompts.loader import PromptGoal
 
@@ -35,11 +36,6 @@ _CONTEXT_CHOICES: tuple[tuple[str, ContextSelector], ...] = (
     ("最近 100 条", ContextSelector.RECENT),
     ("仅错误日志", ContextSelector.ERRORS_ONLY),
     ("手动输入", ContextSelector.MANUAL),
-)
-
-_MODE_CHOICES: tuple[tuple[str, AnalysisMode], ...] = (
-    ("单次分析", AnalysisMode.SINGLE),
-    ("多轮对话", AnalysisMode.CHAT),
 )
 
 
@@ -72,9 +68,10 @@ class AnalysisPanel(QWidget):
     # ------------------------------------------------------------------
 
     def set_result(self, result: AnalysisResult) -> None:
-        """展示累积后的完整结果快照。"""
+        """展示累积后的完整结果快照，并刷新会话轮数。"""
 
         self.result_view.setPlainText(result.content)
+        self._update_turns(result.conversation)
         usage = result.usage
         self.usage_label.setText(
             f"输入 {usage.input_tokens} / 输出 {usage.output_tokens} / 总计 {usage.total_tokens} tokens"
@@ -117,15 +114,6 @@ class AnalysisPanel(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        mode_row = QHBoxLayout()
-        mode_row.addWidget(QLabel("模式:"))
-        self.mode_combo = QComboBox()
-        for label, mode in _MODE_CHOICES:
-            self.mode_combo.addItem(label, mode)
-        mode_row.addWidget(self.mode_combo)
-        mode_row.addStretch()
-        layout.addLayout(mode_row)
-
         context_row = QHBoxLayout()
         context_row.addWidget(QLabel("上下文:"))
         self.context_combo = QComboBox()
@@ -164,8 +152,13 @@ class AnalysisPanel(QWidget):
         buttons.addWidget(self.copy_btn)
         layout.addLayout(buttons)
 
+        status_row = QHBoxLayout()
         self.status_label = QLabel()
-        layout.addWidget(self.status_label)
+        status_row.addWidget(self.status_label)
+        status_row.addStretch()
+        self.turns_label = QLabel()
+        status_row.addWidget(self.turns_label)
+        layout.addLayout(status_row)
 
         self.result_view = QPlainTextEdit()
         self.result_view.setReadOnly(True)
@@ -188,7 +181,6 @@ class AnalysisPanel(QWidget):
     def _on_analyze(self) -> None:
         selector = self.context_combo.currentData()
         request = AnalysisRequest(
-            mode=self.mode_combo.currentData(),
             goal_id=self.goal_combo.currentData(),
             user_input=self.input_edit.text(),
             context=None,
@@ -204,7 +196,14 @@ class AnalysisPanel(QWidget):
     def _on_reset(self) -> None:
         self.result_view.clear()
         self.usage_label.clear()
+        self.turns_label.clear()
         self.reset_requested.emit()
+
+    def _update_turns(self, conversation: list[AnalysisMessage]) -> None:
+        """按会话历史里的 user 消息数量显示轮数；空会话不显示。"""
+
+        rounds = sum(1 for message in conversation if message.role is MessageRole.USER)
+        self.turns_label.setText(f"当前会话 {rounds} 轮" if rounds else "")
 
     def _on_copy(self) -> None:
         self.result_view.selectAll()

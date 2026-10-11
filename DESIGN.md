@@ -8,7 +8,7 @@
 ## 1. 定位与命名
 
 - 项目/仓库 `SerialLogAnalyzer`，Python 包 `serial_log_analyzer`。
-- 目标：串口连接设备，实时接收/解析/展示日志；YAML Preset 声明式解析；将日志上下文提交 LLM 分析；支持单次与多轮；SSE 流式；Provider 配置驱动。
+- 目标：串口连接设备，实时接收/解析/展示日志；YAML Preset 声明式解析；将日志上下文提交 LLM 分析；支持多轮对话；SSE 流式；Provider 配置驱动。
 - 通用性：工具不绑定具体芯片或固件，不硬编码设备字段；换设备只需新增 Preset（必要时另写发送固件），PC 端代码不动。
 - 本地单机工具；不做 Web 服务化、多用户、远程访问。
 - 中文 UI + 中文文档；代码标识符英文。
@@ -305,15 +305,15 @@ QNetworkReply.readyRead → readAll() → SSEParser.feed(bytes) -> list[payload]
 ## 12. 分析与上下文
 
 ```python
-class AnalysisMode(Enum): SINGLE, CHAT
 class ContextSelector(Enum): SELECTED, SELECTED_WITH_NEIGHBORS, RECENT, ERRORS_ONLY, MANUAL
 class AnalysisState(Enum): IDLE, STREAMING, DONE, ERROR
 
-@dataclass AnalysisRequest: mode, selector, user_input, goal_id
-@dataclass AnalysisResult: content, reasoning, usage, state
+@dataclass AnalysisRequest: selector, user_input, goal_id, context, temperature, max_output_tokens
+@dataclass AnalysisResult: content, reasoning, usage, state, conversation
 ```
 
-- 单次 = 仅一条 user 消息的会话；多轮 = 保留历史（结果面板含历史 + 输入框），提供“新会话/清空”。
+- 会话始终保留历史（结果面板含历史 + 输入框），要重开点“新会话”；界面显示当前会话轮数。
+  一个 user 消息 + 一条 assistant 回复算一轮。
 - 上下文由 `AnalysisContextBuilder` 从 `LogPipeline` 取并叠加进新 user 消息；`SELECTED_WITH_NEIGHBORS` 窗口 N 默认 10。
 - Prompt：`prompts/*.md`，内置目标（定位错误 / 解释日志 / 给出修复建议）+ 自由输入；`string.Template`（`$context $goal $language`）安全替换。
 

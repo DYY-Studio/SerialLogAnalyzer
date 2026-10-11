@@ -12,7 +12,6 @@ from enum import Enum
 __all__ = [
     "AnalysisContext",
     "AnalysisMessage",
-    "AnalysisMode",
     "AnalysisRequest",
     "AnalysisResult",
     "AnalysisState",
@@ -20,13 +19,6 @@ __all__ = [
     "MessageRole",
     "TokenUsage",
 ]
-
-
-class AnalysisMode(Enum):
-    """分析交互形态。"""
-
-    SINGLE = "single"
-    CHAT = "chat"
 
 
 class ContextSelector(Enum):
@@ -93,7 +85,6 @@ class AnalysisRequest:
     """一次分析请求的用户意图描述。
 
     参数:
-        mode: 单次或对话模式。
         goal_id: 选择的预设分析目标 ID；自由输入时为 ``None``。
         user_input: 用户自由输入文本（可选）。
         context: 日志上下文。
@@ -101,7 +92,6 @@ class AnalysisRequest:
         max_output_tokens: 最大输出 token 数；``0`` 表示使用 Adapter 默认（不出现在请求体）。
     """
 
-    mode: AnalysisMode = AnalysisMode.SINGLE
     goal_id: str | None = None
     user_input: str = ""
     context: AnalysisContext | None = None
@@ -128,6 +118,7 @@ class AnalysisResult:
         usage: 用量统计。
         state: 当前状态。
         error: ``state == ERROR`` 时的用户可读错误信息。
+        conversation: 会话历史快照（含本轮 user 与 assistant），供界面显示轮数。
     """
 
     content: str = ""
