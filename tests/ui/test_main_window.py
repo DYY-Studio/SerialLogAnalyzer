@@ -168,7 +168,7 @@ def test_analysis_panel_first_turn_then_follow_up(qtbot) -> None:
 
 
 def test_docks_start_in_the_designed_layout(qtbot) -> None:
-    """停靠布局不持久化：每次启动都应是设计好的排布，新面板不能被旧存档藏起来。"""
+    """没有存档时按设计好的默认排布：右下角归右侧、三个面板都可见。"""
 
     from PySide6.QtCore import Qt
 
@@ -180,6 +180,42 @@ def test_docks_start_in_the_designed_layout(qtbot) -> None:
     assert window.analysis_dock.isHidden() is False
     assert window.command_dock.isHidden() is False
     assert window.app_log_dock.isHidden() is False
+
+
+def test_layout_is_restored_only_when_the_dock_set_matches(qtbot) -> None:
+    """面板集合一致才恢复存档；变过就丢弃，免得新面板被 Qt 藏起来。"""
+
+    from PySide6.QtCore import Qt
+
+    from serial_log_analyzer import bootstrap
+    from serial_log_analyzer.io.settings.qt_settings_store import SETTINGS_KEYS
+
+    window = _build_window(qtbot)
+    window.resize(1200, 800)
+    window.show()
+
+    # 存档：分析面板停靠在左侧
+    window.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, window.analysis_dock)
+    state = window.saveState()
+    window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, window.analysis_dock)
+
+    bootstrap._restore_layout(
+        window,
+        {SETTINGS_KEYS.WINDOW_STATE: state, SETTINGS_KEYS.WINDOW_DOCKS: window.dock_names()},
+    )
+    assert window.dockWidgetArea(window.analysis_dock) is Qt.DockWidgetArea.LeftDockWidgetArea
+    # 恢复后要重新声明角落归属，否则分析面板不再贯通上下
+    assert window.corner(Qt.Corner.BottomRightCorner) is Qt.DockWidgetArea.RightDockWidgetArea
+
+    window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, window.analysis_dock)
+    bootstrap._restore_layout(
+        window,
+        {
+            SETTINGS_KEYS.WINDOW_STATE: state,
+            SETTINGS_KEYS.WINDOW_DOCKS: ["analysis-dock", "command-dock"],  # 少一个面板
+        },
+    )
+    assert window.dockWidgetArea(window.analysis_dock) is Qt.DockWidgetArea.RightDockWidgetArea
 
 
 def test_menu_actions_emit_intent_signals(qtbot) -> None:

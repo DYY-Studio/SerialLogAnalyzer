@@ -537,16 +537,29 @@ def _switch_preset(window: MainWindow, context: ApplicationContext, preset_id: s
     window.show_status(f"已切换到 Preset {preset_id}，日志已清空")
 
 
-def _restore_view(window: MainWindow, toolbar: SerialToolBar, log_view: LogView, settings: Any) -> None:
-    """按设置恢复窗口几何、串口选择、自动滚动与分析细节折叠。
+def _restore_layout(window: MainWindow, settings: Any) -> None:
+    """按存档恢复停靠布局；面板集合变过就丢弃存档，改用设计好的默认排布。
 
-    停靠布局**不持久化**：默认排布本身就是设计的一部分（分析面板贯通上下、命令与应用日志
-    在底部同页），而 ``restoreState`` 既会把角落归属改回去，也会把新增面板藏起来。
+    Qt 的 ``restoreState`` 会把存档里不存在的面板直接隐藏，所以新增/删除面板后必须放弃旧布局，
+    否则新面板一启动就不见了。
     """
+
+    state = settings.get(SETTINGS_KEYS.WINDOW_STATE)
+    if state is None:
+        return
+    saved = settings.get(SETTINGS_KEYS.WINDOW_DOCKS)
+    if sorted(map(str, saved or [])) != window.dock_names():
+        return
+    window.restore_layout(state)
+
+
+def _restore_view(window: MainWindow, toolbar: SerialToolBar, log_view: LogView, settings: Any) -> None:
+    """按设置恢复窗口几何、停靠布局、串口选择、自动滚动与分析细节折叠。"""
 
     geometry = settings.get(SETTINGS_KEYS.WINDOW_GEOMETRY)
     if geometry is not None:
         window.restoreGeometry(geometry)
+    _restore_layout(window, settings)
     window.analysis_panel.set_details_expanded(
         bool(settings.get(SETTINGS_KEYS.CHAT_DETAILS_EXPANDED, False))
     )
@@ -562,6 +575,8 @@ def _shutdown(main_controller: MainController, window: MainWindow, settings: Any
 
     main_controller.shutdown()
     settings.set(SETTINGS_KEYS.WINDOW_GEOMETRY, window.saveGeometry())
+    settings.set(SETTINGS_KEYS.WINDOW_STATE, window.saveState())
+    settings.set(SETTINGS_KEYS.WINDOW_DOCKS, window.dock_names())
 
 
 def main(argv: list[str] | None = None) -> int:

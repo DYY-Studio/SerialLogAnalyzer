@@ -41,6 +41,8 @@ class MainWindow(QMainWindow):
 
     布局：中央是日志表格，「LLM 分析」停靠在右侧、「命令」与「应用日志」停靠在底部
     （同一区域的两个标签页），都可拖动 / 浮动 / 关闭，「视图」菜单控制显隐。
+    布局通过 ``saveState`` / :meth:`restore_layout` 记忆，但只在面板集合没变时恢复
+    （见 ``bootstrap._restore_layout``）。
 
     信号（由组合根连接，窗口不自己构造对话框）:
         export_requested(): 请求导出内存日志。
@@ -104,6 +106,21 @@ class MainWindow(QMainWindow):
         """在状态栏显示一条消息。"""
 
         self.status_bar.showMessage(message)
+
+    def restore_layout(self, state: object) -> None:
+        """恢复工具栏 / 停靠布局。
+
+        右下角归属是固定策略而不是用户状态，而 ``restoreState`` 会把它一起带回来，
+        因此恢复之后必须重新声明，否则分析面板不再贯通上下。
+        """
+
+        self.restoreState(state)
+        self._apply_dock_corners()
+
+    def dock_names(self) -> list[str]:
+        """当前停靠面板的标识集合（供布局存档判断面板是否增减过）。"""
+
+        return sorted(dock.objectName() for dock in self.findChildren(QDockWidget))
 
     def _apply_dock_corners(self) -> None:
         """右下角交给右侧停靠区：分析面板贯通上下，命令面板只占左下。"""

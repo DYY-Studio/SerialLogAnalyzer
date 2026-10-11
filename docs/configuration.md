@@ -199,6 +199,8 @@ export MY_DEEPSEEK_API_KEY=sk-...
 | 键 | 含义 | 默认 |
 |---|---|---|
 | `window/geometry` | 主窗口几何 | 系统决定 |
+| `window/state` | 工具栏 / 停靠面板布局（只在面板集合未变时恢复） | 系统决定 |
+| `window/docks` | 存档时的面板标识集合，用于判断面板是否增减过 | 系统决定 |
 | `device/last_port` | 最近使用的串口 | 空 |
 | `device/last_baudrate` | 最近波特率 | 空 |
 | `llm/current_profile` | 当前 Profile | 首个可用 |
