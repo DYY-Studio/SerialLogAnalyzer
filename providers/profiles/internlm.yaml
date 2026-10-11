@@ -1,0 +1,13 @@
+# 官方文档示例配置；需确认账户授权的模型并在本地环境设置密钥。
+schema_version: 1
+profile_id: internlm
+adapter_id: chat-completions-basic
+base_url: https://chat.intern-ai.org.cn/api/v1
+model: intern-latest
+stream: true
+request_timeout_seconds: 120
+credential:
+  kind: environment
+  env_var: INTERNLM_API_KEY
+extra_body: {}
+extra_headers: {}

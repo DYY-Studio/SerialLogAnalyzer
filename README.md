@@ -63,6 +63,8 @@ docs/protocols/          协议规范
 
 ## 文档
 
+- [`docs/llm-integration.md`](docs/llm-integration.md)：LLM 模块进度、SenseNova/书生配置与对接方式（在线验证待完成）
+
 - [`DESIGN.md`](DESIGN.md)：完整架构设计（分层、接口、数据流）
 - [`docs/configuration.md`](docs/configuration.md)：配置文件设计（资源查找顺序、设置键、API Key 优先级、导出格式、诊断信息）
 - [`DEVELOPMENT.md`](DEVELOPMENT.md)：开发环境、运行与调试、协作约定
@@ -76,3 +78,11 @@ docs/protocols/          协议规范
 ## 许可
 
 [MIT](LICENSE)
+
+
+## 本地模型配置
+
+接口地址、模型、流式开关和超时分别位于 `providers/profiles/sensenova.yaml` 与
+`providers/profiles/internlm.yaml`。本地密钥放项目根目录 `.env`，变量名见 `.env.example`。
+`.env` 已被 Git 忽略，不得提交。LLM 组装入口会自动读取它，进程环境同名值优先。
+完整窗口与启动入口仍待实现，当前使用方式见 [LLM 接入说明](docs/llm-integration.md)。
