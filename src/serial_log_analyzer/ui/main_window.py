@@ -83,6 +83,10 @@ class MainWindow(QMainWindow):
         self.command_dock = self._make_dock(
             "command-dock", "命令", command_panel, Qt.DockWidgetArea.BottomDockWidgetArea
         )
+        # 右下角交给右侧停靠区，让分析面板贯通上下，命令面板只占左下。
+        self.setCorner(
+            Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea
+        )
         self._build_menu()
         self.setCentralWidget(log_view)
 

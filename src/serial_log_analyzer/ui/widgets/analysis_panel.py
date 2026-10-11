@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QComboBox,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
@@ -174,31 +175,24 @@ class AnalysisPanel(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        profile_row = QHBoxLayout()
-        profile_row.addWidget(QLabel("模型:"))
+        form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+
         self.profile_combo = QComboBox()
         self.profile_combo.setObjectName("panel-profile")
         self.profile_combo.currentIndexChanged.connect(
             lambda _index: self.profile_changed.emit(self.current_profile())
         )
-        profile_row.addWidget(self.profile_combo, stretch=1)
-        layout.addLayout(profile_row)
+        form.addRow("模型:", self.profile_combo)
 
-        context_row = QHBoxLayout()
-        context_row.addWidget(QLabel("上下文:"))
         self.context_combo = QComboBox()
         for label, selector in _CONTEXT_CHOICES:
             self.context_combo.addItem(label, selector)
-        context_row.addWidget(self.context_combo)
-        context_row.addStretch()
-        layout.addLayout(context_row)
+        form.addRow("上下文:", self.context_combo)
 
-        goal_row = QHBoxLayout()
-        goal_row.addWidget(QLabel("目标:"))
         self.goal_combo = QComboBox()
-        goal_row.addWidget(self.goal_combo)
-        goal_row.addStretch()
-        layout.addLayout(goal_row)
+        form.addRow("目标:", self.goal_combo)
+        layout.addLayout(form)
 
         buttons = QHBoxLayout()
         self.stop_btn = QPushButton("停止")
@@ -228,16 +222,15 @@ class AnalysisPanel(QWidget):
         self.usage_label = QLabel()
         layout.addWidget(self.usage_label)
 
-        input_row = QHBoxLayout()
         self.message_edit = _SubmitEdit()
         self.message_edit.setPlaceholderText("输入分析要求或追问；Enter 发送，Shift+Enter 换行")
         self.message_edit.setFixedHeight(84)
         self.message_edit.submitted.connect(self._on_send)
-        input_row.addWidget(self.message_edit)
+        layout.addWidget(self.message_edit)
+
         self.send_btn = QPushButton("发送")
         self.send_btn.clicked.connect(self._on_send)
-        input_row.addWidget(self.send_btn)
-        layout.addLayout(input_row)
+        layout.addWidget(self.send_btn, alignment=Qt.AlignmentFlag.AlignRight)
 
     def _on_send(self) -> None:
         """发送：会话未开始时作为首轮分析，已开始时作为追问。"""
