@@ -115,6 +115,15 @@ class LogPipeline:
         self._entries.clear()
         self._next_sequence = 0
 
+    def enforce_capacity(self) -> tuple[int, ...]:
+        """按当前 ``capacity`` 立即移除超出部分，返回被移除的条目序号。
+
+        供运行时调整容量后同步界面使用；返回的序号应交给
+        ``LogTableModel.remove_sequences``。
+        """
+
+        return self._enforce_capacity()
+
     def render(self, entries: list[LogEntry]) -> list[str]:
         """把条目渲染为 LLM 上下文文本行。"""
 

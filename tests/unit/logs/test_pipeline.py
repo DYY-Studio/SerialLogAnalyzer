@@ -29,6 +29,18 @@ def test_orphan_continuation_becomes_entry(parser) -> None:
     assert len(up.added) == 1
 
 
+def test_enforce_capacity_drops_oldest_and_reports(parser) -> None:
+    pipeline = LogPipeline(parser)
+    for index in range(5):
+        pipeline.feed(f"[I] [main] line {index}", float(index))
+
+    pipeline.capacity = 2
+    dropped = pipeline.enforce_capacity()
+
+    assert dropped == (0, 1, 2)
+    assert [entry.sequence for entry in pipeline.entries()] == [3, 4]
+
+
 def test_capacity_drops_oldest(parser) -> None:
     pipe = LogPipeline(parser, capacity=2)
     for i in range(3):
