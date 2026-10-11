@@ -112,7 +112,7 @@ def test_render_marks_unavailable_keyring(make_loader, tmp_path):
         config_dir=tmp_path,
     )
 
-    assert "不可用（将回退环境变量）" in report.render()
+    assert "不可用（不跨来源回落，需改用其它 kind）" in report.render()
 
 
 def test_log_tail_reads_last_lines(make_loader, tmp_path):

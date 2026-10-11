@@ -47,21 +47,50 @@ def test_dump_profile_writes_expected_key_order():
     assert payload["request_timeout_seconds"] == 300
 
 
-def test_dump_profile_keeps_keyring_and_environment_fields():
-    profile = _profile(
-        "deepseek",
-        credential=CredentialRef(
-            kind=CredentialKind.KEYRING, name="deepseek", env_var="DEEPSEEK_API_KEY"
-        ),
+def test_dump_profile_writes_one_source_field_per_kind():
+    keyring = _profile(
+        "deepseek", credential=CredentialRef(kind=CredentialKind.KEYRING, name="deepseek")
+    )
+    environment = _profile(
+        "internlm",
+        credential=CredentialRef(kind=CredentialKind.ENVIRONMENT, env_var="INTERNLM_API_KEY"),
     )
 
-    payload = yaml.safe_load(dump_profile(profile))
-
-    assert payload["credential"] == {
+    assert yaml.safe_load(dump_profile(keyring))["credential"] == {
         "kind": "keyring",
         "name": "deepseek",
-        "env_var": "DEEPSEEK_API_KEY",
     }
+    assert yaml.safe_load(dump_profile(environment))["credential"] == {
+        "kind": "environment",
+        "env_var": "INTERNLM_API_KEY",
+    }
+
+
+def test_dump_profile_rejects_extra_or_missing_source_field():
+    with pytest.raises(ConfigError):
+        dump_profile(
+            _profile(
+                credential=CredentialRef(
+                    kind=CredentialKind.KEYRING, name="deepseek", env_var="DEEPSEEK_API_KEY"
+                )
+            )
+        )
+    with pytest.raises(ConfigError):
+        dump_profile(
+            _profile(
+                credential=CredentialRef(
+                    kind=CredentialKind.ENVIRONMENT, name="deepseek", env_var="DEEPSEEK_API_KEY"
+                )
+            )
+        )
+    with pytest.raises(ConfigError):
+        dump_profile(
+            _profile(credential=CredentialRef(kind=CredentialKind.ENVIRONMENT, env_var=""))
+        )
+    with pytest.raises(ConfigError):
+        dump_profile(
+            _profile(credential=CredentialRef(kind=CredentialKind.RUNTIME, env_var="DEMO_KEY"))
+        )
 
 
 def test_dump_profile_rejects_invalid_values():

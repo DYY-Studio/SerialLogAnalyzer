@@ -1,4 +1,4 @@
-"""``core/services/credential_resolver.py`` 的来源优先级测试。"""
+"""``core/services/credential_resolver.py`` 的来源解析测试。"""
 
 from __future__ import annotations
 
@@ -57,87 +57,86 @@ def _resolver(keyring: FakeKeyring, environment: FakeEnvironment) -> CredentialR
     return CredentialResolver(keyring, environment)
 
 
-def test_runtime_input_wins_over_other_sources():
+def _keyring_ref(name: str = "demo") -> CredentialRef:
+    return CredentialRef(kind=CredentialKind.KEYRING, name=name)
+
+
+def test_runtime_input_wins_over_declared_source():
     keyring = FakeKeyring({"demo": "from-keyring"})
-    resolver = _resolver(keyring, FakeEnvironment({"DEMO_KEY": "from-env"}))
+    resolver = _resolver(keyring, FakeEnvironment())
     resolver.set_runtime_secret("demo", "from-runtime")
 
-    credential = CredentialRef(kind=CredentialKind.KEYRING, name="demo", env_var="DEMO_KEY")
-
-    assert resolver.resolve(credential) == "from-runtime"
+    assert resolver.resolve(_keyring_ref()) == "from-runtime"
     assert keyring.reads == []
 
 
-def test_keyring_is_preferred_for_keyring_kind():
+def test_keyring_kind_reads_keyring():
+    keyring = FakeKeyring({"demo": "from-keyring"})
+    resolver = _resolver(keyring, FakeEnvironment())
+
+    assert resolver.resolve(_keyring_ref()) == "from-keyring"
+    assert keyring.reads == ["demo"]
+
+
+def test_environment_kind_reads_environment_variable_only():
     keyring = FakeKeyring({"demo": "from-keyring"})
     resolver = _resolver(keyring, FakeEnvironment({"DEMO_KEY": "from-env"}))
+    credential = CredentialRef(kind=CredentialKind.ENVIRONMENT, env_var="DEMO_KEY")
 
-    credential = CredentialRef(kind=CredentialKind.KEYRING, name="demo", env_var="DEMO_KEY")
+    assert resolver.resolve(credential) == "from-env"
+    assert keyring.reads == []
 
-    assert resolver.resolve(credential) == "from-keyring"
 
-
-def test_environment_is_fallback_when_keyring_misses():
+def test_keyring_miss_does_not_fall_back_to_environment():
     resolver = _resolver(FakeKeyring(), FakeEnvironment({"DEMO_KEY": "from-env"}))
 
-    credential = CredentialRef(kind=CredentialKind.KEYRING, name="demo", env_var="DEMO_KEY")
+    with pytest.raises(CredentialError) as excinfo:
+        resolver.resolve(_keyring_ref())
 
-    assert resolver.resolve(credential) == "from-env"
-
-
-def test_environment_kind_prefers_environment_variable():
-    resolver = _resolver(
-        FakeKeyring({"demo": "from-keyring"}), FakeEnvironment({"DEMO_KEY": "from-env"})
-    )
-
-    credential = CredentialRef(kind=CredentialKind.ENVIRONMENT, name="demo", env_var="DEMO_KEY")
-
-    assert resolver.resolve(credential) == "from-env"
-    assert resolver.describe_sources(credential).startswith("本次会话输入（demo）")
+    message = str(excinfo.value)
+    assert "本次会话输入（demo，未命中）" in message
+    assert "系统钥匙串（demo）（未命中）" in message
+    assert "环境变量 DEMO_KEY" not in message
+    assert "credential.kind 改为 environment" in message
 
 
-def test_runtime_kind_still_falls_back_to_keyring():
+def test_runtime_kind_without_input_raises():
     resolver = _resolver(FakeKeyring({"demo": "from-keyring"}), FakeEnvironment())
 
-    credential = CredentialRef(kind=CredentialKind.RUNTIME, name="demo")
+    with pytest.raises(CredentialError) as excinfo:
+        resolver.resolve(CredentialRef(kind=CredentialKind.RUNTIME, name="demo"))
 
-    assert resolver.resolve(credential) == "from-keyring"
+    message = str(excinfo.value)
+    assert "本次会话输入（demo，未命中）" in message
+    assert "请在界面输入本次会话密钥" in message
 
 
-def test_keyring_unavailable_is_reported_but_environment_still_used():
+def test_keyring_unavailable_is_reported_without_fallback():
     keyring = FakeKeyring({"demo": "from-keyring"}, available=False)
     resolver = _resolver(keyring, FakeEnvironment({"DEMO_KEY": "from-env"}))
 
-    credential = CredentialRef(kind=CredentialKind.KEYRING, name="demo", env_var="DEMO_KEY")
-
     assert resolver.keyring_available() is False
-    assert resolver.resolve(credential) == "from-env"
-    assert "不可用" in resolver.describe_sources(credential)
+    assert resolver.describe_sources(_keyring_ref()) == (
+        "本次会话输入（demo） → 系统钥匙串（demo，不可用）"
+    )
+
+    with pytest.raises(CredentialError) as excinfo:
+        resolver.resolve(_keyring_ref())
+
+    assert "系统钥匙串（demo，不可用）" in str(excinfo.value)
     assert keyring.reads == []
 
 
-def test_keyring_failure_does_not_block_environment():
+def test_keyring_read_failure_is_reported_without_fallback():
     keyring = FakeKeyring(error=CredentialError("钥匙串锁住"))
     resolver = _resolver(keyring, FakeEnvironment({"DEMO_KEY": "from-env"}))
 
-    credential = CredentialRef(kind=CredentialKind.KEYRING, name="demo", env_var="DEMO_KEY")
-
-    assert resolver.resolve(credential) == "from-env"
-
-
-def test_all_sources_missed_raises_with_attempts():
-    resolver = _resolver(FakeKeyring(), FakeEnvironment())
-
-    credential = CredentialRef(kind=CredentialKind.KEYRING, name="demo", env_var="DEMO_KEY")
-
     with pytest.raises(CredentialError) as excinfo:
-        resolver.resolve(credential)
+        resolver.resolve(_keyring_ref())
 
     message = str(excinfo.value)
-    assert "本次会话输入（demo）" in message
-    assert "系统钥匙串（demo）" in message
-    assert "环境变量 DEMO_KEY" in message
-    assert "未命中" in message
+    assert "钥匙串锁住" in message
+    assert "环境变量 DEMO_KEY" not in message
 
 
 def test_credential_without_any_identifier_raises():
@@ -146,14 +145,18 @@ def test_credential_without_any_identifier_raises():
     with pytest.raises(CredentialError) as excinfo:
         resolver.resolve(CredentialRef(kind=CredentialKind.RUNTIME))
 
-    assert "未配置任何来源" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "未配置任何来源" in message
+    assert resolver.describe_sources(CredentialRef(kind=CredentialKind.RUNTIME)) == (
+        "未配置任何来源"
+    )
 
 
-def test_runtime_secret_uses_environment_variable_name_too():
-    resolver = _resolver(FakeKeyring(), FakeEnvironment())
+def test_runtime_secret_uses_environment_variable_name_for_environment_kind():
+    resolver = _resolver(FakeKeyring(), FakeEnvironment({"DEMO_KEY": "from-env"}))
     resolver.set_runtime_secret("DEMO_KEY", "from-runtime")
 
-    credential = CredentialRef(kind=CredentialKind.KEYRING, name="demo", env_var="DEMO_KEY")
+    credential = CredentialRef(kind=CredentialKind.ENVIRONMENT, env_var="DEMO_KEY")
 
     assert resolver.resolve(credential) == "from-runtime"
 
@@ -173,12 +176,11 @@ def test_runtime_secret_can_be_cleared_and_blank_ids_are_ignored():
 def test_values_are_stripped_before_returned():
     resolver = _resolver(FakeKeyring({"demo": "  secret  "}), FakeEnvironment())
 
-    assert resolver.resolve(CredentialRef(kind=CredentialKind.KEYRING, name="demo")) == "secret"
+    assert resolver.resolve(_keyring_ref()) == "secret"
 
 
 def test_environment_blank_value_is_treated_as_miss():
     resolver = _resolver(FakeKeyring(), FakeEnvironment({"DEMO_KEY": "   "}))
-
     credential = CredentialRef(kind=CredentialKind.ENVIRONMENT, env_var="DEMO_KEY")
 
     with pytest.raises(CredentialError):
@@ -191,11 +193,15 @@ def test_keyring_probe_failure_counts_as_unavailable():
     assert resolver.keyring_available() is False
 
 
-def test_describe_sources_lists_full_chain():
+def test_describe_sources_lists_declared_source_only():
     resolver = _resolver(FakeKeyring(), FakeEnvironment())
+    environment_credential = CredentialRef(kind=CredentialKind.ENVIRONMENT, env_var="DEMO_KEY")
+    runtime_credential = CredentialRef(kind=CredentialKind.RUNTIME, name="ollama-local")
 
-    credential = CredentialRef(kind=CredentialKind.KEYRING, name="demo", env_var="DEMO_KEY")
-
-    assert resolver.describe_sources(credential) == (
-        "本次会话输入（demo） → 本次会话输入（DEMO_KEY） → 系统钥匙串（demo） → 环境变量 DEMO_KEY"
+    assert resolver.describe_sources(_keyring_ref()) == (
+        "本次会话输入（demo） → 系统钥匙串（demo）"
     )
+    assert resolver.describe_sources(environment_credential) == (
+        "本次会话输入（DEMO_KEY） → 环境变量 DEMO_KEY"
+    )
+    assert resolver.describe_sources(runtime_credential) == "本次会话输入（ollama-local）"

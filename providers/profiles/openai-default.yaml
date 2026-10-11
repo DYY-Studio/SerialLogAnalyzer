@@ -9,7 +9,6 @@ request_timeout_seconds: 120
 credential:
   kind: keyring
   name: openai-default
-  env_var: OPENAI_API_KEY
 
 extra_body: {}
 extra_headers: {}

@@ -1,4 +1,4 @@
-"""本地 .env 与资源加载测试，使用临时目录与假密钥。"""
+"""``io/environment.py`` 的进程环境与本地 ``.env`` 读取测试。"""
 
 from __future__ import annotations
 
@@ -7,18 +7,39 @@ import pytest
 from serial_log_analyzer.core.errors import ConfigError, CredentialError
 from serial_log_analyzer.core.models.provider import CredentialKind, CredentialRef
 from serial_log_analyzer.core.services.credential_resolver import CredentialResolver
-from serial_log_analyzer.io.credentials.environment_reader import DotEnvEnvironmentReader
-from serial_log_analyzer.io.resources import CompositeResourceLoader
+from serial_log_analyzer.io.environment import DotEnvEnvironmentReader, ProcessEnvironment
+
+
+class _UnavailableKeyring:
+    """占位钥匙串：``available=False``，``kind: environment`` 不会访问它。"""
+
+    available = False
+
+
+def _resolver(reader: object) -> CredentialResolver:
+    return CredentialResolver(_UnavailableKeyring(), reader)  # type: ignore[arg-type]
+
+
+def test_process_environment_treats_blank_as_missing(monkeypatch):
+    monkeypatch.setenv("SLA_TEST_KEY", "value")
+    monkeypatch.setenv("SLA_TEST_BLANK", "   ")
+    environment = ProcessEnvironment()
+
+    assert environment.get("SLA_TEST_KEY") == "value"
+    assert environment.get("SLA_TEST_BLANK") is None
+    assert environment.get("SLA_TEST_MISSING") is None
 
 
 def test_dotenv_priority_and_literal_values(tmp_path):
     path = tmp_path / ".env"
     path.write_text(
-        "\ufeff# test\nTEST_KEY=\"fake-file-key\" # note\nexport OTHER='literal-${TEST_KEY}#abc'\nPLAIN=abc#def\nBLANK=\n",
+        "\ufeff# test\nTEST_KEY=\"fake-file-key\" # note\nexport OTHER='literal-${TEST_KEY}#abc'\n"
+        "PLAIN=abc#def\nBLANK=\n",
         encoding="utf-8",
     )
     environment = {"TEST_KEY": "fake-process-key"}
     reader = DotEnvEnvironmentReader(path, environ=environment)
+
     assert reader.get("TEST_KEY") == "fake-process-key"
     assert reader.get("OTHER") == "literal-${TEST_KEY}#abc"
     assert reader.get("PLAIN") == "abc#def"
@@ -29,20 +50,22 @@ def test_dotenv_priority_and_literal_values(tmp_path):
 
 def test_missing_file_can_use_process_environment(tmp_path):
     reader = DotEnvEnvironmentReader(tmp_path / "missing", environ={"TEST_KEY": "fake-env"})
-    resolver = CredentialResolver(None, reader)
-    assert (
-        resolver.resolve(CredentialRef(CredentialKind.ENVIRONMENT, env_var="TEST_KEY"))
-        == "fake-env"
+
+    resolved = _resolver(reader).resolve(
+        CredentialRef(kind=CredentialKind.ENVIRONMENT, env_var="TEST_KEY")
     )
+
+    assert resolved == "fake-env"
 
 
 def test_blank_process_value_disables_file_fallback(tmp_path):
     path = tmp_path / ".env"
     path.write_text("TEST_KEY=fake-file", encoding="utf-8")
     reader = DotEnvEnvironmentReader(path, environ={"TEST_KEY": ""})
+
     with pytest.raises(CredentialError):
-        CredentialResolver(None, reader).resolve(
-            CredentialRef(CredentialKind.ENVIRONMENT, env_var="TEST_KEY")
+        _resolver(reader).resolve(
+            CredentialRef(kind=CredentialKind.ENVIRONMENT, env_var="TEST_KEY")
         )
 
 
@@ -59,24 +82,8 @@ def test_blank_process_value_disables_file_fallback(tmp_path):
 def test_bad_dotenv_never_echoes_content(tmp_path, bad):
     path = tmp_path / ".env"
     path.write_text(bad, encoding="utf-8")
-    with pytest.raises(ConfigError) as exc:
+
+    with pytest.raises(ConfigError) as excinfo:
         DotEnvEnvironmentReader(path, environ={})
-    assert "fake-secret" not in str(exc.value)
 
-
-def test_resource_priority_and_path_boundary(tmp_path):
-    high, low = tmp_path / "high", tmp_path / "low"
-    for root in (high, low):
-        (root / "prompts").mkdir(parents=True)
-    (high / "prompts/test.md").write_text("user", encoding="utf-8")
-    (low / "prompts/test.md").write_text("builtin", encoding="utf-8")
-    (low / "prompts/other.md").write_text("other", encoding="utf-8")
-    loader = CompositeResourceLoader([high, low])
-    assert loader.read_text("prompts/test.md") == "user"
-    assert loader.list_files("prompts", "*.md") == ["prompts/other.md", "prompts/test.md"]
-    with pytest.raises(ConfigError):
-        loader.read_text("../escape")
-    with pytest.raises(ConfigError):
-        loader.list_files("prompts", "../*.md")
-    with pytest.raises(ConfigError):
-        loader.read_text("missing")
+    assert "fake-secret" not in str(excinfo.value)

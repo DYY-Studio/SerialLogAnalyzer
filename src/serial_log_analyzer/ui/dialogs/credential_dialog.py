@@ -3,7 +3,7 @@
 行为约定（见 ``DESIGN.md`` §13）：
 - 输入内容默认仅用于本次会话，不自动写入系统钥匙串；
 - 用户勾选“保存到系统钥匙串”时才调用 :meth:`KeyringStore.save`；
-- 钥匙串不可用时置灰保存选项并提示回退来源。
+- 钥匙串不可用时置灰保存选项，并提示声明 kind: keyring 的 Profile 需改用其他来源；
 """
 
 from __future__ import annotations
@@ -166,9 +166,9 @@ def _hint_text(available: bool) -> str:
     if available:
         return (
             "未勾选「保存到系统钥匙串」时，密钥仅用于本次会话，不会写入系统钥匙串；"
-            "未提供密钥且凭据声明了环境变量时，会回退到该环境变量。"
+            "未提供密钥时按 Profile 的 credential.kind 取值（只读该来源，不跨来源回落）。"
         )
     return (
         "系统钥匙串不可用：密钥仅用于本次会话，无法保存；"
-        "未提供密钥且凭据声明了环境变量时，会回退到该环境变量。"
+        "声明了 kind: keyring 的 Profile 因此取不到密钥，需要改用 environment 或 runtime 来源。"
     )

@@ -119,8 +119,7 @@ stream: true
 request_timeout_seconds: 120
 credential:
   kind: keyring
-  name: my-deepseek      # 系统钥匙串账号名
-  env_var: MY_DEEPSEEK_API_KEY   # 回退来源
+  name: my-deepseek      # 系统钥匙串账号名（缺省取 profile_id）
 extra_body: {}
 extra_headers: {}
 ```
@@ -161,23 +160,26 @@ extra_headers: {}
 
 ```yaml
 credential:
-  kind: keyring        # keyring | environment | runtime（首选来源）
+  kind: keyring        # keyring | environment | runtime，只读这一个来源
   name: my-deepseek    # 钥匙串 account；缺省时取 profile_id
-  env_var: MY_DEEPSEEK_API_KEY   # 环境变量来源
 ```
 
-解析优先级（`core/services/credential_resolver.py`）：
+`kind: environment` 时写 `env_var: MY_DEEPSEEK_API_KEY` 代替 `name`；`kind: runtime` 不写来源字段。
+同一个 `credential` 段**只能有一个来源字段**，多写会报 `ConfigError`。
 
-1. **本次会话的运行时输入**（对话框里临时输入，只存内存）；
-2. 按 `kind` 指明的首选来源；
-3. 另一个来源（`name` / `env_var` 同时声明才存在）；
-4. 任一来源命中即停止；全部未命中抛 `CredentialError`，错误信息列出已尝试的来源与原因。
+解析顺序（`core/services/credential_resolver.py`）：
+
+1. **本次会话的运行时输入**（对话框里临时输入，只存内存，键为 `name`，缺省为 `profile_id`）；
+2. 未命中时读 `kind` 声明的那个来源，**不跨来源回落**；
+3. 两者都没取到非空值时抛 `CredentialError`，错误信息列出已尝试的来源、失败原因与可换用的其他来源。
 
 约定：
 
 - 系统钥匙串 `service` 固定为 `SerialLogAnalyzer`，`account` 即凭据的 `name`。
+- `kind: environment` 的值来自进程环境；进程里没有该变量时可读仓库根目录的本地 `.env`
+  （`.env.example` 是模板，`.env` 被 Git 忽略）。
 - 钥匙串不可用时（无 SecretService、后端为 fail/null 等）：`available=False`，界面把保存选项置灰，
-  并提示自动回退到环境变量或本次会话输入。
+  并提示声明 `kind: keyring` 的 Profile 取不到密钥，需要改用 `environment` 或 `runtime` 来源。
 - 运行时输入**不会自动写入**钥匙串；只有用户显式勾选「保存到系统钥匙串」才调用 `save`。
 - 「清除已保存的密钥」会删除钥匙串中的条目（需二次确认）。
 
@@ -273,7 +275,7 @@ uv run python -m serial_log_analyzer.diagnostics --log-file app.log --no-log-tai
 | `SLA_LOG_LEVEL` | 应用日志级别 `DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL` | `INFO`（非法值退回 `INFO` 并告警） |
 | `SLA_LOG_FILE` | 应用日志文件路径，设置后启用文件日志 | 空（仅 stderr） |
 | `SLA_HW_PORT` | 硬件联调门控测试使用的串口；未设置则跳过 | 空 |
-| `<profile 的 env_var>` | 该 Profile 的 API Key | 空（可回退钥匙串 / 本次会话输入） |
+| `<profile 的 env_var>` | 该 Profile 的 API Key | 空（仅当 `credential.kind=environment` 时使用；不跨来源回落） |
 
 ## 11. 相关文档
 

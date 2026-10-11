@@ -54,7 +54,7 @@ bootstrap.main
   → CompositeResourceLoader.from_environment  （用户配置目录 → 仓库根 → 包内 resources）
   → load_presets / load_adapters / load_profiles / PromptLibrary
   → QtSettingsStore（QSettings：窗口、串口、级别、导出目录等偏好）
-  → KeyringStoreAdapter → CredentialResolver（运行时输入 > kind 首选 > 另一来源）
+  → KeyringStoreAdapter → CredentialResolver（运行时输入 → kind 声明的唯一来源，不跨来源回落）
   → DeviceController / AnalysisController（全部构造函数注入）
 
 DiagnosticsReport.collect(loader, ...)  ← python -m serial_log_analyzer.diagnostics
