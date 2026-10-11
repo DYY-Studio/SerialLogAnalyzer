@@ -11,6 +11,12 @@ API Key 等敏感信息**不得**明文写入仓库、配置文件或日志。�
 | `environment` | `{kind: environment, env_var: <VAR>}` | 环境变量（CI / headless 场景） |
 | `runtime` | `{kind: runtime}` | 每次运行时由用户输入，仅存内存 |
 
+补充约定：
+
+- `kind` 可省略，缺省为 `runtime`；取值不区分大小写（内部统一按小写解析）；
+- 只有 `kind: environment` 必须提供 `env_var`；`kind: keyring` 未给 `name` 时以 `profile_id` 作为账号名；
+- 配置文件解析失败或 `kind` 非法时报 `ConfigError`（不会静默降级为运行时输入）。
+
 Profile 中同时可以给出 `name` 与 `env_var` 作为双来源声明：
 
 ```yaml
@@ -25,20 +31,25 @@ credential:
 ## 2. 解析优先级
 
 ```text
-1. 运行时输入（本次会话内存中的值）
-2. 系统钥匙串
-3. 环境变量
+1. 运行时输入（本次会话内存中的值，固定最优先）
+2. kind 声明的首选来源
+3. 另一来源（回退）
 ```
 
-任一来源取到非空字符串即停止；三个来源均失败时抛出 `CredentialError`，
-错误消息中列出已尝试的来源，便于用户排查。
+`kind` 只决定**首选来源**：`kind: keyring` 时先查钥匙串、再查环境变量；
+`kind: environment` 时先查环境变量、再查钥匙串。运行时输入永远排在最前，与 `kind` 无关。
+
+运行时输入按 `name` 与 `env_var` 两个候选键匹配，任一命中即生效。
+
+任一来源取到非空字符串（去除首尾空白后非空）即停止；所有来源均失败时抛出
+`CredentialError`，错误消息中列出已尝试的来源，便于用户排查。
 
 ## 3. 系统钥匙串约定
 
 | 项 | 值 |
 |---|---|
 | keyring service | `SerialLogAnalyzer` |
-| keyring account | credential `name`（缺省取 `profile_id`） |
+| keyring account | credential `name`（缺省取 `profile_id`）；界面读写同样必须使用该账号名 |
 | 依赖库 | `keyring>=25,<26` |
 
 平台后端：macOS 使用 Keychain；Windows 使用 Credential Locker；Linux 使用

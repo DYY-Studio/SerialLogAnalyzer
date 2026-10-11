@@ -69,32 +69,56 @@ streaming:
 | 字段 | 必填 | 说明 |
 |---|---|---|
 | `schema_version` | 是 | 当前固定为 `3` |
-| `adapter_id` | 是 | `^[a-z][a-z0-9-]*$`，唯一 |
-| `endpoint` | 是 | 相对路径，可含 `${model}`；不得包含 `://` |
+| `adapter_id` | 是 | `^[a-z][a-z0-9-]*$`，且必须等于文件主名（`demo.yaml` → `demo`） |
+| `endpoint` | 是 | 相对路径，可含白名单占位符（如 `${model}`）；不得包含 `://` |
 | `messages_format` | 否 | `openai`（默认）/ `anthropic` / `gemini` |
-| `headers` | 是 | 字符串到字符串；值可含 `${api_key}` 占位符 |
-| `body` | 是 | 请求体模板；字符串值若为占位符须独占该值 |
+| `headers` | 否 | 字符串到字符串；缺省为空；值可含 `${api_key}` 占位符 |
+| `body` | 否 | 请求体模板；缺省为空；字符串值若为占位符须独占该值 |
 | `response_content_pointer` | 是 | 非流式正文路径（扩展 JSON Pointer） |
 | `response_reasoning_content_pointers` | 否 | 思考正文候选路径，按序尝试 |
-| `models` | 否 | 模型列表接口声明 |
-| `usage` | 否 | 用量字段路径 |
+| `models` | 否 | 模型列表接口声明，见 1.2 |
+| `usage` | 否 | 用量字段路径，见 1.2 |
 | `streaming` | 否 | 流式声明；缺省表示不支持流式 |
 
-### 1.2 占位符白名单
+### 1.2 `models` 与 `usage` 子字段
 
-| 占位符 | 可用于 | 含义 |
+`models` 描述“如何列出可用模型”，三个取值的语义层次不同：
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `endpoint` | 是 | 模型列表端点，相对路径（与 `endpoint` 同样的限制） |
+| `response_models_pointer` | 是 | 指向模型数组的**扩展 JSON Pointer** |
+| `response_model_id` | 否 | 数组元素内部的相对键名（如 `id`），**不是** Pointer |
+| `response_model_display` | 否 | 数组元素内部的展示名键名，**不是** Pointer |
+| `response_model_strip_prefix` | 否 | 需要从模型名上剥掉的**字面前缀** |
+
+`usage` 取非流式响应中的用量字段，至少声明一个指针，否则报 `ConfigError`：
+
+| 字段 | 说明 |
+|---|---|
+| `input_tokens_pointer` | 输入 token 数（扩展 JSON Pointer） |
+| `output_tokens_pointer` | 输出 token 数 |
+| `total_tokens_pointer` | 总 token 数 |
+
+### 1.3 占位符白名单
+
+| 占位符 | 推荐位置 | 含义 |
 |---|---|---|
 | `${api_key}` | headers | 已解析的密钥 |
 | `${model}` | endpoint / body | 模型名 |
 | `${system}` | body | 系统消息文本（多条 system 以空行拼接） |
 | `${messages}` | body | 已按 `messages_format` 转换的消息数组 |
 | `${temperature}` | body | 采样温度 |
-| `${max_output_tokens}` | body | 最大输出 token；值为 `0` 时该字段整体从请求体移除 |
+| `${max_output_tokens}` | body | 最大输出 token；值为 `0` 时该字段整体从请求体移除（运行期待实现） |
 | `${stream}` | body | 是否流式 |
 
-未知占位符、非独占形式的占位符（如 `"prefix-${model}"` 出现在 body 中）均报 `ConfigError`。
+“推荐位置”只是约定，**加载期使用统一白名单**：只要占位符在白名单内，
+`headers` / `endpoint` / `body` 均可使用，不按位置拒绝（避免误伤合法组合）。
 
-### 1.3 流式声明 `streaming`
+未知占位符（`headers`、`endpoint`、`streaming.endpoint`、`body` 中任意位置）报 `ConfigError`；
+非独占形式的占位符（如 `"prefix-${model}"` 出现在 body 中）同样报 `ConfigError`。
+
+### 1.4 流式声明 `streaming`
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
@@ -106,7 +130,10 @@ streaming:
 | `terminal` | 是 | 终止条件：`{sentinel: "[DONE]"}` 或 `{when: {pointer, equals\|exists}}` |
 | `allow_clean_eof` | 否 | 服务端未发终止事件即关闭连接时是否视为正常结束 |
 | `error_events` | 否 | `{when, message_pointer, status_pointer?}` 数组 |
-| `usage` | 否 | 流式用量指针数组，支持多候选 |
+| `usage` | 否 | 流式用量指针数组：`input_tokens_pointers` / `output_tokens_pointers` / `total_tokens_pointers` |
+
+`streaming.usage` 的三个子键都是**候选指针数组**（同一数值在不同服务端可能出现在不同位置），
+至少一个数组非空，否则报 `ConfigError`；候选按序尝试。消费端（`core/llm/stream.py`）尚未实现。
 
 条件 `when` 的形态：
 
@@ -138,15 +165,15 @@ extra_headers: {}
 | 字段 | 必填 | 说明 |
 |---|---|---|
 | `schema_version` | 是 | 当前固定为 `1` |
-| `profile_id` | 是 | `^[a-z][a-z0-9-]*$`，唯一 |
-| `adapter_id` | 是 | 必须能加载到对应 Adapter |
-| `base_url` | 是 | 合法 HTTP(S) URL，无尾部 `/` |
+| `profile_id` | 是 | `^[a-z][a-z0-9-]*$`，且必须等于文件主名 |
+| `adapter_id` | 是 | 必须能加载到对应 Adapter（不存在时报错） |
+| `base_url` | 是 | 以 `http://` 或 `https://` 开头，且不以 `/` 结尾 |
 | `model` | 是 | 模型名 |
-| `stream` | 否 | 流式开关；Adapter 未声明 `streaming` 且此处为 `true` 时报错 |
-| `request_timeout_seconds` | 否 | 默认 120 |
-| `credential` | 是 | 凭据引用，见 `credentials.md` |
-| `extra_body` | 否 | 追加请求体字段；与 Adapter 模板冲突时报错 |
-| `extra_headers` | 否 | 追加请求头；与 Adapter 模板头同名（大小写不敏感）时报错 |
+| `stream` | 否 | 流式开关，默认 `true`；Adapter 未声明 `streaming` 且此处为 `true` 时报错 |
+| `request_timeout_seconds` | 否 | 正数，默认 `120`；布尔值非法 |
+| `credential` | 否 | 凭据引用，见 `credentials.md`；缺省等价于 `{kind: runtime}` |
+| `extra_body` | 否 | 追加请求体字段；与 Adapter 模板冲突时报错（运行期待实现） |
+| `extra_headers` | 否 | 追加请求头；与 Adapter 模板头同名（大小写不敏感）时报错（运行期待实现） |
 
 ## 3. 内置 Adapter
 
@@ -157,13 +184,32 @@ extra_headers: {}
 | `anthropic` | Claude Messages API | SSE |
 | `google-gemini` | Gemini generateContent | SSE |
 
-## 4. 校验与错误
+## 4. 资源查找顺序
+
+Adapter 与 Profile 都通过同一套资源加载器查找，优先级由高到低：
+
+1. 用户配置目录 `providers/adapters/`、`providers/profiles/`
+   （Windows `%APPDATA%\SerialLogAnalyzer`，其他平台 `~/.config/SerialLogAnalyzer`，
+   可用 `SLA_CONFIG_HOME` 覆盖）；
+2. 源码运行时的仓库根 `providers/`；
+3. 包内 `serial_log_analyzer/resources/providers/`。
+
+同 `adapter_id` / `profile_id` 时高优先级覆盖低优先级，因此可以在不改仓库的前提下
+本地覆盖内置 Adapter。查找顺序的完整说明见 `docs/configuration.md`。
+
+## 5. 校验与错误
 
 | 情况 | 行为 |
 |---|---|
 | YAML 非法 / 缺少必填字段 / 字段类型错误 | `ConfigError` |
 | 出现未知字段 | `ConfigError`（避免拼写错误静默失效） |
 | 未知占位符 | `ConfigError` |
+| `adapter_id` / `profile_id` 与文件名不一致 | `ConfigError` |
 | `stream: true` 但 Adapter 无 `streaming` | `ConfigError` |
-| 响应路径不存在或类型不符 | `ResponseParseError` |
-| 服务端返回错误事件 | `ProviderError`（携带服务端消息） |
+| 响应路径不存在或类型不符 | `ResponseParseError`（运行期待实现） |
+| 服务端返回错误事件 | `ProviderError`（携带服务端消息，运行期待实现） |
+
+> 运行期条目（`max_output_tokens: 0` 时移除字段、`request_body` / `extra_body` /
+> `extra_headers` 冲突检查、`ResponseParseError` / `ProviderError`）由
+> `core/llm/adapter.py`、`core/llm/request.py` 负责，目前仍是 `NotImplementedError` 桩；
+> 上表已标注“运行期待实现”的部分在实现落地前不会触发。

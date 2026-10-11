@@ -1,8 +1,9 @@
 # 日志 Preset Schema
 
 日志解析采用 YAML 声明式 Preset：不同固件或日志格式无需修改 Python 代码。
-Preset 文件位于 `presets/logs/*.yaml`，用户可在 `~/.config/SerialLogAnalyzer/presets/logs/`
-放置同名文件覆盖内置版本。
+Preset 文件位于 `presets/logs/*.yaml`，用户可在用户配置目录的 `presets/logs/` 下
+放置同名文件覆盖内置版本（Windows `%APPDATA%\SerialLogAnalyzer`，其他平台
+`~/.config/SerialLogAnalyzer`，可用 `SLA_CONFIG_HOME` 覆盖）。
 
 **硬约束**：YAML 只描述规则，不允许执行任意 Python 表达式、`eval` 或嵌入脚本。
 
@@ -10,7 +11,7 @@ Preset 文件位于 `presets/logs/*.yaml`，用户可在 `~/.config/SerialLogAna
 
 ```yaml
 schema_version: 1               # 必填，当前固定为 1
-preset_id: hi3861-default       # 必填，^[a-z][a-z0-9-]*$
+preset_id: hi3861-default       # 必填，^[a-z][a-z0-9-]*$ 且必须等于文件主名
 display_name: "Hi3861 默认日志"  # 必填，界面展示名
 
 line:                           # 必填，行匹配规则
@@ -41,7 +42,7 @@ fallback:                       # 选填，无法匹配时的降级规则
 
 对齐要求：
 
-- `level` 组缺失或正则编译失败 → 加载报 `PresetError`；
+- `level`、`module`、`message` 三个必需命名组任一缺失，或正则编译失败 → 加载报 `PresetError`；
 - `module` 组可匹配到空串（如 `[-]`），此时 `LogEntry.module` 记为 `None`；
 - `time` 组存在时填充 `LogEntry.device_time`，否则由 PC 侧接收时间兜底；
 - `pattern` 中额外出现的命名组会被忽略，不影响解析（如需保留请开 Issue 讨论）；
@@ -69,10 +70,13 @@ Preset 负责把板上的任意标识（`V` / `verbose` / `FATAL` …）映射�
 
 ## 5. 资源查找顺序
 
-1. 用户目录 `~/.config/SerialLogAnalyzer/presets/logs/`
-2. 仓库 / 包内 `presets/logs/`
+1. 用户配置目录 `presets/logs/`（Windows `%APPDATA%\SerialLogAnalyzer`，
+   其他平台 `~/.config/SerialLogAnalyzer`，可用 `SLA_CONFIG_HOME` 覆盖）
+2. 源码运行时的仓库根 `presets/logs/`
+3. 包内 `serial_log_analyzer/resources/presets/logs/`
 
-同 `preset_id` 时用户目录优先，便于在不改仓库的前提下适配自己的固件。
+同 `preset_id` 时高优先级覆盖低优先级，便于在不改仓库的前提下适配自己的固件。
+完整规则见 `docs/configuration.md`。
 
 ## 6. 校验与错误
 

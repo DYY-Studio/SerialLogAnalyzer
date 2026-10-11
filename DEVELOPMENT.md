@@ -35,10 +35,22 @@ uv run python -m serial_log_analyzer   # 模块入口
 
 ```bash
 SLA_LOG_LEVEL=DEBUG uv run python main.py
+SLA_LOG_FILE=./app.log uv run python main.py     # 追加启用文件日志（1 MB × 3 轮转）
 ```
 
 **设备日志**（来自所连串口设备）与**应用日志**（工具自身）严格分离：前者进入日志表格与
 `LogPipeline`，后者使用标准库 `logging`（见 `diagnostics/app_logging.py`），二者不混用。
+
+配置自查（资源从哪里加载、有没有写错的 YAML）：
+
+```bash
+uv run python -m serial_log_analyzer.diagnostics            # 中文诊断报告
+uv run python -m serial_log_analyzer.diagnostics --json     # JSON 输出
+uv run python -m serial_log_analyzer.diagnostics --export report.txt
+```
+
+报告包含资源根目录（按优先级）、已加载的 Preset / Adapter / Profile、系统钥匙串可用性、
+应用日志末尾与逐条配置错误；退出码 `1` 表示存在配置错误，可直接作为 CI 的资源校验步骤。
 
 ## 测试
 
@@ -109,6 +121,15 @@ Qt Main Thread
 
 资源查找顺序：用户配置目录 → 仓库/内置资源。同 ID 时用户资源覆盖内置资源。
 
+- 用户配置目录：Windows `%APPDATA%\SerialLogAnalyzer`，其他平台 `~/.config/SerialLogAnalyzer`，
+  可用 `SLA_CONFIG_HOME` 重定向（便携模式、测试隔离都用它）。
+- 「模型服务」对话框的「保存到用户配置」把 Profile 写入
+  `<用户配置目录>/providers/profiles/<profile_id>.yaml`（临时文件 + 原子替换，内置文件永不改写）。
+- 日志导出默认目录：`SLA_EXPORT_DIR` → 源码运行时 `<仓库根>/exports`（已被 `.gitignore` 忽略）→
+  安装后 `~/SerialLogAnalyzer/exports`；界面设置 `logs/export_dir` 可覆盖。
+- 应用日志文件（启用时）为 `<用户配置目录>/logs/serial-log-analyzer.log`。
+- 字段含义、设置键表、API Key 优先级与导出格式见 [`docs/configuration.md`](docs/configuration.md)。
+
 ## 调试串口
 
 - 无真实硬件时可用虚拟串口对（macOS：`socat -d -d pty,raw,echo=0 pty,raw,echo=0`；
@@ -136,11 +157,13 @@ SLA_HW_PORT=COM3 uv run pytest tests/integration/test_hardware_link.py -v
 | 日志粘行 | 确认 Preset 正则与板上换行符（应为 `\r\n`） |
 | Keychain 不可用 | Linux 无 SecretService 时会自动回退环境变量，界面会给出提示 |
 | 流式无输出 | 检查 profile `stream` 与 adapter `streaming` 声明是否匹配 |
+| 自建 Preset / Profile 没生效 | 运行 `python -m serial_log_analyzer.diagnostics`，对照报告里的资源根目录与配置错误 |
+| 导出的日志找不到 | 看设置里的 `logs/export_dir`，留空则用 `SLA_EXPORT_DIR` / `<仓库根>/exports` |
 
 ## 分支与提交约定
 
 本仓库采用 **GitHub Flow**。以下为内部维护约定：`main` 始终可运行，改动用短分支 + PR 合入，
-合并方式为 squash merge。
+合并方式为 **no-ff merge**（见 `AGENTS.md`）。
 
 ```bash
 git switch -c feature/log-preset-loader    # 从最新 main 开分支
