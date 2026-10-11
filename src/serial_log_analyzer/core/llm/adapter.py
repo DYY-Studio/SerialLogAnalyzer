@@ -187,7 +187,31 @@ class JSONAdapter:
         if stream:
             _merge(body, _render_body(self.streaming.request_body, values))
         _merge(body, deepcopy(extra_body or {}))
-        headers = {}
+        headers = self.render_headers(api_key=api_key, model=model, extra_headers=extra_headers)
+        return headers, body
+
+    def render_headers(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        extra_headers: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        """渲染请求头模板（模型列表等只读请求同样复用）。
+
+        参数:
+            api_key: 已解析的密钥。
+            model: 模型名，用于 ``${model}`` 占位符。
+            extra_headers: Profile 追加请求头；与模板头冲突时报错。
+
+        返回:
+            请求头字典。
+
+        异常:
+            ConfigError: 占位符未知或与模板头冲突。
+        """
+
+        headers: dict[str, str] = {}
         for name, value in self.headers_template.items():
             try:
                 names = Template(value).get_identifiers()
@@ -200,7 +224,7 @@ class JSONAdapter:
             if name.lower() in {n.lower() for n in headers}:
                 raise ConfigError(f"请求头冲突：{name}")
             headers[name] = value
-        return headers, body
+        return headers
 
     def parse_response(self, payload: Any) -> tuple[str, str | None]:
         """从非流式响应中提取正文与思考正文。

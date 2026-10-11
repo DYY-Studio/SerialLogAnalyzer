@@ -24,7 +24,7 @@ from typing import Any
 from PySide6.QtNetwork import QNetworkAccessManager
 from PySide6.QtWidgets import QApplication
 
-from serial_log_analyzer.core.errors import ConfigError
+from serial_log_analyzer.core.errors import AppError, ConfigError
 from serial_log_analyzer.core.llm.adapter_loader import load_adapter
 from serial_log_analyzer.core.llm.profile_loader import load_profile, load_profiles
 from serial_log_analyzer.core.logs.parser import LogParser
@@ -222,7 +222,7 @@ def build_window(context: ApplicationContext) -> MainWindow:
     analysis.error_occurred.connect(window.show_status)
 
     window.settings_requested.connect(lambda: _open_settings(window, context))
-    window.provider_requested.connect(lambda: _open_provider(window, context))
+    window.provider_requested.connect(lambda: _open_provider(window, context, service))
     window.credential_requested.connect(lambda: _open_credential(window, context))
     window.preset_requested.connect(lambda: _choose_preset(window, context))
 
@@ -360,13 +360,53 @@ def _suffix_of(selected_filter: str) -> str:
     return selected_filter[start + 1 : end] if 0 <= start < end else ""
 
 
-def _open_provider(window: MainWindow, context: ApplicationContext) -> None:
-    """打开模型服务对话框；保存走 ``ProfileStore`` 写用户配置目录。"""
+def _open_provider(
+    window: MainWindow, context: ApplicationContext, service: AnalysisService
+) -> None:
+    """打开模型服务对话框（可新建 / 编辑 / 删除 Profile、拉取模型列表）。
 
+    关闭后重读 Profile 列表：当前 Profile 已被删除时切到第一个可用项，仍存在时把
+    改动（base_url / model / extra_* 等）应用到分析服务。
+    """
+
+    from serial_log_analyzer.core.llm.adapter_loader import load_adapters
+    from serial_log_analyzer.core.llm.model_discovery import ModelDiscoveryService
     from serial_log_analyzer.io.storage.profile_store import ProfileStore
     from serial_log_analyzer.ui.dialogs.provider_dialog import ProviderDialog
 
-    ProviderDialog(load_profiles(context.resources), window, store=ProfileStore()).exec()
+    reload_profiles = lambda: load_profiles(context.resources)  # noqa: E731 - 传给对话框的取数回调
+    ProviderDialog(
+        reload_profiles(),
+        load_adapters(context.resources),
+        window,
+        reload=reload_profiles,
+        store=ProfileStore(),
+        discovery=ModelDiscoveryService(context.http_transport, context.credentials),
+    ).exec()
+    _refresh_profiles(window, context, service)
+
+
+def _refresh_profiles(
+    window: MainWindow, context: ApplicationContext, service: AnalysisService
+) -> None:
+    """Profile 列表变动后刷新工具栏，并把当前 Profile 的最新声明应用到分析服务。"""
+
+    profiles = load_profiles(context.resources)
+    ids = {item.profile_id for item in profiles}
+    if context.profile.profile_id not in ids:
+        _switch_profile(
+            window, context, service, profiles[0].profile_id if profiles else ""
+        )
+    elif profiles:
+        try:
+            profile = load_profile(context.resources, context.profile.profile_id)
+            adapter = load_adapter(context.resources, profile.adapter_id)
+            service.set_profile(profile, adapter)
+            context.profile = profile
+            context.adapter = adapter
+        except AppError as exc:
+            window.show_status(f"Profile 改动未能即时生效：{exc}")
+    window.serial_toolbar.set_profiles(profiles, context.profile.profile_id)
 
 
 def _open_credential(window: MainWindow, context: ApplicationContext) -> None:

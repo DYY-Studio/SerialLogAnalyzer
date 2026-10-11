@@ -14,6 +14,7 @@ __all__ = [
     "CredentialKind",
     "CredentialRef",
     "HttpRequest",
+    "ModelOption",
     "ProviderProfile",
     "StreamEvent",
 ]
@@ -47,7 +48,7 @@ class HttpRequest:
     """与 Qt 无关的 HTTP 请求描述。
 
     参数:
-        method: HTTP 方法，首版固定为 ``POST``。
+        method: HTTP 方法，取 ``GET`` 或 ``POST``。
         url: 完整请求 URL（已由 ``base_url`` 与 Adapter ``endpoint`` 拼接）。
         headers: 请求头，值已完成占位符替换。
         body: 请求体对象，由 ``io`` 序列化为 JSON 字节。
@@ -76,6 +77,19 @@ class StreamEvent:
     data: str
     event: str | None = None
     raw: str = ""
+
+
+@dataclass(frozen=True)
+class ModelOption:
+    """模型发现结果中的一项。
+
+    参数:
+        model_id: 可直接写入 Profile ``model`` 的值（已按 Adapter 声明剥掉前缀）。
+        display: 展示名；服务端未提供时与 ``model_id`` 相同。
+    """
+
+    model_id: str
+    display: str
 
 
 @dataclass(frozen=True)

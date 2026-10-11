@@ -136,23 +136,25 @@ extra_headers: {}
 - 只写用户配置目录，**不会修改**仓库/内置文件；
 - 保存前先用 `profile_writer.dump_profile()` 校验字段，非法值会弹窗提示并保持对话框打开。
 
-### 4.4 Profile 编辑器的当前边界（壳子）
+### 4.4 Profile 编辑器
 
-仓库内置的 `providers/profiles/*.yaml` 本身就是示例，**改选中的那一条**即可，不需要先「新建」。
-因此「模型服务」对话框目前刻意只做**选择已有 Profile + 编辑少量字段 + 保存**：
+「模型服务」对话框是完整的 Profile 管理器，每一步操作都**立即落盘**（写用户配置目录，
+覆盖同 ID 的内置 Profile；内置文件本身不会被修改），因此不保留“未保存编辑”：
 
-| 层 | 归哪个分工（DESIGN §17） | 现状 |
-|---|---|---|
-| `providers/**` 资源 schema 与运行期语义（模型发现、请求参数、流式） | LLM 分工 | 运行期仍为桩（`core/llm/request.py` 等） |
-| 加载 / 校验 / 序列化 / 原子落盘 / 凭据解析 | 配置与集成（本文档） | 已实现 |
-| 界面形态（Profiles 管理器、新建 / 复制 / 删除 / 模型下拉） | 界面分工 | 只有壳子 |
+| 操作 | 行为 |
+|---|---|
+| 新建 | 以当前选中项为模板，输入新的 `profile_id`（`^[a-z][a-z0-9-]*$`，且不能与现有 ID 重复）后立即写入用户配置目录 |
+| 删除 | 只删用户配置目录里的那份；不存在用户副本（纯内置）时明确拒绝并提示 |
+| 编辑 | `base_url` / `model` / `stream` / `request_timeout_seconds` / `adapter_id` / `extra_body` / `extra_headers` |
+| 拉取模型 | 用当前界面字段（含未保存编辑）向 `<base_url><models.endpoint>` 发 `GET`，把结果填进可编辑的模型下拉；失败弹窗提示 |
+| 凭据来源 | 只读展示；改凭据用「API Key」对话框（涉及密钥与系统钥匙串） |
 
-- **壳子已覆盖**：选择 Profile、编辑 `base_url` / `model` / `stream` / `request_timeout_seconds`、
-  查看 Adapter 与凭据来源、保存到用户配置目录。
-- **未实现（本任务范围外）**：新建 / 复制 / 删除 Profile、在界面上改选 Adapter、编辑
-  `extra_body` / `extra_headers`、拉取服务端模型列表（依赖 LLM 分工的模型发现）。
-- 模型参数（`${temperature}` / `${max_output_tokens}` 的**取值**）由 LLM 分工的 `RequestBuilder`
-  决定，Profile 只负责声明模型与 `extra_body` 透传，所以界面暂不提供这两项。
+- `extra_body` / `extra_headers` 用 YAML 文本编辑：留空即不追加；不是合法映射或值不是字符串时
+  明确报错且**不落盘**。
+- Adapter 只能选内置存在的 `adapter_id`；当前 Profile 声明的 Adapter 不在资源里时照样列出并标注，
+  避免界面显示与实际不一致。
+- 模型参数（`${temperature}` / `${max_output_tokens}` 的**取值**）由 `RequestBuilder` 决定，
+  Profile 只声明模型与 `extra_body` 透传，界面不提供这两项。
 
 ## 5. API Key 与凭据
 

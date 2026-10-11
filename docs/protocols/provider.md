@@ -94,8 +94,12 @@ streaming:
 | `response_model_display` | 否 | 数组元素内部的展示名键名，**不是** Pointer |
 | `response_model_strip_prefix` | 否 | 需要从模型名上剥掉的**字面前缀** |
 
-`usage` 取非流式响应中的用量字段，至少声明一个指针，否则报 `ConfigError`：
+模型列表请求固定为 `GET <base_url><endpoint>`：复用 Adapter 的请求头（无请求体，因此省略
+`Content-Type`）；非 2xx 报 `HttpStatusError`，指针缺失或类型不符报 `ResponseParseError`；
+`response_model_strip_prefix` 在解析时剥掉（Gemini 的 `models/` 前缀即此用途）。解析结果供
+「模型服务」对话框填充模型下拉（见 `docs/configuration.md` §4.4）。
 
+`usage` 取非流式响应中的用量字段，至少声明一个指针，否则报 `ConfigError`：
 | 字段 | 说明 |
 |---|---|
 | `input_tokens_pointer` | 输入 token 数（扩展 JSON Pointer） |
