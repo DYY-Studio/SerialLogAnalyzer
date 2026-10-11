@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from serial_log_analyzer import bootstrap
@@ -44,6 +46,17 @@ def test_build_application_assembles_io_and_core(qapp, fake_settings) -> None:
     assert context.context_builder is not None
     assert len(context.prompts.goals()) == 4
     assert context.window is None
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Schannel 只在 Windows 上可用")
+def test_windows_forces_system_tls_backend(qapp, fake_settings) -> None:
+    """Windows 上必须固定用 Schannel：Qt 的 OpenSSL 插件与进程里的 Python ``ssl`` 混用会崩进程。"""
+
+    from PySide6.QtNetwork import QSslSocket
+
+    bootstrap.build_application(["-platform", "offscreen"])
+
+    assert QSslSocket.activeBackend() == "schannel"
 
 
 def test_build_application_honours_stored_preset_and_profile(qapp, fake_settings) -> None:

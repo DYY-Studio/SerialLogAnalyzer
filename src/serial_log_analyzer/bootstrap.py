@@ -127,6 +127,7 @@ def build_application(argv: list[str] | None = None) -> ApplicationContext:
     app.setApplicationName(_APP_NAME)
     app.setOrganizationName(_APP_NAME)
     app.setApplicationVersion(_APP_VERSION)
+    _use_system_tls_backend()
 
     settings = QtSettingsStore()
     configure_logging(
@@ -174,6 +175,27 @@ def build_application(argv: list[str] | None = None) -> ApplicationContext:
         current_log_file(),
     )
     return context
+
+
+def _use_system_tls_backend() -> None:
+    """Windows 上固定用系统 TLS（Schannel），避免两套 OpenSSL 混用导致进程崩溃。
+
+    进程里迟早会加载 Python 的 ``ssl``（``keyring`` 经 ``jaraco.context`` 间接导入），
+    它自带一份 ``libssl``/``libcrypto``；而 Qt 的 OpenSSL 插件默认绑定系统里的同名 DLL，
+    两者混用后**任何 HTTPS 请求都会以访问冲突（0xC0000005）直接结束进程**。
+    改用系统 Schannel 后 Qt 不再加载 OpenSSL，与 Python 的 ``ssl`` 互不干扰。
+
+    异常:
+        ConfigError: Windows 上 Schannel 后端不可用（Qt tls 插件不完整）；此时继续运行
+            只会在第一次 HTTPS 请求时崩溃，因此直接失败并说明原因。
+    """
+
+    if sys.platform != "win32":
+        return
+    from PySide6.QtNetwork import QSslSocket
+
+    if not QSslSocket.setActiveBackend("schannel"):
+        raise ConfigError("无法启用系统 TLS 后端（Schannel），请检查 Qt 的 tls 插件是否完整")
 
 
 def build_window(context: ApplicationContext) -> MainWindow:

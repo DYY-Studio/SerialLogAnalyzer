@@ -157,6 +157,7 @@ SLA_HW_PORT=COM3 uv run pytest tests/integration/test_hardware_link.py -v
 | 日志粘行 | 确认 Preset 正则与板上换行符（应为 `\r\n`） |
 | Keychain 不可用 | Linux 无 SecretService 时 `kind: keyring` 的 Profile 取不到密钥；界面提示改用 `environment`，不跨来源回落 |
 | 流式无输出 | 检查 profile `stream` 与 adapter `streaming` 声明是否匹配 |
+| 发 LLM 请求时进程直接退出（0xC0000005） | 进程里同时存在两套 OpenSSL：`keyring`（经 `jaraco.context`）会导入 Python 的 `ssl`，而 Qt 的 OpenSSL 插件默认绑定系统 `System32\libssl-3-x64.dll`，混用即在 HTTPS 里崩。启动时已固定用系统 TLS（`bootstrap._use_system_tls_backend`）；若仍复现，检查 Qt 的 `tls` 插件是否完整 |
 | 自建 Preset / Profile 没生效 | 运行 `python -m serial_log_analyzer.diagnostics`，对照报告里的资源根目录与配置错误 |
 | 导出的日志找不到 | 看设置里的 `logs/export_dir`，留空则用 `SLA_EXPORT_DIR` / `<仓库根>/exports` |
 
