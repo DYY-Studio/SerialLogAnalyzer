@@ -132,3 +132,69 @@ def test_clear_empties_the_transcript(qtbot) -> None:
 
     assert view._cards == []
     assert view.plain_text() == ""
+
+
+def _show(view: ChatView, qtbot) -> None:
+    """让结果区真的排过版：滚动条范围要有非零值，滚动行为才测得出。"""
+
+    view.resize(320, 200)
+    view.show()
+    qtbot.waitExposed(view)
+
+
+def _lines(count: int) -> str:
+    return "内容行\n" * count
+
+
+def _settle(qtbot) -> None:
+    """等布局重算完：滚动条范围要等后续事件循环（走了重排/加滚动条两步）才更新。"""
+
+    for _ in range(3):
+        qtbot.wait(10)
+
+
+def test_streaming_keeps_scrolling_to_bottom(qtbot) -> None:
+    """流式追加内容时必须一直贴底（旧实现每次都用重算前的上限，等于停在原地）。"""
+
+    view = ChatView()
+    qtbot.addWidget(view)
+    _show(view, qtbot)
+    bar = view.verticalScrollBar()
+
+    view.render(_result(AnalysisState.STREAMING, [_USER], content=_lines(1)))
+    _settle(qtbot)
+
+    for count in (5, 20, 40, 80):
+        view.render(_result(AnalysisState.STREAMING, [_USER], content=_lines(count)))
+        _settle(qtbot)
+        assert bar.maximum() > 0
+        assert bar.value() == bar.maximum()
+
+
+def test_user_scroll_up_stops_following_until_back_at_bottom(qtbot) -> None:
+    """用户往上滚后不再被拽回底部；滚回底部或开新一轮时恢复跟随。"""
+
+    view = ChatView()
+    qtbot.addWidget(view)
+    _show(view, qtbot)
+    bar = view.verticalScrollBar()
+
+    view.render(_result(AnalysisState.STREAMING, [_USER], content=_lines(40)))
+    _settle(qtbot)
+    assert bar.maximum() > 0
+
+    bar.setValue(0)
+    view.render(_result(AnalysisState.STREAMING, [_USER], content=_lines(60)))
+    _settle(qtbot)
+    assert bar.value() == 0
+
+    bar.setValue(bar.maximum())
+    view.render(_result(AnalysisState.STREAMING, [_USER], content=_lines(80)))
+    _settle(qtbot)
+    assert bar.value() == bar.maximum()
+
+    bar.setValue(0)
+    second = AnalysisMessage(MessageRole.USER, "第二轮", "第二轮")
+    view.render(_result(AnalysisState.STREAMING, [_USER, second], content=_lines(30)))
+    _settle(qtbot)
+    assert bar.value() == bar.maximum()

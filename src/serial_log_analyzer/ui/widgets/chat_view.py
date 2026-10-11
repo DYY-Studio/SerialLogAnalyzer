@@ -30,6 +30,7 @@ _ROLE_TITLES = {MessageRole.USER: "你", MessageRole.ASSISTANT: "LLM"}
 _THINKING_TITLE = "思考"
 _CONTEXT_TITLE = "参考内容"
 _EMPTY_HINT = "分析结果将显示在这里"
+_BOTTOM_SLACK = 4  # 距底部多少像素以内算「贴底」
 
 
 class _CollapsibleBlock(QWidget):
@@ -145,6 +146,10 @@ class ChatView(QScrollArea):
         self._cards: list[_TurnCard] = []
         self._message_cards: list[_TurnCard] = []
         self._live: _TurnCard | None = None
+        self._follow = True
+        bar = self.verticalScrollBar()
+        bar.valueChanged.connect(self._on_value_changed)
+        bar.rangeChanged.connect(self._on_range_changed)
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.StyledPanel)  # 结果区整体要有一圈边框，便于辨认
         # 输出区至少要能看几轮对话，避免被日志/命令面板挤扁（停靠面板会尊重这个下限）。
@@ -174,8 +179,6 @@ class ChatView(QScrollArea):
     def render(self, result: AnalysisResult) -> None:
         """按结果快照刷新转录（已定稿轮次按会话补卡片，未定稿一轮就地更新）。"""
 
-        bar = self.verticalScrollBar()
-        at_bottom = bar.value() >= bar.maximum() - 4
         streaming = result.state is AnalysisState.STREAMING
         pending = list(result.conversation[len(self._message_cards) :])
 
@@ -203,8 +206,25 @@ class ChatView(QScrollArea):
             self._live.set_body(result.content)
 
         self._hint.setVisible(not self._cards)
-        if appended or at_bottom:
-            bar.setValue(bar.maximum())
+        if appended:  # 新一轮出现时重新贴底跟随
+            self._follow = True
+
+    def _on_value_changed(self, value: int) -> None:
+        """滚动位置变化：贴底就继续跟随，用户手动往上滚则暂停跟随。"""
+
+        bar = self.verticalScrollBar()
+        self._follow = value >= bar.maximum() - _BOTTOM_SLACK
+
+    def _on_range_changed(self, _minimum: int, maximum: int) -> None:
+        """内容长高后跟随到底。
+
+        必须在 ``rangeChanged``（布局重算完成）里做：``render`` 末尾直接
+        ``setValue(maximum())`` 拿到的是重算前的旧上限，等于每次都被设回原位，
+        于是流式期间一直停在上面不动。
+        """
+
+        if self._follow:
+            self.verticalScrollBar().setValue(maximum)
 
     def plain_text(self) -> str:
         """把整段转录导出为纯文本（忽略折叠状态），供「复制结果」使用。"""
@@ -227,6 +247,7 @@ class ChatView(QScrollArea):
         self._cards.clear()
         self._message_cards.clear()
         self._live = None
+        self._follow = True
         self._hint.setVisible(True)
 
     # ------------------------------------------------------------------
