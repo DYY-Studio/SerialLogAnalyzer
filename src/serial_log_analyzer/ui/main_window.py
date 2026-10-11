@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QMainWindow,
+    QMenu,
     QSplitter,
     QStatusBar,
     QVBoxLayout,
@@ -36,12 +37,18 @@ class MainWindow(QMainWindow):
         on_close: 关闭前的清理回调（由组合根注入，例如断开设备、取消请求）。
 
     信号（由组合根连接，窗口不自己构造对话框）:
+        export_requested(): 请求导出内存日志。
+        import_requested(): 请求导入历史日志。
+        clear_requested(): 请求清空日志。
         settings_requested(): 请求打开设置对话框。
         provider_requested(): 请求打开模型服务对话框。
         credential_requested(): 请求打开凭据对话框。
         preset_requested(): 请求切换日志 Preset。
     """
 
+    export_requested = Signal()
+    import_requested = Signal()
+    clear_requested = Signal()
     settings_requested = Signal()
     provider_requested = Signal()
     credential_requested = Signal()
@@ -89,19 +96,27 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(message)
 
     def _build_menu(self) -> None:
-        """构建菜单栏：只发射意图信号，对话框由组合根打开。"""
+        """构建菜单栏：只发射意图信号，动作由组合根接。
 
-        config_menu = self.menuBar().addMenu("配置")
+        「文件」管日志的导入 / 导出 / 清空，「配置」管设置、Profile 与日志 Preset。
+        """
 
-        def _add(title: str, signal: Signal) -> None:
+        def _add(menu: QMenu, title: str, signal: Signal) -> None:
             action = QAction(title, self)
             action.triggered.connect(signal.emit)
-            config_menu.addAction(action)
+            menu.addAction(action)
 
-        _add("设置…", self.settings_requested)
-        _add("模型服务…", self.provider_requested)
-        _add("凭据…", self.credential_requested)
-        _add("切换日志 Preset…", self.preset_requested)
+        file_menu = self.menuBar().addMenu("文件")
+        _add(file_menu, "导出日志…", self.export_requested)
+        _add(file_menu, "导入日志…", self.import_requested)
+        file_menu.addSeparator()
+        _add(file_menu, "清空日志", self.clear_requested)
+
+        config_menu = self.menuBar().addMenu("配置")
+        _add(config_menu, "设置…", self.settings_requested)
+        _add(config_menu, "模型服务…", self.provider_requested)
+        _add(config_menu, "凭据…", self.credential_requested)
+        _add(config_menu, "切换日志 Preset…", self.preset_requested)
 
     def closeEvent(self, event: object) -> None:
         """窗口关闭：执行清理回调。"""

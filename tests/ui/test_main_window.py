@@ -106,21 +106,29 @@ def test_analysis_panel_reflects_state_and_request(qtbot) -> None:
 def test_menu_actions_emit_intent_signals(qtbot) -> None:
     window = _build_window(qtbot)
     seen: list[str] = []
+    window.export_requested.connect(lambda: seen.append("export"))
+    window.import_requested.connect(lambda: seen.append("import"))
+    window.clear_requested.connect(lambda: seen.append("clear"))
     window.settings_requested.connect(lambda: seen.append("settings"))
     window.provider_requested.connect(lambda: seen.append("provider"))
     window.credential_requested.connect(lambda: seen.append("credential"))
 
-    actions = window.menuBar().actions()[0].menu().actions()
-    assert [action.text() for action in actions] == [
+    menus = window.menuBar().actions()
+    assert [menu.text() for menu in menus] == ["文件", "配置"]
+    file_actions = [item for item in menus[0].menu().actions() if not item.isSeparator()]
+    config_actions = menus[1].menu().actions()
+    assert [action.text() for action in file_actions] == ["导出日志…", "导入日志…", "清空日志"]
+    assert [action.text() for action in config_actions] == [
         "设置…",
         "模型服务…",
         "凭据…",
         "切换日志 Preset…",
     ]
-    for action in actions[:3]:
+
+    for action in (*file_actions, *config_actions[:3]):
         action.trigger()
 
-    assert seen == ["settings", "provider", "credential"]
+    assert seen == ["export", "import", "clear", "settings", "provider", "credential"]
 
 
 def test_toolbar_emits_config_and_command(qtbot) -> None:

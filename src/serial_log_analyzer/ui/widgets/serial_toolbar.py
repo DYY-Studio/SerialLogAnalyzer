@@ -1,4 +1,4 @@
-"""串口工具栏：端口 / 波特率 / 刷新 / 连接 / 断开 / 清空 / 串口参数，以及命令通道（DESIGN §7）。
+"""串口工具栏：端口 / 波特率 / 刷新 / 连接 / 断开 / 串口参数，以及命令通道（DESIGN §7）。
 
 只发射用户意图信号，不直接操作串口对象；实际动作由 :class:`DeviceController` 执行。
 """
@@ -35,7 +35,6 @@ class SerialToolBar(QToolBar):
         connect_requested(SerialConfig): 请求连接。
         disconnect_requested(): 请求断开。
         refresh_requested(): 请求刷新串口列表。
-        clear_requested(): 请求清空日志。
         command_submitted(str): 请求发送一行命令。
         serial_settings_requested(): 请求打开串口参数对话框。
         error_occurred(str): 本地参数非法（如波特率不是正整数），由状态栏展示。
@@ -44,7 +43,6 @@ class SerialToolBar(QToolBar):
     connect_requested = Signal(object)
     disconnect_requested = Signal()
     refresh_requested = Signal()
-    clear_requested = Signal()
     command_submitted = Signal(str)
     serial_settings_requested = Signal()
     error_occurred = Signal(str)
@@ -170,10 +168,6 @@ class SerialToolBar(QToolBar):
         self.disconnect_btn.setEnabled(False)
         self.disconnect_btn.clicked.connect(self.disconnect_requested.emit)
         self.addWidget(self.disconnect_btn)
-
-        self.clear_btn = QPushButton("清空")
-        self.clear_btn.clicked.connect(self.clear_requested.emit)
-        self.addWidget(self.clear_btn)
 
         self.settings_btn = QPushButton("串口参数…")
         self.settings_btn.clicked.connect(self.serial_settings_requested.emit)

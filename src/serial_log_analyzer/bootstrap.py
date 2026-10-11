@@ -188,8 +188,6 @@ def build_window(context: ApplicationContext) -> MainWindow:
     toolbar.refresh_requested.connect(device.refresh_ports)
     toolbar.connect_requested.connect(device.connect)
     toolbar.disconnect_requested.connect(device.disconnect)
-    toolbar.clear_requested.connect(device.clear_logs)
-    toolbar.clear_requested.connect(log_view.clear)
     toolbar.command_submitted.connect(device.send_command)
     device.ports_refreshed.connect(toolbar.set_ports)
 
@@ -203,13 +201,14 @@ def build_window(context: ApplicationContext) -> MainWindow:
     device.command_reply.connect(lambda reply: toolbar.set_command_reply(reply.text))
 
     log_view.selection_changed.connect(analysis.selected_sequences)
-    log_view.clear_requested.connect(device.clear_logs)
-    log_view.clear_requested.connect(log_view.clear)
-    log_view.export_requested.connect(lambda: _export_logs(window, context))
-    log_view.import_requested.connect(lambda: _import_logs(window, context))
     log_view.autoscroll_toggled.connect(
         lambda enabled: settings.set(SETTINGS_KEYS.AUTOSCROLL, bool(enabled))
     )
+
+    window.clear_requested.connect(device.clear_logs)
+    window.clear_requested.connect(log_view.clear)
+    window.export_requested.connect(lambda: _export_logs(window, context))
+    window.import_requested.connect(lambda: _import_logs(window, context))
     toolbar.serial_settings_requested.connect(lambda: _open_serial_settings(window, toolbar))
     toolbar.error_occurred.connect(window.show_status)
     panel.profile_changed.connect(lambda profile_id: _switch_profile(window, context, service, profile_id))

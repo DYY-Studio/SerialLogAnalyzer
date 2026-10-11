@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QPushButton,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -37,16 +36,10 @@ class LogView(QWidget):
 
     信号:
         selection_changed(list): 选中变化，携带条目序号。
-        export_requested(): 用户请求导出日志。
-        import_requested(): 用户请求导入历史日志。
-        clear_requested(): 用户请求清空日志。
         autoscroll_toggled(bool): 用户切换了自动滚动开关。
     """
 
     selection_changed = Signal(list)
-    export_requested = Signal()
-    import_requested = Signal()
-    clear_requested = Signal()
     autoscroll_toggled = Signal(bool)
 
     def __init__(self, model: LogTableModel, parent: QWidget | None = None) -> None:
@@ -106,44 +99,43 @@ class LogView(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        bar = QHBoxLayout()
-        bar.setSpacing(8)
-        bar.addWidget(QLabel("级别:"))
+        filters = QVBoxLayout()
+        filters.setSpacing(4)
+
+        level_row = QHBoxLayout()
+        level_row.setSpacing(8)
+        level_row.addWidget(QLabel("级别:"))
         for level in _FILTERED_LEVELS:
             box = QCheckBox(LEVEL_LABELS[level])
             box.setChecked(True)
             box.toggled.connect(self._apply_filters)
             self._level_boxes[level] = box
-            bar.addWidget(box)
-        bar.addWidget(QLabel("模块:"))
-        self.module_filter = QLineEdit()
-        self.module_filter.setPlaceholderText("模块名")
-        self.module_filter.setMaximumWidth(120)
-        self.module_filter.textChanged.connect(self._apply_filters)
-        bar.addWidget(self.module_filter)
-        bar.addWidget(QLabel("关键字:"))
-        self.text_filter = QLineEdit()
-        self.text_filter.setPlaceholderText("消息关键字")
-        self.text_filter.setMaximumWidth(200)
-        self.text_filter.textChanged.connect(self._apply_filters)
-        bar.addWidget(self.text_filter)
-
+            level_row.addWidget(box)
+        level_row.addStretch()
         self.autoscroll_box = QCheckBox("自动滚动")
         self.autoscroll_box.setChecked(True)
         self.autoscroll_box.toggled.connect(self._on_autoscroll_toggled)
-        bar.addWidget(self.autoscroll_box)
-        bar.addStretch()
+        level_row.addWidget(self.autoscroll_box)
+        filters.addLayout(level_row)
 
-        export = QPushButton("导出")
-        export.clicked.connect(self.export_requested.emit)
-        bar.addWidget(export)
-        load = QPushButton("导入")
-        load.clicked.connect(self.import_requested.emit)
-        bar.addWidget(load)
-        clear = QPushButton("清空")
-        clear.clicked.connect(self.clear_requested.emit)
-        bar.addWidget(clear)
-        layout.addLayout(bar)
+        text_row = QHBoxLayout()
+        text_row.setSpacing(8)
+        text_row.addWidget(QLabel("模块:"))
+        self.module_filter = QLineEdit()
+        self.module_filter.setPlaceholderText("模块名")
+        self.module_filter.setMaximumWidth(160)
+        self.module_filter.textChanged.connect(self._apply_filters)
+        text_row.addWidget(self.module_filter)
+        text_row.addWidget(QLabel("关键字:"))
+        self.text_filter = QLineEdit()
+        self.text_filter.setPlaceholderText("消息关键字")
+        self.text_filter.setMaximumWidth(240)
+        self.text_filter.textChanged.connect(self._apply_filters)
+        text_row.addWidget(self.text_filter)
+        text_row.addStretch()
+        filters.addLayout(text_row)
+
+        layout.addLayout(filters)
 
         self.table_view = QTableView()
         self.table_view.setModel(self._filter)

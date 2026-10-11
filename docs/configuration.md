@@ -223,8 +223,8 @@ export MY_DEEPSEEK_API_KEY=sk-...
 ## 7. 日志导出与导入
 
 内存中的日志由 `LogPipeline` 的环形缓冲保存（无 Session 概念、不自动落盘）。留档通过
-`io/storage/log_file_store.py` 的 `LogFileStore` 手动导出；日志视图的「导出」按目标后缀
-选择格式，「导入」把文本文件逐行喂回既有解析流水线（走同一个 Preset）。
+`io/storage/log_file_store.py` 的 `LogFileStore` 手动导出；菜单「文件 → 导出日志…」按目标后缀
+选择格式，「导入日志…」把文本文件逐行喂回既有解析流水线（走同一个 Preset），「清空日志」清空表格。
 
 | 格式 | 后缀 | 内容 |
 |---|---|---|

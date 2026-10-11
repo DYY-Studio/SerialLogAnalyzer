@@ -353,12 +353,14 @@ AppError
 ## 16. UI 布局
 
 ```text
-Menu / Toolbar
-Port │ Baud │ Refresh │ Connect
-┌─────────────────────┬─────────────────┐
-│   Log Table         │  LLM Analysis   │
-│ Time Level Module   │  Result / Chat  │
-└─────────────────────┴─────────────────┘
+Menu（文件：导出/导入/清空日志；配置：设置/模型服务/凭据/切换日志 Preset）
+Toolbar: Port │ Baud（可编辑）│ Refresh │ Connect │ Disconnect │ 串口参数… │ Command + 回复
+┌─────────────────────────┬────────────────────┐
+│ 过滤: 级别 + 自动滚动    │  模型: [当前 Profile] │
+│      模块 + 关键字       │  上下文 / 目标 / 补充 │
+│  Log Table              │  Result / Chat      │
+│  Time Level Module      │  当前会话 N 轮       │
+└─────────────────────────┴────────────────────┘
 Status bar
 ```
 
