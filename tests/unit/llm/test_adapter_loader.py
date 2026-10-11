@@ -322,6 +322,8 @@ def test_streaming_defaults_for_optional_parts(make_loader):
         {"usage": {"input_tokens_pointers": []}},
         {"unknown_field": 1},
         {"request_body": ["stream"]},
+        {"content_events": [{"pointer": "/delta", "text_blocks": "yes"}]},
+        {"content_events": [{"pointer": "/delta", "text_blocks": 1}]},
     ],
 )
 def test_invalid_streaming_blocks_are_rejected(make_loader, patch):
@@ -370,3 +372,54 @@ def test_load_adapters_sorts_by_id(make_loader):
     adapters = load_adapters(loader)
 
     assert [item.adapter_id for item in adapters] == ["alpha", "zeta"]
+
+
+def test_adapter_parses_text_blocks_and_default_output_tokens(make_loader):
+    data = _base()
+    data.update(
+        {
+            "response_text_blocks_pointer": "/content",
+            "default_max_output_tokens": 4096,
+            "streaming": {
+                "transport": "sse",
+                "endpoint": "/candidates/0/content/parts",
+                "content_events": [{"pointer": "/candidates/0/content/parts", "text_blocks": True}],
+                "terminal": {"sentinel": "[DONE]"},
+            },
+        }
+    )
+
+    adapter = _load(make_loader, data)
+
+    assert adapter.response_text_blocks_pointer == "/content"
+    assert adapter.default_max_output_tokens == 4096
+    assert adapter.streaming is not None
+    assert adapter.streaming.content_events == (
+        StreamRule(pointer="/candidates/0/content/parts", when=None, text_blocks=True),
+    )
+
+
+def test_adapter_defaults_for_text_blocks_and_output_tokens(make_loader):
+    adapter = _load(make_loader, _base())
+
+    assert adapter.response_text_blocks_pointer is None
+    assert adapter.default_max_output_tokens == 0
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"default_max_output_tokens": -1},
+        {"default_max_output_tokens": 1.5},
+        {"default_max_output_tokens": True},
+        {"default_max_output_tokens": "4096"},
+        {"response_text_blocks_pointer": "content"},
+        {"response_text_blocks_pointer": 1},
+    ],
+)
+def test_invalid_output_token_and_text_blocks_fields_are_rejected(make_loader, patch):
+    data = _base()
+    data.update(patch)
+
+    with pytest.raises(ConfigError):
+        _load(make_loader, data)

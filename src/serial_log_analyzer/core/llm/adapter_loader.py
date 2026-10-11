@@ -41,6 +41,8 @@ _TOP_LEVEL_FIELDS = {
     "body",
     "response_content_pointer",
     "response_reasoning_content_pointers",
+    "response_text_blocks_pointer",
+    "default_max_output_tokens",
     "models",
     "usage",
     "streaming",
@@ -70,7 +72,7 @@ _STREAM_USAGE_FIELDS = (
     "output_tokens_pointers",
     "total_tokens_pointers",
 )
-_STREAM_RULE_FIELDS = {"pointer", "when"}
+_STREAM_RULE_FIELDS = {"pointer", "when", "text_blocks"}
 _TERMINAL_FIELDS = {"sentinel", "when"}
 _CONDITION_FIELDS = {"pointer", "equals", "exists"}
 _ERROR_EVENT_FIELDS = {"when", "message_pointer", "status_pointer"}
@@ -184,6 +186,18 @@ def _validate_adapter(data: dict[str, Any], source_path: str) -> JSONAdapter:
         "response_reasoning_content_pointers",
         source_path,
     )
+    text_blocks_pointer: str | None = None
+    if data.get("response_text_blocks_pointer") is not None:
+        text_blocks_pointer = _validate_pointer(
+            _require_str(data, "response_text_blocks_pointer", source_path),
+            "response_text_blocks_pointer",
+            source_path,
+        )
+    default_max_output_tokens = _non_negative_int(
+        data.get("default_max_output_tokens"),
+        "default_max_output_tokens",
+        source_path,
+    )
     models = _parse_models(data.get("models"), source_path)
     usage_pointers = _parse_usage(data.get("usage"), source_path)
 
@@ -207,6 +221,8 @@ def _validate_adapter(data: dict[str, Any], source_path: str) -> JSONAdapter:
         streaming=streaming,
         schema_version=_SCHEMA_VERSION,
         source_path=source_path,
+        response_text_blocks_pointer=text_blocks_pointer,
+        default_max_output_tokens=default_max_output_tokens,
     )
 
 
@@ -275,6 +291,15 @@ def _render_placeholders(template: str, values: dict[str, Any]) -> str:
         return str(values[name])
 
     return _PLACEHOLDER_RE.sub(replace, template)
+
+
+def _non_negative_int(value: Any, field: str, source_path: str = "") -> int:
+    """校验可选的非负整数字段；``None`` 返回 ``0``（布尔值非法）。"""
+    if value is None:
+        return 0
+    if type(value) is not int or value < 0:
+        raise ConfigError(f"{field} 必须是非负整数{_where(source_path)}")
+    return value
 
 
 def _require_str(data: dict[str, Any], field: str, source_path: str) -> str:
@@ -510,7 +535,10 @@ def _parse_stream_rules(value: Any, field: str) -> tuple[StreamRule, ...]:
         condition = None
         if item.get("when") is not None:
             condition = _parse_condition(item["when"], f"{name}.when")
-        rules.append(StreamRule(pointer=pointer, when=condition))
+        text_blocks = item.get("text_blocks", False)
+        if not isinstance(text_blocks, bool):
+            raise ConfigError(f"{name}.text_blocks 必须是布尔值")
+        rules.append(StreamRule(pointer=pointer, when=condition, text_blocks=text_blocks))
     return tuple(rules)
 
 
