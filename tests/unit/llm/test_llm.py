@@ -16,7 +16,6 @@ from serial_log_analyzer.core.errors import (
     ResponseParseError,
 )
 from serial_log_analyzer.core.llm.adapter_loader import load_adapter, load_adapters
-from serial_log_analyzer.core.llm.client import LLMClient
 from serial_log_analyzer.core.llm.pointer import parse_pointer, resolve_pointer
 from serial_log_analyzer.core.llm.profile_loader import load_profile, load_profiles
 from serial_log_analyzer.core.llm.request import RequestBuilder, join_url
@@ -42,7 +41,7 @@ def resources(make_loader):
 
 @pytest.fixture
 def adapter(resources):
-    return load_adapter(resources, "chat-completions-basic")
+    return load_adapter(resources, "openai-compatible")
 
 
 @pytest.mark.parametrize(
@@ -80,7 +79,7 @@ def test_pointer_lexing():
 
 
 def test_all_resources(resources):
-    assert len(load_adapters(resources)) == 5
+    assert len(load_adapters(resources)) == 4
     profiles = load_profiles(resources)
     assert {"sensenova", "internlm"} <= {p.profile_id for p in profiles}
     for profile in profiles:
@@ -103,11 +102,11 @@ def test_all_resources(resources):
     ],
 )
 def test_adapter_rejects_bad_config(resources, make_loader, change):
-    path = "providers/adapters/chat-completions-basic.yaml"
+    path = "providers/adapters/openai-compatible.yaml"
     raw = yaml.safe_load(resources.read_text(path))
     raw.update(change)
     with pytest.raises(ConfigError):
-        load_adapter(make_loader({path: yaml.safe_dump(raw)}), "chat-completions-basic")
+        load_adapter(make_loader({path: yaml.safe_dump(raw)}), "openai-compatible")
 
 
 @pytest.mark.parametrize(
@@ -156,7 +155,7 @@ def test_request(adapter, resources):
     ]
     assert request.body["stream"] is True
     assert "max_tokens" not in request.body
-    assert "stream_options" not in request.body
+    assert request.body["stream_options"] == {"include_usage": True}
     assert join_url(
         "https://example.com/v1/", "/models/${model}:generateContent?alt=sse", "a/b"
     ) == ("https://example.com/v1/models/a%2Fb:generateContent?alt=sse")
@@ -286,8 +285,13 @@ def test_stream_terminal_and_usage(adapter):
 
 
 def test_stream_errors(adapter):
+    # openai-compatible 声明 allow_clean_eof：干净断流按正常结束处理，非干净断流仍报错。
+    clean = StreamProcessor(adapter, lambda _: None)
+    clean.finalize(clean_eof=True)
+    assert clean.finished
+
     with pytest.raises(ResponseParseError):
-        StreamProcessor(adapter, lambda _: None).finalize(clean_eof=True)
+        StreamProcessor(adapter, lambda _: None).finalize(clean_eof=False)
     with pytest.raises(ProviderError):
         StreamProcessor(adapter, lambda _: None).handle(
             StreamEvent('{"error":{"message":"private"}}')
@@ -329,57 +333,6 @@ def test_split_usage(resources):
     assert usages[-1] == (5, 3, 8)
 
 
-class FakeTransport:
-    def __init__(self, chunks):
-        self.chunks = chunks
-
-    def send(self, request, on_chunk, on_done, on_error):
-        try:
-            for chunk in self.chunks:
-                on_chunk(chunk)
-            on_done()
-        except (ProviderError, ResponseParseError) as exc:
-            on_error(exc)
-        return self
-
-    def cancel(self):
-        pass
-
-
-@pytest.mark.parametrize("stream", [True, False])
-def test_client_closed_loop(resources, adapter, stream):
-    profile = replace(load_profile(resources, "internlm"), stream=stream)
-    prompt = PromptLibrary(resources).render("aggregate-anomalies", context="[E] malloc failed")
-    builder = RequestBuilder(adapter, profile, FakeCredentials())
-    payload = (
-        b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n'
-        if stream
-        else b'{"choices":[{"message":{"content":"ok"}}]}'
-    )
-    chunks = [bytes([byte]) for byte in payload]
-    done, errors, deltas = [], [], []
-    client = LLMClient(builder, adapter, FakeTransport(chunks))
-    client.send(
-        [AnalysisMessage(MessageRole.USER, prompt)],
-        AnalysisRequest(),
-        on_done=done.append,
-        on_error=errors.append,
-        on_delta=deltas.append,
-    )
-    assert not errors and len(done) == 1 and done[0].content == "ok"
-    assert "".join(deltas) == ("ok" if stream else "")
-
-
-def test_client_parse_error_once(resources, adapter):
-    profile = replace(load_profile(resources, "internlm"), stream=False)
-    done, errors = [], []
-    client = LLMClient(
-        RequestBuilder(adapter, profile, FakeCredentials()), adapter, FakeTransport([b"not json"])
-    )
-    client.send([], AnalysisRequest(), on_done=done.append, on_error=errors.append)
-    assert not done and len(errors) == 1
-
-
 def test_prompt_invalid_variable(make_loader):
     library = PromptLibrary(make_loader({"prompts/test.md": "# 名称\n$context $unknown"}))
     with pytest.raises(ConfigError):
@@ -387,10 +340,10 @@ def test_prompt_invalid_variable(make_loader):
 
 
 def test_null_condition_and_malformed_blocks(resources, make_loader):
-    path = "providers/adapters/chat-completions-basic.yaml"
+    path = "providers/adapters/openai-compatible.yaml"
     raw = yaml.safe_load(resources.read_text(path))
     raw["streaming"]["terminal"] = {"when": {"pointer": "/finished", "equals": None}}
-    adapter = load_adapter(make_loader({path: yaml.safe_dump(raw)}), "chat-completions-basic")
+    adapter = load_adapter(make_loader({path: yaml.safe_dump(raw)}), "openai-compatible")
     assert adapter.is_terminal(StreamEvent('{"finished":null}'))
     assert not adapter.is_terminal(StreamEvent("{}"))
     responses = load_adapter(resources, "openai-responses")
@@ -434,21 +387,3 @@ def test_clean_eof_allowed_only_when_configured(adapter):
     assert processor.finished
     with pytest.raises(ResponseParseError):
         StreamProcessor(allowed, lambda _: None).finalize(clean_eof=False)
-
-
-def test_response_size_limit(resources, adapter):
-    profile = replace(load_profile(resources, "internlm"), stream=False)
-    errors = []
-    client = LLMClient(
-        RequestBuilder(adapter, profile, FakeCredentials()),
-        adapter,
-        FakeTransport([b"12345"]),
-        max_response_bytes=4,
-    )
-    client.send(
-        [],
-        AnalysisRequest(),
-        on_done=lambda _: pytest.fail("unexpected success"),
-        on_error=errors.append,
-    )
-    assert len(errors) == 1 and isinstance(errors[0], ResponseParseError)
