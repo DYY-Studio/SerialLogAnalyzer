@@ -1,5 +1,6 @@
-"""串口高级设置对话框：波特率 / 数据位 / 停止位 / 校验位 / 流控。
+"""串口参数对话框：数据位 / 停止位 / 校验位 / 流控。
 
+波特率在工具栏下拉里设置（可编辑），此处不重复提供。
 取自 ``origin/feature/ui-improvement`` 的实现，改为使用 core 的枚举值，
 避免界面层再定义一套字符串映射。
 """
@@ -22,21 +23,8 @@ from PySide6.QtWidgets import (
 
 from serial_log_analyzer.core.models.device import FlowControl, Parity, StopBits
 
-__all__ = ["BAUDRATES", "SerialSettingsDialog"]
+__all__ = ["SerialSettingsDialog"]
 
-BAUDRATES = (
-    "1200",
-    "2400",
-    "4800",
-    "9600",
-    "19200",
-    "38400",
-    "57600",
-    "115200",
-    "230400",
-    "460800",
-    "921600",
-)
 _DATA_BITS = ("5", "6", "7", "8")
 _STOP_BITS: tuple[tuple[str, StopBits], ...] = (
     ("1", StopBits.ONE),
@@ -62,8 +50,8 @@ class SerialSettingsDialog(QDialog):
 
     参数:
         parent: 可选父窗口。
-        current: 当前参数（``baudrate`` / ``data_bits`` / ``parity`` / ``stop_bits`` /
-            ``flow_control``），缺省用 115200-8-N-1 无流控。
+        current: 当前参数（``data_bits`` / ``parity`` / ``stop_bits`` / ``flow_control``），
+            缺省用 8-N-1 无流控。
     """
 
     def __init__(self, parent: QWidget | None = None, current: dict | None = None) -> None:
@@ -74,10 +62,9 @@ class SerialSettingsDialog(QDialog):
         self._load(current or {})
 
     def values(self) -> dict[str, object]:
-        """返回对话框中的串口参数。"""
+        """返回对话框中的串口参数（不含波特率）。"""
 
         return {
-            "baudrate": int(self.baud_combo.currentText()),
             "data_bits": int(self.data_bits.currentText()),
             "parity": self.parity_combo.currentData(),
             "stop_bits": self.stop_bits.currentData(),
@@ -92,28 +79,22 @@ class SerialSettingsDialog(QDialog):
         group = QGroupBox("串口参数")
         grid = QGridLayout(group)
 
-        grid.addWidget(QLabel("波特率"), 0, 0)
-        self.baud_combo = QComboBox()
-        self.baud_combo.setEditable(True)
-        self.baud_combo.addItems(BAUDRATES)
-        grid.addWidget(self.baud_combo, 0, 1)
-
-        grid.addWidget(QLabel("数据位"), 0, 2)
+        grid.addWidget(QLabel("数据位"), 0, 0)
         self.data_bits = QComboBox()
         self.data_bits.addItems(_DATA_BITS)
-        grid.addWidget(self.data_bits, 0, 3)
+        grid.addWidget(self.data_bits, 0, 1)
 
-        grid.addWidget(QLabel("停止位"), 1, 0)
+        grid.addWidget(QLabel("停止位"), 0, 2)
         self.stop_bits = QComboBox()
         for label, value in _STOP_BITS:
             self.stop_bits.addItem(label, value)
-        grid.addWidget(self.stop_bits, 1, 1)
+        grid.addWidget(self.stop_bits, 0, 3)
 
-        grid.addWidget(QLabel("校验位"), 1, 2)
+        grid.addWidget(QLabel("校验位"), 1, 0)
         self.parity_combo = QComboBox()
         for label, value in _PARITY:
             self.parity_combo.addItem(label, value)
-        grid.addWidget(self.parity_combo, 1, 3)
+        grid.addWidget(self.parity_combo, 1, 1)
         layout.addWidget(group)
 
         flow_group = QGroupBox("流控")
@@ -134,7 +115,6 @@ class SerialSettingsDialog(QDialog):
         layout.addWidget(buttons)
 
     def _load(self, current: dict) -> None:
-        self.baud_combo.setCurrentText(str(current.get("baudrate", "115200")))
         self.data_bits.setCurrentText(str(current.get("data_bits", 8)))
         self._select(self.stop_bits, current.get("stop_bits", StopBits.ONE))
         self._select(self.parity_combo, current.get("parity", Parity.NONE))

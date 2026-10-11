@@ -186,9 +186,9 @@ def test_toolbar_serial_settings_feed_current_config(qtbot) -> None:
     toolbar.settings_btn.click()
     assert requested == [True]
 
+    toolbar.baud_combo.setCurrentText("9600")
     toolbar.apply_serial_settings(
         {
-            "baudrate": "9600",
             "data_bits": 7,
             "parity": Parity.EVEN,
             "stop_bits": StopBits.TWO,
@@ -201,3 +201,21 @@ def test_toolbar_serial_settings_feed_current_config(qtbot) -> None:
     assert config.parity is Parity.EVEN
     assert config.stop_bits is StopBits.TWO
     assert config.flow_control is FlowControl.HARDWARE
+
+
+def test_invalid_baudrate_reports_and_skips_connect(qtbot) -> None:
+    toolbar = SerialToolBar()
+    qtbot.addWidget(toolbar)
+    toolbar.port_combo.addItem("COM4", "COM4")
+    configs: list[object] = []
+    errors: list[str] = []
+    toolbar.connect_requested.connect(configs.append)
+    toolbar.error_occurred.connect(errors.append)
+
+    toolbar.baud_combo.setCurrentText("fast")
+    toolbar.connect_btn.click()
+    toolbar.baud_combo.setCurrentText("0")
+    toolbar.connect_btn.click()
+
+    assert configs == []
+    assert len(errors) == 2 and all("波特率" in message for message in errors)

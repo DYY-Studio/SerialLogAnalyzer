@@ -1,4 +1,4 @@
-"""串口工具栏：端口 / 波特率 / 刷新 / 连接 / 清空，以及命令通道（DESIGN §7）。
+"""串口工具栏：端口 / 波特率 / 刷新 / 连接 / 断开 / 清空 / 串口参数，以及命令通道（DESIGN §7）。
 
 只发射用户意图信号，不直接操作串口对象；实际动作由 :class:`DeviceController` 执行。
 """
@@ -37,7 +37,8 @@ class SerialToolBar(QToolBar):
         refresh_requested(): 请求刷新串口列表。
         clear_requested(): 请求清空日志。
         command_submitted(str): 请求发送一行命令。
-        serial_settings_requested(): 请求打开串口高级设置。
+        serial_settings_requested(): 请求打开串口参数对话框。
+        error_occurred(str): 本地参数非法（如波特率不是正整数），由状态栏展示。
     """
 
     connect_requested = Signal(object)
@@ -46,6 +47,7 @@ class SerialToolBar(QToolBar):
     clear_requested = Signal()
     command_submitted = Signal(str)
     serial_settings_requested = Signal()
+    error_occurred = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -83,32 +85,41 @@ class SerialToolBar(QToolBar):
         self.baud_combo.setEnabled(not connected)
 
     def current_config(self) -> SerialConfig:
-        """按当前界面选择构造 :class:`SerialConfig`。"""
+        """按当前界面选择构造 :class:`SerialConfig`。
+
+        异常:
+            ValueError: 未选串口，或波特率不是正整数（不静默回退默认值）。
+        """
 
         port = self.port_combo.currentData() or self.port_combo.currentText().strip()
         if not port:
             raise ValueError("请选择串口")
         return SerialConfig(
             port=str(port),
-            baudrate=int(self.baud_combo.currentText()),
+            baudrate=self._baudrate(),
             **self._advanced,
         )
 
-    def serial_values(self) -> dict[str, object]:
-        """返回当前串口参数（供高级设置对话框初始化）。"""
+    def _baudrate(self) -> int:
+        """读取波特率输入框；非正整数时抛 :class:`ValueError`。"""
 
-        return {"baudrate": self.baud_combo.currentText(), **self._advanced}
+        text = self.baud_combo.currentText().strip()
+        try:
+            value = int(text)
+        except ValueError as exc:
+            raise ValueError(f"波特率必须是整数：{text or '（空）'}") from exc
+        if value <= 0:
+            raise ValueError(f"波特率必须大于 0：{value}")
+        return value
+
+    def serial_values(self) -> dict[str, object]:
+        """返回当前串口参数（供串口参数对话框初始化；波特率由工具栏自己管）。"""
+
+        return dict(self._advanced)
 
     def apply_serial_settings(self, values: dict[str, object]) -> None:
-        """应用高级设置对话框的结果。"""
+        """应用串口参数对话框的结果（数据位 / 停止位 / 校验位 / 流控）。"""
 
-        baudrate = str(values.get("baudrate", "") or "")
-        if baudrate:
-            index = self.baud_combo.findText(baudrate)
-            if index >= 0:
-                self.baud_combo.setCurrentIndex(index)
-            else:
-                self.baud_combo.setEditText(baudrate)
         for key in ("data_bits", "parity", "stop_bits", "flow_control"):
             if key in values:
                 self._advanced[key] = values[key]
@@ -142,6 +153,7 @@ class SerialToolBar(QToolBar):
 
         self.addWidget(QLabel(" 波特率 "))
         self.baud_combo = QComboBox()
+        self.baud_combo.setEditable(True)
         self.baud_combo.addItems(_BAUDRATES)
         self.baud_combo.setCurrentText("115200")
         self.addWidget(self.baud_combo)
@@ -151,7 +163,7 @@ class SerialToolBar(QToolBar):
         self.addWidget(self.refresh_btn)
 
         self.connect_btn = QPushButton("连接")
-        self.connect_btn.clicked.connect(lambda: self.connect_requested.emit(self.current_config()))
+        self.connect_btn.clicked.connect(self._on_connect)
         self.addWidget(self.connect_btn)
 
         self.disconnect_btn = QPushButton("断开")
@@ -163,7 +175,7 @@ class SerialToolBar(QToolBar):
         self.clear_btn.clicked.connect(self.clear_requested.emit)
         self.addWidget(self.clear_btn)
 
-        self.settings_btn = QPushButton("串口设置…")
+        self.settings_btn = QPushButton("串口参数…")
         self.settings_btn.clicked.connect(self.serial_settings_requested.emit)
         self.addWidget(self.settings_btn)
 
@@ -180,6 +192,16 @@ class SerialToolBar(QToolBar):
 
         self.reply_label = QLabel("")
         self.addWidget(self.reply_label)
+
+    def _on_connect(self) -> None:
+        """连接前先在本地校验参数；非法时提示而不发起连接。"""
+
+        try:
+            config = self.current_config()
+        except ValueError as exc:
+            self.error_occurred.emit(str(exc))
+            return
+        self.connect_requested.emit(config)
 
     def _on_command(self) -> None:
         command = self.command_edit.text().strip()

@@ -211,6 +211,7 @@ def build_window(context: ApplicationContext) -> MainWindow:
         lambda enabled: settings.set(SETTINGS_KEYS.AUTOSCROLL, bool(enabled))
     )
     toolbar.serial_settings_requested.connect(lambda: _open_serial_settings(window, toolbar))
+    toolbar.error_occurred.connect(window.show_status)
     panel.profile_changed.connect(lambda profile_id: _switch_profile(window, context, service, profile_id))
 
     panel.analyze_requested.connect(lambda payload: analysis.start_analysis(*payload))
