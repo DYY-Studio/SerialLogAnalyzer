@@ -51,7 +51,7 @@ def test_finalizing_reuses_the_streaming_card(qtbot) -> None:
     view.render(finished)
 
     assert len(view._cards) == 2
-    assert view._cards[1].body.text() == "结论完整"
+    assert view._cards[1].body_text() == "结论完整"
     assert view._cards[1].detail.text() == "想好了"  # 思考在定稿后仍留在卡片上
 
 
@@ -61,12 +61,12 @@ def test_failed_turn_keeps_partial_output_before_next_turn(qtbot) -> None:
 
     view.render(_result(AnalysisState.STREAMING, [_USER], content="半截"))
     view.render(_result(AnalysisState.ERROR, [_USER], content="半截", error="网络失败"))
-    assert [card.body.text() for card in view._cards] == ["定位错误 · 看看这条", "半截"]
+    assert [card.body_text() for card in view._cards] == ["定位错误 · 看看这条", "半截"]
 
     second = AnalysisMessage(MessageRole.USER, "第二轮", "第二轮")
     view.render(_result(AnalysisState.STREAMING, [_USER, second], content="新的一轮"))
 
-    assert [card.body.text() for card in view._cards] == [
+    assert [card.body_text() for card in view._cards] == [
         "定位错误 · 看看这条",
         "半截",
         "第二轮",
@@ -106,7 +106,7 @@ def test_details_expanded_setting_applies_to_existing_and_new_cards(qtbot) -> No
     )
 
     live = view._cards[-1]
-    assert live.body.text() == "新一轮结论"
+    assert live.body_text() == "新一轮结论"
     assert live.detail.is_expanded() is True
 
 
@@ -132,6 +132,24 @@ def test_clear_empties_the_transcript(qtbot) -> None:
 
     assert view._cards == []
     assert view.plain_text() == ""
+
+
+def test_export_uses_markdown_source_not_rendered_html(qtbot) -> None:
+    """「复制结果」要给出 Markdown 原文，不能把渲染后的 HTML 抄出去。"""
+
+    view = ChatView()
+    qtbot.addWidget(view)
+    answer = "**结论**\n\n```c\nint a;\n```"
+    view.render(
+        _result(
+            AnalysisState.DONE,
+            [_USER, AnalysisMessage(MessageRole.ASSISTANT, answer)],
+            content=answer,
+        )
+    )
+
+    assert view.plain_text().endswith(answer)  # 原文原样导出
+    assert view._cards[-1].body.text() != answer  # 界面上显示的是渲染后的富文本
 
 
 def _show(view: ChatView, qtbot) -> None:
@@ -198,3 +216,4 @@ def test_user_scroll_up_stops_following_until_back_at_bottom(qtbot) -> None:
     view.render(_result(AnalysisState.STREAMING, [_USER, second], content=_lines(30)))
     _settle(qtbot)
     assert bar.value() == bar.maximum()
+

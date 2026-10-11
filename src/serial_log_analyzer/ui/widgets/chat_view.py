@@ -3,6 +3,9 @@
 只做展示，数据全部来自 :class:`AnalysisResult` 快照：已定稿的轮次来自 ``conversation``，
 尚未定稿的一轮用流式 ``content`` / ``reasoning`` 更新最后一张卡片。
 思考不进请求，但留在卡片上，所以历史轮次的思考在界面里仍然看得到。
+
+文本按 Markdown 渲染（:class:`MarkdownRenderer`），但卡片上同时留着 Markdown 原文，
+「复制结果」导出的是原文而不是渲染后的 HTML。
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from serial_log_analyzer.core.models.analysis import (
     AnalysisState,
     MessageRole,
 )
+from serial_log_analyzer.ui.markdown import MarkdownRenderer
 
 __all__ = ["ChatView"]
 
@@ -34,11 +38,20 @@ _BOTTOM_SLACK = 4  # 距底部多少像素以内算「贴底」
 
 
 class _CollapsibleBlock(QWidget):
-    """可折叠的一段正文：标题按钮 + 自动换行、可复制的只读文本。"""
+    """可折叠的一段正文：标题按钮 + 自动换行、可复制的 Markdown 文本。"""
 
-    def __init__(self, title: str, *, expanded: bool, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        title: str,
+        *,
+        renderer: MarkdownRenderer,
+        expanded: bool,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self._title = title
+        self._renderer = renderer
+        self._text = ""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
@@ -53,6 +66,7 @@ class _CollapsibleBlock(QWidget):
 
         self._body = QLabel()
         self._body.setWordWrap(True)
+        self._body.setTextFormat(Qt.TextFormat.RichText)
         self._body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self._body)
 
@@ -66,14 +80,15 @@ class _CollapsibleBlock(QWidget):
         return self._title
 
     def text(self) -> str:
-        """折叠块正文（与是否展开无关）。"""
+        """折叠块正文的 Markdown 原文（与是否展开无关）。"""
 
-        return self._body.text()
+        return self._text
 
     def set_text(self, text: str) -> None:
         """更新正文；空文本时整块隐藏。"""
 
-        self._body.setText(text)
+        self._text = text
+        self._body.setText(self._renderer.html(text))
         self.setVisible(bool(text))
 
     def set_expanded(self, expanded: bool) -> None:
@@ -96,9 +111,18 @@ class _CollapsibleBlock(QWidget):
 class _TurnCard(QFrame):
     """一轮对话：角色标题 + 可折叠的细节（思考 / 参考内容）+ 正文。"""
 
-    def __init__(self, role: MessageRole, *, expanded: bool, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        role: MessageRole,
+        *,
+        renderer: MarkdownRenderer,
+        expanded: bool,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.role = role
+        self._renderer = renderer
+        self._body_text = ""
         detail_title = _THINKING_TITLE if role is MessageRole.ASSISTANT else _CONTEXT_TITLE
         self.setFrameShape(QFrame.Shape.StyledPanel)
         layout = QVBoxLayout(self)
@@ -111,11 +135,12 @@ class _TurnCard(QFrame):
         self.title.setFont(font)
         layout.addWidget(self.title)
 
-        self.detail = _CollapsibleBlock(detail_title, expanded=expanded)
+        self.detail = _CollapsibleBlock(detail_title, renderer=renderer, expanded=expanded)
         layout.addWidget(self.detail)
 
         self.body = QLabel()
         self.body.setWordWrap(True)
+        self.body.setTextFormat(Qt.TextFormat.RichText)
         self.body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.body)
 
@@ -124,10 +149,16 @@ class _TurnCard(QFrame):
 
         self.detail.set_text(text)
 
+    def body_text(self) -> str:
+        """正文的 Markdown 原文（界面里显示的是渲染结果）。"""
+
+        return self._body_text
+
     def set_body(self, text: str) -> None:
         """更新正文（用户轮为摘要，LLM 轮为回答）。"""
 
-        self.body.setText(text)
+        self._body_text = text
+        self.body.setText(self._renderer.html(text))
 
     def set_details_expanded(self, expanded: bool) -> None:
         self.detail.set_expanded(expanded)
@@ -143,6 +174,7 @@ class ChatView(QScrollArea):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._expanded = False
+        self._md = MarkdownRenderer(self.palette(), self.font().pointSizeF())
         self._cards: list[_TurnCard] = []
         self._message_cards: list[_TurnCard] = []
         self._live: _TurnCard | None = None
@@ -227,14 +259,14 @@ class ChatView(QScrollArea):
             self.verticalScrollBar().setValue(maximum)
 
     def plain_text(self) -> str:
-        """把整段转录导出为纯文本（忽略折叠状态），供「复制结果」使用。"""
+        """把整段转录导出为 Markdown 原文（忽略折叠状态），供「复制结果」使用。"""
 
         blocks: list[str] = []
         for card in self._cards:
             parts = [f"【{card.title.text()}】"]
             if card.detail.text():
                 parts.append(f"【{card.detail.title}】{card.detail.text()}")
-            parts.append(card.body.text())
+            parts.append(card.body_text())
             blocks.append("\n".join(parts))
         return "\n\n".join(blocks)
 
@@ -255,7 +287,7 @@ class ChatView(QScrollArea):
     def _append_card(self, message: AnalysisMessage) -> _TurnCard:
         """按消息落一张卡片，插在末尾（卡片区尾部有 stretch）。"""
 
-        card = _TurnCard(message.role, expanded=self._expanded)
+        card = _TurnCard(message.role, renderer=self._md, expanded=self._expanded)
         if message.role is MessageRole.USER:
             card.set_body(message.summary or message.content)
             if message.content.strip() != (message.summary or "").strip():
