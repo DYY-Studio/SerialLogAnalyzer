@@ -275,8 +275,12 @@ uv run python -m serial_log_analyzer.diagnostics --log-file app.log --no-log-tai
 工具自身的日志与应用无关的设备日志**严格分离**：
 
 - logger 名 `serial_log_analyzer`，通过 `get_logger(name)` 获取子 logger；
-- 默认输出到 stderr，行格式 `时间 级别 logger: 消息`；
-- 文件日志（可选）为 1 MB × 3 轮转，UTF-8，默认路径 `<用户配置目录>/logs/serial-log-analyzer.log`；
+- 默认同时输出到 stderr 与文件：`<用户配置目录>/logs/serial-log-analyzer.log`（1 MB × 3 轮转，UTF-8），
+  行格式 `时间 级别 logger: 消息`；`SLA_LOG_FILE` 可覆盖路径；
+- 界面「视图 → 应用日志」面板显示该文件的尾部（可见时每秒刷新，带「刷新」按钮与可复制的路径）；
+- `SLA_LOG_LEVEL` / 设置里的「应用日志级别」决定写哪些级别的记录；启动时会写一条 INFO
+  （preset / profile / 日志路径），其余模块目前还没有日志点，设 `DEBUG` 暂不会多出内容；
+- `configure_logging(log_file=None)` 可关掉文件日志（诊断命令就是这么用的，避免只读命令写文件）；
 - `configure_logging()` 可重复调用（幂等），不会重复叠加 handler。
 
 ## 10. 环境变量汇总
@@ -286,7 +290,7 @@ uv run python -m serial_log_analyzer.diagnostics --log-file app.log --no-log-tai
 | `SLA_CONFIG_HOME` | 用户配置根目录（资源覆盖、Profile 保存、应用日志） | `%APPDATA%\SerialLogAnalyzer` / `~/.config/SerialLogAnalyzer` |
 | `SLA_EXPORT_DIR` | 日志导出默认目录 | `<仓库根>/exports` / `~/SerialLogAnalyzer/exports` |
 | `SLA_LOG_LEVEL` | 应用日志级别 `DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL` | `INFO`（非法值退回 `INFO` 并告警） |
-| `SLA_LOG_FILE` | 应用日志文件路径，设置后启用文件日志 | 空（仅 stderr） |
+| `SLA_LOG_FILE` | 应用日志文件路径，覆盖默认的 `<用户配置目录>/logs/serial-log-analyzer.log` | 默认路径（启用文件日志） |
 | `SLA_HW_PORT` | 硬件联调门控测试使用的串口；未设置则跳过 | 空 |
 | `<profile 的 env_var>` | 该 Profile 的 API Key | 空（仅当 `credential.kind=environment` 时使用；不跨来源回落） |
 

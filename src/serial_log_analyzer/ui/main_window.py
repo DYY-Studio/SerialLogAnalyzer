@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
+from serial_log_analyzer.ui.widgets.app_log_panel import AppLogPanel
 from serial_log_analyzer.ui.widgets.command_panel import CommandPanel
 from serial_log_analyzer.ui.widgets.log_view import LogView
 from serial_log_analyzer.ui.widgets.serial_toolbar import SerialToolBar
@@ -34,11 +35,12 @@ class MainWindow(QMainWindow):
         analysis_panel: 右侧分析面板。
         serial_toolbar: 顶部串口工具栏。
         command_panel: 底部命令面板（输入 + 回复历史）。
+        app_log_panel: 底部应用日志面板（与命令面板同区，切换标签页）。
         parent: 可选父窗口。
         on_close: 关闭前的清理回调（由组合根注入，例如断开设备、取消请求）。
 
-    布局：中央是日志表格，「LLM 分析」停靠在右侧、「命令」停靠在底部，两者都可拖动 /
-    浮动 / 关闭，「视图」菜单控制显隐。
+    布局：中央是日志表格，「LLM 分析」停靠在右侧、「命令」与「应用日志」停靠在底部
+    （同一区域的两个标签页），都可拖动 / 浮动 / 关闭，「视图」菜单控制显隐。
 
     信号（由组合根连接，窗口不自己构造对话框）:
         export_requested(): 请求导出内存日志。
@@ -64,6 +66,7 @@ class MainWindow(QMainWindow):
         analysis_panel: AnalysisPanel,
         serial_toolbar: SerialToolBar,
         command_panel: CommandPanel,
+        app_log_panel: AppLogPanel,
         parent: QMainWindow | None = None,
         *,
         on_close: Callable[[], None] | None = None,
@@ -74,6 +77,7 @@ class MainWindow(QMainWindow):
         self.analysis_panel = analysis_panel
         self.serial_toolbar = serial_toolbar
         self.command_panel = command_panel
+        self.app_log_panel = app_log_panel
         self.setWindowTitle("SerialLogAnalyzer - 串口日志分析工具")
         self.resize(1200, 800)
         self.addToolBar(serial_toolbar)
@@ -83,6 +87,12 @@ class MainWindow(QMainWindow):
         self.command_dock = self._make_dock(
             "command-dock", "命令", command_panel, Qt.DockWidgetArea.BottomDockWidgetArea
         )
+        self.app_log_dock = self._make_dock(
+            "app-log-dock", "应用日志", app_log_panel, Qt.DockWidgetArea.BottomDockWidgetArea
+        )
+        # 与应用日志共用底部区域，用标签页切换，避免再占一块高度。
+        self.tabifyDockWidget(self.command_dock, self.app_log_dock)
+        self.command_dock.raise_()
         self._apply_dock_corners()
         self._build_menu()
         self.setCentralWidget(log_view)
@@ -153,6 +163,7 @@ class MainWindow(QMainWindow):
         view_menu = self.menuBar().addMenu("视图")
         view_menu.addAction(self.analysis_dock.toggleViewAction())
         view_menu.addAction(self.command_dock.toggleViewAction())
+        view_menu.addAction(self.app_log_dock.toggleViewAction())
 
     def closeEvent(self, event: object) -> None:
         """窗口关闭：执行清理回调。"""

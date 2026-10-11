@@ -21,6 +21,7 @@ from serial_log_analyzer.core.models.logs import LogEntry, LogLevel
 from serial_log_analyzer.ui.main_window import MainWindow
 from serial_log_analyzer.ui.models.log_table_model import LogTableModel
 from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
+from serial_log_analyzer.ui.widgets.app_log_panel import AppLogPanel
 from serial_log_analyzer.ui.widgets.command_panel import CommandPanel
 from serial_log_analyzer.ui.widgets.log_view import LogView
 from serial_log_analyzer.ui.widgets.serial_toolbar import SerialToolBar
@@ -40,7 +41,11 @@ def _entry(sequence: int, level: LogLevel = LogLevel.INFO, module: str = "wifi",
 
 def _build_window(qtbot) -> MainWindow:
     window = MainWindow(
-        LogView(LogTableModel()), AnalysisPanel(), SerialToolBar(), CommandPanel()
+        LogView(LogTableModel()),
+        AnalysisPanel(),
+        SerialToolBar(),
+        CommandPanel(),
+        AppLogPanel(lambda: [], ""),
     )
     qtbot.addWidget(window)
     return window
@@ -199,10 +204,13 @@ def test_menu_actions_emit_intent_signals(qtbot) -> None:
         "切换日志 Preset…",
     ]
     # 「视图」里必须能开关停靠面板，否则关掉就找不回来
-    assert [action.text() for action in menus[2].menu().actions()] == ["LLM 分析", "命令"]
+    assert [action.text() for action in menus[2].menu().actions()] == ["LLM 分析", "命令", "应用日志"]
     assert window.analysis_dock.widget() is window.analysis_panel
     assert window.command_dock.widget() is window.command_panel
-    for dock in (window.analysis_dock, window.command_dock):
+    assert window.app_log_dock.widget() is window.app_log_panel
+    # 命令与应用日志共用底部区域，按标签页切换
+    assert window.tabifiedDockWidgets(window.command_dock) == [window.app_log_dock]
+    for dock in (window.analysis_dock, window.command_dock, window.app_log_dock):
         assert dock.features() & QDockWidget.DockWidgetFeature.DockWidgetFloatable
         assert dock.features() & QDockWidget.DockWidgetFeature.DockWidgetMovable
 

@@ -29,6 +29,7 @@ __all__ = [
     "current_log_file",
     "get_logger",
     "log_file_path",
+    "read_tail",
 ]
 
 LOGGER_NAME = "serial_log_analyzer"
@@ -121,6 +122,27 @@ def get_logger(name: str) -> logging.Logger:
     if name == LOGGER_NAME or name.startswith(f"{LOGGER_NAME}."):
         return logging.getLogger(name)
     return logging.getLogger(f"{LOGGER_NAME}.{name}")
+
+
+def read_tail(line_count: int = 200) -> list[str]:
+    """读取当前应用日志文件的末尾若干行。
+
+    参数:
+        line_count: 最多返回的行数。
+
+    返回:
+        末尾若干行；未启用文件日志、文件不存在或不可读时返回空列表。
+        日志文件按 1 MB × 3 轮转（最多几 MB），因此直接整读再取尾部。
+    """
+
+    path = current_log_file()
+    if path is None or line_count <= 0:
+        return []
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return text.splitlines()[-line_count:]
 
 
 def current_log_file() -> Path | None:

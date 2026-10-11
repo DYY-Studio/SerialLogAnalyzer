@@ -36,7 +36,13 @@ from serial_log_analyzer.core.prompts.loader import PromptLibrary
 from serial_log_analyzer.core.services.analysis import AnalysisContextBuilder, AnalysisService
 from serial_log_analyzer.core.services.credential_resolver import CredentialResolver
 from serial_log_analyzer.core.services.device_session import DeviceSession
-from serial_log_analyzer.diagnostics.app_logging import configure_logging
+from serial_log_analyzer.diagnostics.app_logging import (
+    configure_logging,
+    current_log_file,
+    get_logger,
+    log_file_path,
+    read_tail,
+)
 from serial_log_analyzer.io.credentials.keyring_store import KeyringStoreAdapter
 from serial_log_analyzer.io.environment import DotEnvEnvironmentReader
 from serial_log_analyzer.io.llm.qt_http_transport import QtHttpTransport
@@ -50,6 +56,7 @@ from serial_log_analyzer.ui.controllers.main_controller import MainController
 from serial_log_analyzer.ui.main_window import MainWindow
 from serial_log_analyzer.ui.models.log_table_model import LogTableModel
 from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
+from serial_log_analyzer.ui.widgets.app_log_panel import AppLogPanel
 from serial_log_analyzer.ui.widgets.command_panel import CommandPanel
 from serial_log_analyzer.ui.widgets.log_view import LogView
 from serial_log_analyzer.ui.widgets.serial_toolbar import SerialToolBar
@@ -122,7 +129,9 @@ def build_application(argv: list[str] | None = None) -> ApplicationContext:
     app.setApplicationVersion(_APP_VERSION)
 
     settings = QtSettingsStore()
-    configure_logging(level=str(settings.get(SETTINGS_KEYS.LOG_LEVEL, "INFO")))
+    configure_logging(
+        level=str(settings.get(SETTINGS_KEYS.LOG_LEVEL, "INFO")), log_file=log_file_path()
+    )
 
     root = repo_root()
     resources = CompositeResourceLoader.from_environment(root)
@@ -138,7 +147,7 @@ def build_application(argv: list[str] | None = None) -> ApplicationContext:
 
     profile = _current_profile(resources, settings)
     manager = QNetworkAccessManager()
-    return ApplicationContext(
+    context = ApplicationContext(
         app=app,
         resources=resources,
         settings=settings,
@@ -155,6 +164,14 @@ def build_application(argv: list[str] | None = None) -> ApplicationContext:
         prompts=PromptLibrary(resources),
         context_builder=AnalysisContextBuilder(pipeline),
     )
+    # 让「视图 → 应用日志」一开始就有内容，也便于 issue 报告看清本次运行的配置。
+    get_logger("bootstrap").info(
+        "应用启动：preset=%s profile=%s 日志=%s",
+        preset.preset_id,
+        profile.profile_id,
+        current_log_file(),
+    )
+    return context
 
 
 def build_window(context: ApplicationContext) -> MainWindow:
@@ -173,6 +190,10 @@ def build_window(context: ApplicationContext) -> MainWindow:
     panel.set_goals(context.prompts.goals())
     toolbar = SerialToolBar()
     command_panel = CommandPanel()
+    app_log_panel = AppLogPanel(
+        read_lines=lambda: read_tail(200),
+        log_path=str(current_log_file() or log_file_path()),
+    )
 
     device = DeviceController(context.session)
     service = _analysis_service(context)
@@ -184,6 +205,7 @@ def build_window(context: ApplicationContext) -> MainWindow:
         panel,
         toolbar,
         command_panel,
+        app_log_panel,
         on_close=lambda: _shutdown(main, window, settings),
     )
     panel.set_profiles(load_profiles(context.resources), context.profile.profile_id)
@@ -281,7 +303,9 @@ def _apply_settings(
     dropped = context.pipeline.enforce_capacity()
     if dropped:
         window.log_view.append_update(PipelineUpdate(dropped_sequences=dropped))
-    configure_logging(level=str(settings.get(SETTINGS_KEYS.LOG_LEVEL, "INFO")))
+    configure_logging(
+        level=str(settings.get(SETTINGS_KEYS.LOG_LEVEL, "INFO")), log_file=log_file_path()
+    )
 
 
 def _log_store(context: ApplicationContext) -> Any:
