@@ -61,6 +61,40 @@ class RequestBuilder:
         self._profile = profile
         self._credentials = credentials
 
+    def build_model_list(self) -> HttpRequest:
+        """组装模型列表请求（``GET``，非流式）。
+
+        返回:
+            :class:`HttpRequest`；URL 由 ``base_url`` 与 Adapter 的 ``models.endpoint`` 拼接，
+            请求头复用 Adapter 模板（含凭据解析）。
+
+        异常:
+            ConfigError: Adapter 未声明 ``models`` 段。
+            CredentialError: 未取到密钥。
+        """
+
+        spec = self._adapter.model_discovery
+        if spec is None:
+            raise ConfigError(
+                f"Adapter {self._adapter.adapter_id} 未声明 models 段，无法拉取模型列表"
+            )
+        profile = self._profile
+        headers = self._adapter.render_headers(
+            api_key=self._credentials.resolve(profile.credential),
+            model=profile.model,
+            extra_headers=profile.extra_headers,
+        )
+        # GET 无请求体，去掉模板里的 Content-Type。
+        headers = {name: value for name, value in headers.items() if name.lower() != "content-type"}
+        return HttpRequest(
+            "GET",
+            join_url(profile.base_url, str(spec["endpoint"]), profile.model),
+            headers,
+            {},
+            profile.request_timeout_seconds,
+            False,
+        )
+
     def build(
         self,
         messages: list[AnalysisMessage],
