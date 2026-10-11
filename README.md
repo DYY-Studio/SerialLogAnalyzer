@@ -15,7 +15,7 @@ PC 端**通用串口日志分析工具**：从任意串口设备实时接收并�
 - 配置与资源：用户配置目录覆盖内置 YAML Preset / Adapter / Profile 与 Prompt 模板
 - 日志留档：导出为文本 / CSV / JSONL，也可导入历史日志回看
 - 诊断报告：一条命令列出资源来源、已加载配置、配置错误与日志末尾（`python -m serial_log_analyzer.diagnostics`）
-- PC → 板命令通道：`PING` / `VERSION` / `HELP` / `TEST`
+- PC → 板命令通道：底部「命令」面板发送 `PING` / `VERSION` / `HELP` / `TEST`，回复按顺序累计
 
 ## 快速开始
 

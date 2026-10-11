@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from PySide6.QtWidgets import QDockWidget
+
+from serial_log_analyzer.core.device.command import CommandReply
 from serial_log_analyzer.core.logs.pipeline import PipelineUpdate
 from serial_log_analyzer.core.models.analysis import (
     AnalysisMessage,
@@ -17,6 +20,7 @@ from serial_log_analyzer.core.models.logs import LogEntry, LogLevel
 from serial_log_analyzer.ui.main_window import MainWindow
 from serial_log_analyzer.ui.models.log_table_model import LogTableModel
 from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
+from serial_log_analyzer.ui.widgets.command_panel import CommandPanel
 from serial_log_analyzer.ui.widgets.log_view import LogView
 from serial_log_analyzer.ui.widgets.serial_toolbar import SerialToolBar
 
@@ -34,7 +38,9 @@ def _entry(sequence: int, level: LogLevel = LogLevel.INFO, module: str = "wifi",
 
 
 def _build_window(qtbot) -> MainWindow:
-    window = MainWindow(LogView(LogTableModel()), AnalysisPanel(), SerialToolBar())
+    window = MainWindow(
+        LogView(LogTableModel()), AnalysisPanel(), SerialToolBar(), CommandPanel()
+    )
     qtbot.addWidget(window)
     return window
 
@@ -162,7 +168,7 @@ def test_menu_actions_emit_intent_signals(qtbot) -> None:
     window.credential_requested.connect(lambda: seen.append("credential"))
 
     menus = window.menuBar().actions()
-    assert [menu.text() for menu in menus] == ["文件", "配置"]
+    assert [menu.text() for menu in menus] == ["文件", "配置", "视图"]
     file_actions = [item for item in menus[0].menu().actions() if not item.isSeparator()]
     config_actions = menus[1].menu().actions()
     assert [action.text() for action in file_actions] == ["导出日志…", "导入日志…", "清空日志"]
@@ -172,6 +178,12 @@ def test_menu_actions_emit_intent_signals(qtbot) -> None:
         "凭据…",
         "切换日志 Preset…",
     ]
+    # 「视图」里必须能开关命令面板，否则关掉就找不回来
+    assert [action.text() for action in menus[2].menu().actions()] == ["命令"]
+    assert window.command_dock.widget() is window.command_panel
+    features = window.command_dock.features()
+    assert features & QDockWidget.DockWidgetFeature.DockWidgetFloatable
+    assert features & QDockWidget.DockWidgetFeature.DockWidgetMovable
 
     for action in (*file_actions, *config_actions[:3]):
         action.trigger()
@@ -179,23 +191,41 @@ def test_menu_actions_emit_intent_signals(qtbot) -> None:
     assert seen == ["export", "import", "clear", "settings", "provider", "credential"]
 
 
-def test_toolbar_emits_config_and_command(qtbot) -> None:
+def test_toolbar_emits_config(qtbot) -> None:
     toolbar = SerialToolBar()
     qtbot.addWidget(toolbar)
     configs: list[object] = []
-    commands: list[str] = []
     toolbar.connect_requested.connect(configs.append)
-    toolbar.command_submitted.connect(commands.append)
 
     toolbar.set_ports([])
     toolbar.port_combo.addItem("COM3 - USB Serial", "COM3")
     toolbar.baud_combo.setCurrentText("115200")
     toolbar.connect_btn.click()
-    toolbar.command_edit.setText("PING")
-    toolbar.send_btn.click()
 
     assert configs[0].port == "COM3" and configs[0].baudrate == 115200
-    assert commands == ["PING"]
+
+
+def test_command_panel_echoes_command_and_appends_reply(qtbot) -> None:
+    panel = CommandPanel()
+    qtbot.addWidget(panel)
+    sent: list[str] = []
+    panel.command_submitted.connect(sent.append)
+
+    panel.command_edit.setText("PING")
+    panel.send_btn.click()
+    assert sent == ["PING"]
+    assert panel.command_edit.text() == ""
+
+    panel.append_reply(CommandReply(text="PONG", ok=True))
+    panel.append_reply(CommandReply(text="rx overflow", ok=False, code=7))
+    assert panel.reply_view.toPlainText().splitlines() == [
+        "→ PING",
+        "← PONG",
+        "← 失败 [7] rx overflow",
+    ]
+
+    panel.send_btn.click()  # 空命令不发
+    assert sent == ["PING"]
 
 
 def test_panel_profile_combo_emits_change(qtbot) -> None:

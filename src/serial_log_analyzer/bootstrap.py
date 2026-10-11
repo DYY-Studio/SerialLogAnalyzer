@@ -50,6 +50,7 @@ from serial_log_analyzer.ui.controllers.main_controller import MainController
 from serial_log_analyzer.ui.main_window import MainWindow
 from serial_log_analyzer.ui.models.log_table_model import LogTableModel
 from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
+from serial_log_analyzer.ui.widgets.command_panel import CommandPanel
 from serial_log_analyzer.ui.widgets.log_view import LogView
 from serial_log_analyzer.ui.widgets.serial_toolbar import SerialToolBar
 
@@ -171,6 +172,7 @@ def build_window(context: ApplicationContext) -> MainWindow:
     panel = AnalysisPanel()
     panel.set_goals(context.prompts.goals())
     toolbar = SerialToolBar()
+    command_panel = CommandPanel()
 
     device = DeviceController(context.session)
     service = AnalysisService(
@@ -182,13 +184,19 @@ def build_window(context: ApplicationContext) -> MainWindow:
     )
     analysis = AnalysisController(service, context.context_builder)
     main = MainController(device, analysis, settings)
-    window = MainWindow(log_view, panel, toolbar, on_close=lambda: _shutdown(main, window, settings))
+    window = MainWindow(
+        log_view,
+        panel,
+        toolbar,
+        command_panel,
+        on_close=lambda: _shutdown(main, window, settings),
+    )
     panel.set_profiles(load_profiles(context.resources), context.profile.profile_id)
 
     toolbar.refresh_requested.connect(device.refresh_ports)
     toolbar.connect_requested.connect(device.connect)
     toolbar.disconnect_requested.connect(device.disconnect)
-    toolbar.command_submitted.connect(device.send_command)
+    command_panel.command_submitted.connect(device.send_command)
     device.ports_refreshed.connect(toolbar.set_ports)
 
     def _on_connection(state: object, message: str) -> None:
@@ -198,7 +206,7 @@ def build_window(context: ApplicationContext) -> MainWindow:
     device.connection_changed.connect(_on_connection)
     device.log_update.connect(log_view.append_update)
     device.error_occurred.connect(window.show_status)
-    device.command_reply.connect(lambda reply: toolbar.set_command_reply(reply.text))
+    device.command_reply.connect(command_panel.append_reply)
 
     log_view.selection_changed.connect(analysis.selected_sequences)
     log_view.autoscroll_toggled.connect(

@@ -11,6 +11,7 @@ from collections.abc import Callable
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QDockWidget,
     QMainWindow,
     QMenu,
     QSplitter,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
+from serial_log_analyzer.ui.widgets.command_panel import CommandPanel
 from serial_log_analyzer.ui.widgets.log_view import LogView
 from serial_log_analyzer.ui.widgets.serial_toolbar import SerialToolBar
 
@@ -33,6 +35,7 @@ class MainWindow(QMainWindow):
         log_view: 中部日志视图。
         analysis_panel: 右侧分析面板。
         serial_toolbar: 顶部串口工具栏。
+        command_panel: 底部命令面板（输入 + 回复历史）。
         parent: 可选父窗口。
         on_close: 关闭前的清理回调（由组合根注入，例如断开设备、取消请求）。
 
@@ -59,6 +62,7 @@ class MainWindow(QMainWindow):
         log_view: LogView,
         analysis_panel: AnalysisPanel,
         serial_toolbar: SerialToolBar,
+        command_panel: CommandPanel,
         parent: QMainWindow | None = None,
         *,
         on_close: Callable[[], None] | None = None,
@@ -68,9 +72,13 @@ class MainWindow(QMainWindow):
         self.log_view = log_view
         self.analysis_panel = analysis_panel
         self.serial_toolbar = serial_toolbar
+        self.command_panel = command_panel
         self.setWindowTitle("SerialLogAnalyzer - 串口日志分析工具")
         self.resize(1200, 800)
         self.addToolBar(serial_toolbar)
+        self.command_dock = self._make_dock(
+            "command-dock", "命令", command_panel, Qt.DockWidgetArea.BottomDockWidgetArea
+        )
         self._build_menu()
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -95,10 +103,27 @@ class MainWindow(QMainWindow):
 
         self.status_bar.showMessage(message)
 
+    def _make_dock(
+        self, name: str, title: str, widget: QWidget, area: Qt.DockWidgetArea
+    ) -> QDockWidget:
+        """把组件包成可拖动 / 可浮动 / 可关闭的停靠面板。"""
+
+        dock = QDockWidget(title, self)
+        dock.setObjectName(name)
+        dock.setWidget(widget)
+        dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            | QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        self.addDockWidget(area, dock)
+        return dock
+
     def _build_menu(self) -> None:
         """构建菜单栏：只发射意图信号，动作由组合根接。
 
-        「文件」管日志的导入 / 导出 / 清空，「配置」管设置、Profile 与日志 Preset。
+        「文件」管日志的导入 / 导出 / 清空，「配置」管设置、Profile 与日志 Preset，
+        「视图」管停靠面板的显隐（面板被关掉后必须能从这里找回来）。
         """
 
         def _add(menu: QMenu, title: str, signal: Signal) -> None:
@@ -117,6 +142,9 @@ class MainWindow(QMainWindow):
         _add(config_menu, "模型服务…", self.provider_requested)
         _add(config_menu, "凭据…", self.credential_requested)
         _add(config_menu, "切换日志 Preset…", self.preset_requested)
+
+        view_menu = self.menuBar().addMenu("视图")
+        view_menu.addAction(self.command_dock.toggleViewAction())
 
     def closeEvent(self, event: object) -> None:
         """窗口关闭：执行清理回调。"""

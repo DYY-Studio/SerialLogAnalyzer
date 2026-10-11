@@ -1,6 +1,7 @@
-"""串口工具栏：端口 / 波特率 / 刷新 / 连接 / 断开 / 串口参数，以及命令通道（DESIGN §7）。
+"""串口工具栏：端口 / 波特率 / 刷新 / 连接 / 断开 / 串口参数（DESIGN §7）。
 
 只发射用户意图信号，不直接操作串口对象；实际动作由 :class:`DeviceController` 执行。
+命令通道在独立的「命令」面板里，不占工具栏。
 """
 
 from __future__ import annotations
@@ -9,7 +10,6 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QLabel,
-    QLineEdit,
     QPushButton,
     QToolBar,
     QWidget,
@@ -35,7 +35,6 @@ class SerialToolBar(QToolBar):
         connect_requested(SerialConfig): 请求连接。
         disconnect_requested(): 请求断开。
         refresh_requested(): 请求刷新串口列表。
-        command_submitted(str): 请求发送一行命令。
         serial_settings_requested(): 请求打开串口参数对话框。
         error_occurred(str): 本地参数非法（如波特率不是正整数），由状态栏展示。
     """
@@ -43,7 +42,6 @@ class SerialToolBar(QToolBar):
     connect_requested = Signal(object)
     disconnect_requested = Signal()
     refresh_requested = Signal()
-    command_submitted = Signal(str)
     serial_settings_requested = Signal()
     error_occurred = Signal(str)
 
@@ -122,11 +120,6 @@ class SerialToolBar(QToolBar):
             if key in values:
                 self._advanced[key] = values[key]
 
-    def set_command_reply(self, text: str) -> None:
-        """显示最近一条命令响应（DESIGN §7 的命令回复区）。"""
-
-        self.reply_label.setText(text)
-
     def restore(self, port: str, baudrate: str) -> None:
         """按上次设置恢复端口与波特率选择。"""
 
@@ -173,20 +166,6 @@ class SerialToolBar(QToolBar):
         self.settings_btn.clicked.connect(self.serial_settings_requested.emit)
         self.addWidget(self.settings_btn)
 
-        self.addSeparator()
-        self.addWidget(QLabel(" 命令 "))
-        self.command_edit = QLineEdit()
-        self.command_edit.setPlaceholderText("PING / VERSION / HELP / TEST <name>")
-        self.command_edit.setMinimumWidth(220)
-        self.command_edit.returnPressed.connect(self._on_command)
-        self.addWidget(self.command_edit)
-        self.send_btn = QPushButton("发送")
-        self.send_btn.clicked.connect(self._on_command)
-        self.addWidget(self.send_btn)
-
-        self.reply_label = QLabel("")
-        self.addWidget(self.reply_label)
-
     def _on_connect(self) -> None:
         """连接前先在本地校验参数；非法时提示而不发起连接。"""
 
@@ -196,9 +175,3 @@ class SerialToolBar(QToolBar):
             self.error_occurred.emit(str(exc))
             return
         self.connect_requested.emit(config)
-
-    def _on_command(self) -> None:
-        command = self.command_edit.text().strip()
-        if command:
-            self.command_edit.clear()
-            self.command_submitted.emit(command)

@@ -218,12 +218,13 @@ DeviceSessionHandlers(
 | `HELP` | `@OK PING VERSION HELP TEST` | 帮助 |
 | `TEST <name>` | `@OK TEST <name> started` | 触发自测（wifi/uart/gpio…） |
 
-响应前缀 `@OK ...` / `@ERR <code> <msg>`，与 `[` 开头日志行不冲突；UI 命令回复区单独呈现。
+响应前缀 `@OK ...` / `@ERR <code> <msg>`，与 `[` 开头日志行不冲突；UI 在底部「命令」面板
+（输入 + 发送 + 追加式回复历史）单独呈现（见 §16）。
 PC 侧解析见 `core/device/command.py`：`is_response_line(line)`、`parse_response(line) -> CommandReply(text, ok, code)`；
 `DeviceSession` 以 `@` 前缀判定回复行，回复不写入日志表格。
 
 命令超时（v1 方案，暂未实现）：由 `ui/DeviceController` 在发送后起 `QTimer`（`board-protocol.md` §2.4 建议 2s），
-超时未见回复则在命令回复区提示；`core` 不感知超时，协议也不引入请求 id，从而不改固件即可通用。
+超时未见回复则在「命令」面板提示；`core` 不感知超时，协议也不引入请求 id，从而不改固件即可通用。
 
 ## 8. YAML Log Preset Schema（v1 单规则 + fallback + 合并）
 
@@ -356,15 +357,17 @@ AppError
 ## 16. UI 布局
 
 ```text
-Menu（文件：导出/导入/清空日志；配置：设置/模型服务/凭据/切换日志 Preset）
-Toolbar: Port │ Baud（可编辑）│ Refresh │ Connect │ Disconnect │ 串口参数… │ Command + 回复
+Menu（文件：导出/导入/清空日志；配置：设置/模型服务/凭据/切换日志 Preset；视图：停靠面板显隐）
+Toolbar: Port │ Baud（可编辑）│ Refresh │ Connect │ Disconnect │ 串口参数…
 ┌─────────────────────────┬────────────────────┐
 │ 过滤: 级别 + 自动滚动    │  模型: [当前 Profile] │
 │      模块 + 关键字       │  上下文 / 目标      │
 │  Log Table              │  Result / Chat      │
 │  Time Level Module      │  当前会话 N 轮       │
 │                         │  发送框（Enter 发送） │
-└─────────────────────────┴────────────────────┘
+├─────────────────────────┴────────────────────┤
+│ 命令 dock: 命令输入 + 发送 │ 回复历史（→ 发出 / ← 回复）│
+└──────────────────────────────────────────────┘
 Status bar
 ```
 
