@@ -1,60 +1,89 @@
-"""分析控制器：把分析服务的回调转译为 Qt Signal，并驱动分析面板。
-
-负责：
-- 收集界面上的上下文选择（选中行、最近 N 条、仅 ERROR、手动输入）；
-- 调用 :class:`AnalysisService` 开始分析或追问；
-- 把结果增量、状态变化与错误转译为 Qt Signal。
+"""
+分析控制器 - LLM 分析服务的桥接
+把 core AnalysisService 的回调转成 Qt Signal
 """
 
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, Signal
 
-__all__ = ["AnalysisController"]
+from serial_log_analyzer.core.models.analysis import (
+    AnalysisMode,
+    ContextSelector,
+    AnalysisState,
+)
+from serial_log_analyzer.core.services.analysis import AnalysisService
+from serial_log_analyzer.core.errors import AppError
 
 
 class AnalysisController(QObject):
-    """LLM 分析控制器。
-
-    信号:
-        result_updated: 结果快照更新（累积后的完整结果）。
-        state_changed: 状态变化，携带 :class:`AnalysisState`。
-        error_occurred: 错误文本。
-        usage_updated: 用量统计更新。
+    """
+    分析控制器
+    
+    Qt Signals:
+    - stream_chunk_received(chunk: str)
+    - analysis_state_changed(state, message)
+    - error_occurred(error: AppError)
     """
 
-    result_updated = Signal(object)
-    state_changed = Signal(object)
-    error_occurred = Signal(str)
-    usage_updated = Signal(int, int, int)
+    stream_chunk_received = Signal(str)
+    analysis_state_changed = Signal(object, str)  # AnalysisState, str
+    error_occurred = Signal(object)               # AppError
 
-    def __init__(self, service: object, context_builder: object) -> None:
-        """参数: service — :class:`AnalysisService`；context_builder — 上下文构造器。"""
+    def __init__(self, service: AnalysisService, parent=None):
+        super().__init__(parent)
+        self._service = service
+        self._setup_callbacks()
 
-        super().__init__()
-        raise NotImplementedError
+    def _setup_callbacks(self) -> None:
+        """设置 core 服务的回调"""
+        self._service.on_stream_chunk = self._on_stream_chunk
+        self._service.on_state_changed = self._on_state_changed
+        self._service.on_error = self._on_error
 
-    def start_analysis(self, request: object) -> None:
-        """开始一轮分析；单次模式会清空既有会话。"""
+    # ------------------------------------------------------------------
+    # 对外操作接口
+    # ------------------------------------------------------------------
 
-        raise NotImplementedError
+    def start_analysis(
+        self,
+        mode: AnalysisMode,
+        selector: ContextSelector,
+        user_input: str,
+        selected_sequences: list[int] | None = None,
+    ) -> None:
+        """启动分析"""
+        try:
+            self._service.analyze(
+                mode=mode,
+                selector=selector,
+                user_input=user_input,
+                selected_sequences=selected_sequences or [],
+            )
+        except AppError as e:
+            self.error_occurred.emit(e)
 
-    def follow_up(self, text: str) -> None:
-        """在当前会话中追问。"""
+    def send_followup(self, message: str) -> None:
+        """发送多轮追问"""
+        try:
+            self._service.send_followup(message)
+        except AppError as e:
+            self.error_occurred.emit(e)
 
-        raise NotImplementedError
+    def new_session(self) -> None:
+        """开启新会话"""
+        self._service.reset_session()
+        self.analysis_state_changed.emit(AnalysisState.IDLE, "")
 
-    def cancel(self) -> None:
-        """取消进行中的请求。"""
+    # ------------------------------------------------------------------
+    # core 回调处理
+    # ------------------------------------------------------------------
 
-        raise NotImplementedError
+    def _on_stream_chunk(self, chunk: str) -> None:
+        self.stream_chunk_received.emit(chunk)
 
-    def reset(self) -> None:
-        """清空会话与结果面板。"""
+    def _on_state_changed(self, state: AnalysisState, message: str) -> None:
+        self.analysis_state_changed.emit(state, message)
 
-        raise NotImplementedError
-
-    def selected_sequences(self, selected: list[int]) -> None:
-        """记录用户当前在表格中选中的条目序号，供上下文构造使用。"""
-
-        raise NotImplementedError
+    def _on_error(self, error: AppError) -> None:
+        self.error_occurred.emit(error)

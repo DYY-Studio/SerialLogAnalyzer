@@ -1,60 +1,115 @@
-"""设备控制器：串口刷新 / 连接 / 断开与日志批量刷新。
-
-把 :class:`DeviceSessionHandlers` 的普通回调转译为 Qt Signal，供界面订阅；
-连接动作与串口配置来自工具栏，业务实现全部委托给 core。
+"""
+设备控制器 - 串口连接与日志流水线的桥接
+把 core DeviceSession 的普通回调转成 Qt Signal
 """
 
 from __future__ import annotations
 
+from typing import List
+
 from PySide6.QtCore import QObject, Signal
 
-__all__ = ["DeviceController"]
+from serial_log_analyzer.core.models.device import (
+    SerialConfig,
+    SerialPortInfo,
+    DeviceConnectionState,
+)
+from serial_log_analyzer.core.models.logs import LogEntry
+from serial_log_analyzer.core.services.device_session import (
+    DeviceSession,
+    DeviceSessionHandlers,
+)
+from serial_log_analyzer.core.errors import AppError
 
 
 class DeviceController(QObject):
-    """串口设备控制器。
-
-    信号:
-        ports_refreshed: 串口列表刷新完成，携带 ``list[SerialPortInfo]``。
-        connection_changed: 连接状态变化，携带状态与说明文本。
-        log_update: 日志增量载荷，携带 :class:`PipelineUpdate`。
-        error_occurred: 错误文本，供状态栏展示。
-        command_reply: 命令响应，携带 :class:`CommandReply`。
+    """
+    设备控制器
+    
+    Qt Signals:
+    - log_entries_received(entries: list)
+    - log_entry_updated(entry: LogEntry)
+    - log_entries_removed(sequences: list)
+    - connection_state_changed(state, message)
+    - error_occurred(error: AppError)
+    - ports_updated(ports: list)
     """
 
-    ports_refreshed = Signal(list)
-    connection_changed = Signal(object, str)
-    log_update = Signal(object)
-    error_occurred = Signal(str)
-    command_reply = Signal(object)
+    log_entries_received = Signal(list)       # List[LogEntry]
+    log_entry_updated = Signal(object)        # LogEntry
+    log_entries_removed = Signal(list)        # List[int] sequences
+    connection_state_changed = Signal(object, str)  # DeviceConnectionState, str
+    error_occurred = Signal(object)           # AppError
+    ports_updated = Signal(list)              # List[SerialPortInfo]
 
-    def __init__(self, session: object) -> None:
-        """参数: session — :class:`core.services.device_session.DeviceSession`。"""
+    def __init__(self, session: DeviceSession, parent=None):
+        super().__init__(parent)
+        self._session = session
+        self._setup_handlers()
 
-        super().__init__()
-        raise NotImplementedError
+    def _setup_handlers(self) -> None:
+        """把 core 的普通回调转成 Qt Signal"""
+        handlers = DeviceSessionHandlers(
+            on_update=self._on_pipeline_update,
+            on_state=self._on_state_changed,
+            on_error=self._on_error,
+        )
+        self._session.set_handlers(handlers)
 
-    def refresh_ports(self) -> None:
-        """刷新串口列表并通过 ``ports_refreshed`` 通知界面。"""
+    # ------------------------------------------------------------------
+    # 对外操作接口
+    # ------------------------------------------------------------------
 
-        raise NotImplementedError
-
-    def connect(self, config: object) -> None:
-        """按配置连接设备。"""
-
-        raise NotImplementedError
+    def connect(self, port: str, baudrate: int) -> None:
+        """连接串口设备"""
+        try:
+            config = SerialConfig(
+                port=port,
+                baudrate=baudrate,
+                data_bits=8,
+                parity=None,
+                stop_bits=1,
+                flow_control=None,
+            )
+            self._session.connect(config)
+        except AppError as e:
+            self.error_occurred.emit(e)
 
     def disconnect(self) -> None:
-        """断开设备。"""
+        """断开串口"""
+        self._session.disconnect()
 
-        raise NotImplementedError
+    def refresh_ports(self) -> None:
+        """刷新串口列表"""
+        try:
+            ports = self._session.list_ports()
+            self.ports_updated.emit(ports)
+        except AppError as e:
+            self.error_occurred.emit(e)
 
     def send_command(self, command: str) -> None:
-        """发送一行文本命令。"""
+        """发送命令到设备"""
+        try:
+            self._session.send_command(command)
+        except AppError as e:
+            self.error_occurred.emit(e)
 
-        raise NotImplementedError
+    # ------------------------------------------------------------------
+    # core 回调处理
+    # ------------------------------------------------------------------
 
-    def clear_logs(self) -> None:
-        """清空日志流水线。"""
+    def _on_pipeline_update(self, update) -> None:
+        """Pipeline 更新回调 - 转发给 UI"""
+        if update.added:
+            self.log_entries_received.emit(update.added)
+        if update.updated:
+            for entry in update.updated:
+                self.log_entry_updated.emit(entry)
+        if update.dropped_sequences:
+            self.log_entries_removed.emit(update.dropped_sequences)
 
-        raise NotImplementedError
+    def _on_state_changed(self, state: DeviceConnectionState, message: str) -> None:
+        self.connection_state_changed.emit(state, message)
+
+    def _on_error(self, error: AppError) -> None:
+        self.error_occurred.emit(error)

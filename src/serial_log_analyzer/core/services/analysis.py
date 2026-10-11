@@ -143,7 +143,7 @@ class AnalysisService:
         transport: HTTP 传输实现（由 ``io`` 提供）。
         prompts: Prompt 模板库。
         credentials: 凭据解析器。
-        handlers: 对外回调。
+        handlers: 对外回调；省略时需在发起分析前用 :meth:`set_handlers` 安装。
         profile: 目标 Profile；``stream`` 决定走 SSE 还是缓冲整包解析。
 
     请求前的配置与凭据错误（``ConfigError`` / ``CredentialError``）由 :meth:`ask`
@@ -156,7 +156,7 @@ class AnalysisService:
         transport: HttpTransport,
         prompts: PromptLibrary,
         credentials: CredentialProvider,
-        handlers: AnalysisServiceHandlers,
+        handlers: AnalysisServiceHandlers | None = None,
         *,
         profile: ProviderProfile,
     ) -> None:
@@ -174,6 +174,15 @@ class AnalysisService:
         self._sse: SSEParser | None = None
         self._processor: StreamProcessor | None = None
         self._buffer = bytearray()
+
+    def set_handlers(self, handlers: AnalysisServiceHandlers) -> None:
+        """安装对外回调；由 ``ui`` 控制器在构造后注入。
+
+        参数:
+            handlers: 分析服务回调集合。
+        """
+
+        self._handlers = handlers
 
     @property
     def conversation(self) -> list[AnalysisMessage]:
@@ -230,6 +239,8 @@ class AnalysisService:
         self._result = AnalysisResult()
 
     def _ensure_idle(self) -> None:
+        if self._handlers is None:
+            raise ConfigError("未安装回调，无法发起分析")
         if self._active:
             raise ConfigError("已有进行中的分析，请先取消或等待完成")
 
