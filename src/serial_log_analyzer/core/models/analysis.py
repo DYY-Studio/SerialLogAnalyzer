@@ -109,11 +109,19 @@ class AnalysisRequest:
 
 @dataclass(frozen=True)
 class TokenUsage:
-    """模型返回的用量统计；字段缺失时为 ``0``。"""
+    """模型返回的用量统计；字段缺失时为 ``0``。
+
+    参数:
+        input_tokens: 输入总量，已由 Adapter 归一化（含缓存命中部分）。
+        output_tokens: 输出 token 数。
+        total_tokens: 总用量；Provider 未提供时按输入 + 输出补齐。
+        cached_tokens: 其中从服务端提示缓存读到、计费更低的输入 token 数。
+    """
 
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    cached_tokens: int = 0
 
 
 @dataclass

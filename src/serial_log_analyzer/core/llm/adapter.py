@@ -9,6 +9,7 @@ Adapter 描述“如何调用某一类模型接口”，与具体 ``base_url`` /
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from string import Template
@@ -21,10 +22,28 @@ from serial_log_analyzer.core.errors import (
     ResponseParseError,
 )
 from serial_log_analyzer.core.llm.pointer import resolve_pointer
-from serial_log_analyzer.core.models.analysis import AnalysisMessage
+from serial_log_analyzer.core.models.analysis import AnalysisMessage, TokenUsage
 from serial_log_analyzer.core.models.provider import StreamEvent
 
-__all__ = ["JSONAdapter", "StreamCondition", "StreamRule", "StreamingSpec"]
+__all__ = ["JSONAdapter", "StreamCondition", "StreamRule", "StreamingSpec", "UsageSpec", "build_usage"]
+
+
+@dataclass(frozen=True)
+class UsageSpec:
+    """用量字段路径声明。
+
+    参数:
+        input / output / total: 各字段的候选指针，按序尝试、取第一个命中的值。
+        cached: 缓存命中 token 的候选指针；只用于展示，不改变输入总量。
+        extra_input: 这些指针上的值全部相加后计入输入总量，用于「``input`` 不含缓存部分」的
+            Provider（如 Anthropic 的 ``cache_read`` + ``cache_creation``）。
+    """
+
+    input: tuple[str, ...] = ()
+    output: tuple[str, ...] = ()
+    total: tuple[str, ...] = ()
+    cached: tuple[str, ...] = ()
+    extra_input: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -80,7 +99,7 @@ class StreamingSpec:
     request_body: dict[str, Any] = field(default_factory=dict)
     error_events: tuple[tuple[StreamCondition, str, str | None], ...] = ()
     allow_clean_eof: bool = False
-    usage_pointers: tuple[tuple[str, ...], ...] = ((), (), ())
+    usage: UsageSpec = UsageSpec()
 
 
 @dataclass(frozen=True)
@@ -96,7 +115,7 @@ class JSONAdapter:
         messages_format: 消息转换格式：``openai`` / ``anthropic`` / ``gemini``。
         reasoning_pointers: 思考正文候选路径（按序尝试）。
         model_discovery: 模型列表接口声明（可选）。
-        usage_pointers: 用量统计路径三元组（input / output / total）。
+        usage: 用量统计路径声明（input / output / total，另有可选的缓存命中与计入输入的额外项）。
         streaming: 流式声明；``None`` 表示不支持流式。
         schema_version: 声明文件版本，当前为 ``3``。
         source_path: 加载来源路径，用于错误提示。
@@ -110,7 +129,7 @@ class JSONAdapter:
     messages_format: str = "openai"
     reasoning_pointers: tuple[str, ...] = ()
     model_discovery: dict[str, Any] | None = None
-    usage_pointers: tuple[str | None, str | None, str | None] = (None, None, None)
+    usage: UsageSpec = UsageSpec()
     streaming: StreamingSpec | None = None
     schema_version: int = 3
     source_path: str = ""
@@ -261,11 +280,17 @@ class JSONAdapter:
                 break
         return content, reasoning
 
-    def extract_usage(self, payload: Any) -> tuple[int, int, int] | None:
-        """提取用量三元组；未声明或路径缺失时返回 ``None``。"""
+    def extract_usage(self, payload: Any) -> TokenUsage | None:
+        """提取并归一化用量；未声明或路径缺失时返回 ``None``。"""
 
-        values = [_optional(payload, p) if p else None for p in self.usage_pointers]
-        return _usage(values)
+        spec = self.usage
+        return build_usage(
+            _first_optional(payload, spec.input),
+            _first_optional(payload, spec.output),
+            _first_optional(payload, spec.total),
+            cached_tokens=_first_optional(payload, spec.cached),
+            extra_input_tokens=_all_optional(payload, spec.extra_input),
+        )
 
     def stream_content_deltas(self, event: StreamEvent) -> list[str]:
         """从流式事件中提取正文增量。
@@ -388,16 +413,58 @@ def _render_body(node: Any, values: dict) -> Any:
     return deepcopy(node)
 
 
-def _usage(values: list) -> tuple[int, int, int] | None:
-    if all(v is None for v in values):
+def _first_optional(payload: Any, pointers: Sequence[str]) -> Any:
+    """按序尝试指针，返回第一个取到的值；都没有时返回 ``None``。"""
+
+    for pointer in pointers:
+        value = _optional(payload, pointer)
+        if value is not None:
+            return value
+    return None
+
+
+def _all_optional(payload: Any, pointers: Sequence[str]) -> list[Any]:
+    """取每个指针的值（缺失为 ``None``），供求和类字段使用。"""
+
+    return [_optional(payload, pointer) for pointer in pointers]
+
+
+def build_usage(
+    input_tokens: Any,
+    output_tokens: Any,
+    total_tokens: Any,
+    *,
+    cached_tokens: Any = None,
+    extra_input_tokens: Sequence[Any] = (),
+) -> TokenUsage | None:
+    """把 Provider 的原始用量归一化为 :class:`TokenUsage`。
+
+    参数:
+        input_tokens / output_tokens / total_tokens: 原始值（可能为 ``None``）。
+        cached_tokens: 其中命中提示缓存的输入 token 数，只用于展示。
+        extra_input_tokens: 会一并计入输入总量的值（全部相加），例如 Anthropic 的
+            ``cache_read_input_tokens`` + ``cache_creation_input_tokens``。
+
+    返回:
+        归一化后的用量；所有取值都为 ``None`` 时返回 ``None``。
+
+    异常:
+        ResponseParseError: 出现了非「非负整数」的取值。
+    """
+
+    numbers = (input_tokens, output_tokens, total_tokens, cached_tokens, *extra_input_tokens)
+    if all(value is None for value in numbers):
         return None
-    if any(v is not None and (type(v) is not int or v < 0) for v in values):
+    if any(value is not None and (type(value) is not int or value < 0) for value in numbers):
         raise ResponseParseError("用量必须是非负整数")
-    input_tokens, output_tokens, total_tokens = values
-    return (
-        input_tokens or 0,
-        output_tokens or 0,
-        (total_tokens if total_tokens is not None else (input_tokens or 0) + (output_tokens or 0)),
+    extra = sum(value for value in extra_input_tokens if value is not None)
+    input_total = (input_tokens or 0) + extra
+    output = output_tokens or 0
+    return TokenUsage(
+        input_tokens=input_total,
+        output_tokens=output,
+        total_tokens=total_tokens if total_tokens is not None else input_total + output,
+        cached_tokens=cached_tokens or 0,
     )
 
 

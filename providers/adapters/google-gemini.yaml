@@ -24,6 +24,8 @@ usage:
   input_tokens_pointer: /usageMetadata/promptTokenCount
   output_tokens_pointer: /usageMetadata/candidatesTokenCount
   total_tokens_pointer: /usageMetadata/totalTokenCount
+  input_cached_tokens_pointers:
+  - /usageMetadata/cachedContentTokenCount
 streaming:
   transport: sse
   endpoint: /models/${model}:streamGenerateContent?alt=sse
@@ -44,4 +46,6 @@ streaming:
     - /usageMetadata/candidatesTokenCount
     total_tokens_pointers:
     - /usageMetadata/totalTokenCount
+    input_cached_tokens_pointers:
+    - /usageMetadata/cachedContentTokenCount
 response_text_blocks_pointer: /candidates/0/content/parts

@@ -133,7 +133,7 @@ def test_analysis_panel_first_turn_then_follow_up(qtbot) -> None:
     panel.set_result(
         AnalysisResult(
             content="结论",
-            usage=TokenUsage(3, 4, 7),
+            usage=TokenUsage(3, 4, 7, 2),
             state=AnalysisState.DONE,
             conversation=[
                 AnalysisMessage(MessageRole.USER, "看看这条"),
@@ -144,6 +144,7 @@ def test_analysis_panel_first_turn_then_follow_up(qtbot) -> None:
     panel.set_state(AnalysisState.DONE)
     assert "结论" in panel.chat.plain_text()
     assert "3" in panel.usage_label.text() and "7" in panel.usage_label.text()
+    assert "缓存 2" in panel.usage_label.text()
     assert panel.turns_label.text() == "当前会话 1 轮"
     # 会话已开始：目标与上下文不再生效，发送走追问
     assert panel.goal_combo.isEnabled() is False and panel.context_combo.isEnabled() is False

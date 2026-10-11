@@ -223,6 +223,37 @@ def test_ask_keeps_history_until_reset(resources) -> None:
     assert service.conversation == []
 
 
+def test_history_rounds_keep_first_turn_plus_recent_rounds(resources) -> None:
+    recorder = Recorder()
+    service = recorder.service(resources)
+    transport = recorder.transport
+
+    def _turn(text: str) -> None:
+        service.ask(AnalysisRequest(user_input=text))
+        transport.push(_sse(f'{{"choices":[{{"delta":{{"content":"答{text}"}}}}]}}', "[DONE]"))
+        transport.done()
+
+    for index in range(3):
+        _turn(f"第{index}问")
+    assert len(service.conversation) == 6
+
+    service.set_history_rounds(1)
+    service.ask(AnalysisRequest(user_input="第3问"))
+
+    sent = transport.requests[-1].body["messages"]
+    # 首轮（带着日志上下文的那一轮）始终保留，再加最近 1 轮
+    assert [message["content"] for message in sent] == ["第0问", "第2问", "答第2问", "第3问"]
+
+    transport.push(_sse('{"choices":[{"delta":{"content":"答第3问"}}]}', "[DONE]"))
+    transport.done()
+    service.set_history_rounds(0)
+    service.ask(AnalysisRequest(user_input="第4问"))
+
+    # 0 = 不裁剪：4 轮历史 + 本轮；会话本身始终完整（界面要显示全部轮次）
+    assert len(transport.requests[-1].body["messages"]) == 9
+    assert len(service.conversation) == 9  # 4 轮共 8 条 + 本轮的 user 消息
+
+
 def test_follow_up_requires_history_then_appends(resources) -> None:
     recorder = Recorder()
     service = recorder.service(resources)

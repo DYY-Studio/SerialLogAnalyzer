@@ -320,6 +320,11 @@ class AnalysisState(Enum): IDLE, STREAMING, DONE, ERROR
   （只用文本，不重复发送上下文），因此「目标 / 上下文」只在首轮生效，会话开始后置灰；
   Enter 发送、Shift+Enter 换行。
 - 上下文由 `AnalysisContextBuilder` 从 `LogPipeline` 取并叠加进新 user 消息；`SELECTED_WITH_NEIGHBORS` 窗口 N 默认 10。
+- 携带给模型的历史可用 `llm/history_rounds` 限制（0 = 全部）：始终保留首轮（含日志上下文）+ 最近 N 轮，
+  切片对齐到 user 边界；界面转录不受影响。代价（前缀缓存失效）见 `docs/llm-integration.md`。
+- 用量归一化为「输入（含缓存命中）/ 输出 / 总计」：`TokenUsage.cached_tokens` 表示命中的部分，
+  各家字段与口径由 Adapter 的 `usage` 段声明（DeepSeek / OpenAI / Gemini 的命中含在输入内，
+  Anthropic 的 `input_tokens` 不含缓存，用 `input_extra_tokens_pointers` 补进输入）。
 - 结果区是按轮次堆叠的卡片（`ui/widgets/chat_view.py`）：user 卡片显示短摘要（`AnalysisMessage.summary`，
   如「定位错误 · 重点看 uart」），完整 prompt（目标模板 + 日志上下文）收进可折叠的「参考内容」；
   assistant 卡片把思考收进可折叠的「思考」，正文随流式更新。折叠默认状态由 `llm/details_expanded`

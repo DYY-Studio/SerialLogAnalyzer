@@ -81,7 +81,48 @@ Adapter / Profile / Prompt 加载、`RequestBuilder`、`SSEParser`、`StreamProc
 `QtHttpTransport`、`AnalysisService` 与桌面窗口均已实现；`python main.py` 可直接启动。
 测试使用假密钥或本地 Qt TCP 服务；未进行真实 API 请求。
 
+## 多轮上下文、缓存与思考回传
+
+本节记录 2026-10-12 核对官方文档后的口径，`AnalysisService` 的所有请求都按它组装。
+
+### 缓存命中字段（各家响应）
+
+| Provider | 命中字段 | 与输入总量的关系 |
+|---|---|---|
+| DeepSeek | `usage.prompt_cache_hit_tokens`（等于 `usage.prompt_tokens_details.cached_tokens`），另有 `prompt_cache_miss_tokens` | `prompt_tokens = hit + miss`，命中**含在**输入内 |
+| OpenAI（Chat Completions） | `usage.prompt_tokens_details.cached_tokens` | 命中**含在** `prompt_tokens` 内 |
+| OpenAI（Responses） | `usage.input_tokens_details.cached_tokens`（另有 `cache_write_tokens`） | 命中**含在** `input_tokens` 内 |
+| Google Gemini | `usageMetadata.cachedContentTokenCount` | `promptTokenCount` 官方说明「包含缓存内容」 |
+| Anthropic | `usage.cache_read_input_tokens`（读命中）+ `usage.cache_creation_input_tokens`（写入） | **例外**：`input_tokens` 官方口径是「未被缓存读/写的输入」，总输入 = `input + read + creation` |
+
+来源：[DeepSeek 上下文缓存](https://api-docs.deepseek.com/guides/kv_cache)、
+[DeepSeek API 参考](https://api-docs.deepseek.com/api/create-chat-completion)、
+[OpenAI 提示缓存](https://developers.openai.com/api/docs/guides/prompt-caching)、
+[Gemini 生成接口](https://ai.google.dev/api/generate-content)、
+[Anthropic 提示缓存](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)。
+
+代码里统一归一化为「**`input_tokens` = 全部输入（含缓存读/写），`cached_tokens` = 其中命中缓存的部分**」，
+映射写在 Adapter 声明里（`providers/adapters/*.yaml` 的 `usage` 段，见 `docs/protocols/provider.md`），
+界面用量行显示为 `输入 4096（缓存 1800） / 输出 503 / 总计 4599 tokens`。服务端没给 total 时按输入 + 输出补齐。
+
+### 缓存命中与「多轮不重复发送」
+
+- DeepSeek 的磁盘缓存按**前缀单元完全匹配**命中，多轮对话的第二轮能命中第一轮的前缀；命中情况就是上面那两个 usage 字段。
+- 因此**截断历史头部会让前缀失配**：`llm/history_rounds`（0 = 全部携带）只保留首轮 + 最近 N 轮，
+  省下的只是问答对本身的 token，代价是缓存前缀之外的部分每轮都重新计费。默认 0，界面与转录始终完整。
+- 请求只追加、不修改历史消息，天然有利于前缀命中；切换 Profile / 预设 / 新会话会改变前缀，属预期。
+
+### 思考（reasoning）为什么不回传
+
+- DeepSeek：**不带 `tools` 时** `reasoning_content` 不需要回传，传了也会被忽略、不拼进上下文
+  （带 `tools` 才必须回传）。本项目不使用工具调用，因此回传无收益。
+- Anthropic：thinking 块带 `signature`，回传要求**原样**带回；它影响的是工具调用连续性与缓存前缀完整性。
+  我们解析响应时会跳过 thought 块（`response_text_blocks_pointer`），也没有工具调用。
+- 结论：请求只发 `role` + `content`（`AnalysisMessage.summary` 仅用于界面）；界面上的思考来自卡片本身，
+  历史轮次的思考仍然可见，但不进入后续请求。
+
 ## 错误与生命周期
+
 
 - 请求前的配置/凭据错误同步抛出；网络与响应解析错误通过 `on_error` 返回。
 - HTTP 非 2xx、连接失败、超时、取消各有错误路径，终态回调只触发一次。
@@ -90,6 +131,8 @@ Adapter / Profile / Prompt 加载、`RequestBuilder`、`SSEParser`、`StreamProc
 - 远端错误正文不直接回显，避免错误体包含认证信息；HTTP 错误保留状态码。
 - SSE 终止事件中的正文和 usage 先处理再结束；不允许正常 EOF 的配置在缺少终止事件时失败。
 - Anthropic usage 分散在多个事件时合并最新累计计数，不重复累加；缺少 total 时用 input + output。
+  缓存字段由 Adapter 声明归一化（见「多轮上下文、缓存与思考回传」）。
+- `on_usage` 回调携带归一化后的 `TokenUsage`（含 `cached_tokens`），只在数值变化时触发一次。
 
 ## 提示词与结果验收
 

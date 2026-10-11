@@ -175,14 +175,9 @@ def build_window(context: ApplicationContext) -> MainWindow:
     command_panel = CommandPanel()
 
     device = DeviceController(context.session)
-    service = AnalysisService(
-        context.adapter,
-        context.http_transport,
-        context.prompts,
-        context.credentials,
-        profile=context.profile,
-    )
+    service = _analysis_service(context)
     analysis = AnalysisController(service, context.context_builder)
+    service.set_history_rounds(_history_rounds(settings))
     main = MainController(device, analysis, settings)
     window = MainWindow(
         log_view,
@@ -229,7 +224,7 @@ def build_window(context: ApplicationContext) -> MainWindow:
     analysis.state_changed.connect(panel.set_state)
     analysis.error_occurred.connect(window.show_status)
 
-    window.settings_requested.connect(lambda: _open_settings(window, context))
+    window.settings_requested.connect(lambda: _open_settings(window, context, service))
     window.provider_requested.connect(lambda: _open_provider(window, context, service))
     window.credential_requested.connect(lambda: _open_credential(window, context))
     window.preset_requested.connect(lambda: _choose_preset(window, context))
@@ -240,13 +235,25 @@ def build_window(context: ApplicationContext) -> MainWindow:
     return window
 
 
-def _open_settings(window: MainWindow, context: ApplicationContext) -> None:
+def _analysis_service(context: ApplicationContext) -> AnalysisService:
+    """按组装结果构造分析服务（``build_window`` 与测试共用的唯一入口）。"""
+
+    return AnalysisService(
+        context.adapter,
+        context.http_transport,
+        context.prompts,
+        context.credentials,
+        profile=context.profile,
+    )
+
+
+def _open_settings(window: MainWindow, context: ApplicationContext, service: AnalysisService) -> None:
     """打开设置对话框；关闭后把可即时生效的项立即应用到界面与流水线。"""
 
     from serial_log_analyzer.ui.dialogs.settings_dialog import SettingsDialog
 
     SettingsDialog(context.settings, window).exec()
-    _apply_settings(window, context)
+    _apply_settings(window, context, service)
 
 
 def _open_serial_settings(window: MainWindow, toolbar: SerialToolBar) -> None:
@@ -259,14 +266,17 @@ def _open_serial_settings(window: MainWindow, toolbar: SerialToolBar) -> None:
         toolbar.apply_serial_settings(dialog.values())
 
 
-def _apply_settings(window: MainWindow, context: ApplicationContext) -> None:
-    """把设置里可即时生效的项应用出来：自动滚动、日志容量、应用日志级别、分析细节折叠。"""
+def _apply_settings(
+    window: MainWindow, context: ApplicationContext, service: AnalysisService
+) -> None:
+    """把设置里可即时生效的项应用出来：自动滚动、容量、日志级别、折叠、携带历史。"""
 
     settings = context.settings
     window.log_view.set_autoscroll(bool(settings.get(SETTINGS_KEYS.AUTOSCROLL, True)))
     window.analysis_panel.set_details_expanded(
         bool(settings.get(SETTINGS_KEYS.CHAT_DETAILS_EXPANDED, False))
     )
+    service.set_history_rounds(_history_rounds(settings))
     context.pipeline.capacity = _capacity(settings)
     dropped = context.pipeline.enforce_capacity()
     if dropped:
@@ -566,6 +576,19 @@ def _current_profile(resources: Any, settings: Any) -> Any:
     if wanted and any(item.profile_id == wanted for item in profiles):
         return load_profile(resources, wanted)
     return load_profile(resources, profiles[0].profile_id)
+
+
+def _history_rounds(settings: Any) -> int:
+    """读取「最多携带历史轮数」；``0`` 表示不限制，非法值直接失败。"""
+
+    value = settings.get(SETTINGS_KEYS.LLM_HISTORY_ROUNDS, 0)
+    try:
+        rounds = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"携带历史轮数必须是整数：{value}") from exc
+    if rounds < 0:
+        raise ConfigError(f"携带历史轮数不能为负：{rounds}")
+    return rounds
 
 
 def _capacity(settings: Any) -> int:

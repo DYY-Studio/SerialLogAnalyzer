@@ -32,6 +32,7 @@ _LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 _DEFAULT_LOG_LEVEL = "INFO"
 _MIN_CAPACITY = 1_000
 _MAX_CAPACITY = 1_000_000
+_MAX_HISTORY_ROUNDS = 50
 
 
 class SettingsDialog(QDialog):
@@ -63,6 +64,12 @@ class SettingsDialog(QDialog):
         self._details_expanded = QCheckBox("分析细节（思考 / 参考内容）默认展开")
         self._details_expanded.setObjectName("settings-details-expanded")
 
+        self._history_rounds = QSpinBox()
+        self._history_rounds.setObjectName("settings-history-rounds")
+        self._history_rounds.setRange(0, _MAX_HISTORY_ROUNDS)
+        self._history_rounds.setSuffix(" 轮")
+        self._history_rounds.setSpecialValueText("全部携带")
+
         self._export_dir = QLineEdit()
         self._export_dir.setObjectName("settings-export-dir")
         self._export_dir.setPlaceholderText("留空使用默认导出目录")
@@ -79,11 +86,13 @@ class SettingsDialog(QDialog):
         form.addRow("自动滚动", self._autoscroll)
         form.addRow("应用日志级别", self._log_level)
         form.addRow("分析细节", self._details_expanded)
+        form.addRow("携带历史", self._history_rounds)
         form.addRow("默认导出目录", export_row)
 
         hint = QLabel(
             "这些偏好保存在本机系统配置中。模型服务与 API Key 分别由「模型服务」与"
-            "「API Key」对话框管理。"
+            "「API Key」对话框管理。「携带历史」只裁剪发给模型的历史（首轮带着日志上下文，"
+            "始终保留），界面仍显示完整会话，而且裁剪会让服务端的前缀缓存失效，通常不会更省。"
         )
         hint.setWordWrap(True)
 
@@ -113,6 +122,7 @@ class SettingsDialog(QDialog):
             self._settings.set(
                 SETTINGS_KEYS.CHAT_DETAILS_EXPANDED, self._details_expanded.isChecked()
             )
+            self._settings.set(SETTINGS_KEYS.LLM_HISTORY_ROUNDS, self._history_rounds.value())
             self._settings.set(SETTINGS_KEYS.EXPORT_DIR, self._export_dir.text().strip())
             sync = getattr(self._settings, "sync", None)
             if callable(sync):
@@ -136,6 +146,9 @@ class SettingsDialog(QDialog):
         self._log_level.setCurrentText(level)
         self._details_expanded.setChecked(
             _as_bool(self._settings.get(SETTINGS_KEYS.CHAT_DETAILS_EXPANDED), False)
+        )
+        self._history_rounds.setValue(
+            _as_int(self._settings.get(SETTINGS_KEYS.LLM_HISTORY_ROUNDS), 0)
         )
         self._export_dir.setText(str(self._settings.get(SETTINGS_KEYS.EXPORT_DIR) or ""))
 

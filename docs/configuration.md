@@ -204,6 +204,7 @@ export MY_DEEPSEEK_API_KEY=sk-...
 | `device/last_baudrate` | 最近波特率 | 空 |
 | `llm/current_profile` | 当前 Profile | 首个可用 |
 | `llm/details_expanded` | 「思考 / 参考内容」折叠块默认展开 | `false`（折叠） |
+| `llm/history_rounds` | 随请求携带的历史轮数上限（0 = 全部） | `0` |
 | `logs/current_preset` | 当前 Preset | 首个可用 |
 | `logs/autoscroll` | 自动滚动 | `true` |
 | `logs/capacity` | 日志环形缓冲容量（1000–1000000） | `100000` |
@@ -213,8 +214,11 @@ export MY_DEEPSEEK_API_KEY=sk-...
 - 复杂配置（Profile）**不放进** QSettings，统一用 YAML。
 - 布尔值经 `get_bool()` 读取，兼容 `true`/`false` 与 `0`/`1`；`get_int()` / `get_str()` 在类型不符时回退默认值。
 - 「设置」对话框只读写上述键，保存失败会提示用户并保持对话框打开。
-- 保存后**立即生效**的项：自动滚动、日志容量（超出部分当场裁掉并同步表格）、应用日志级别；
-  导出目录与当前 Profile / Preset 在下次使用时读取。
+- 保存后**立即生效**的项：自动滚动、日志容量（超出部分当场裁掉并同步表格）、应用日志级别、
+  分析细节折叠、携带历史轮数；导出目录与当前 Profile / Preset 在下次使用时读取。
+- `llm/history_rounds` 只裁剪**发给模型**的历史：始终保留首轮（它带着日志上下文）+ 最近 N 轮，
+  界面转录不受影响；裁剪会让服务端前缀缓存之外的部分每轮重新计费，通常并不比全带省
+  （口径与字段见 `docs/llm-integration.md` §多轮上下文、缓存与思考回传）。
 - 波特率在工具栏下拉里设置（可编辑，非正整数时不连接并给出提示）；数据位 / 校验位 / 停止位 /
   流控在工具栏「串口参数…」对话框里设置，且不落盘，只在本次会话内生效。
 - 当前 LLM Profile 在分析面板顶部切换（换用对应 Adapter、写回 `llm/current_profile`）；

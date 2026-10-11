@@ -25,6 +25,7 @@ from serial_log_analyzer.core.models.analysis import (
     AnalysisState,
     ContextSelector,
     MessageRole,
+    TokenUsage,
 )
 from serial_log_analyzer.core.models.provider import ProviderProfile
 from serial_log_analyzer.core.prompts.loader import PromptGoal
@@ -97,12 +98,7 @@ class AnalysisPanel(QWidget):
         self._update_turns(result.conversation)
         self._has_session = bool(result.conversation)
         self._sync_enabled()
-        usage = result.usage
-        self.usage_label.setText(
-            f"输入 {usage.input_tokens} / 输出 {usage.output_tokens} / 总计 {usage.total_tokens} tokens"
-            if usage
-            else ""
-        )
+        self.usage_label.setText(self._usage_text(result.usage))
         if result.state is AnalysisState.ERROR and result.error:
             self.status_label.setText(f"出错：{result.error}")
 
@@ -268,6 +264,18 @@ class AnalysisPanel(QWidget):
 
         rounds = sum(1 for message in conversation if message.role is MessageRole.USER)
         self.turns_label.setText(f"当前会话 {rounds} 轮" if rounds else "")
+
+    @staticmethod
+    def _usage_text(usage: TokenUsage | None) -> str:
+        """用量文案；Provider 报了缓存命中时把它标在输入后面。"""
+
+        if usage is None:
+            return ""
+        cached = f"（缓存 {usage.cached_tokens}）" if usage.cached_tokens else ""
+        return (
+            f"输入 {usage.input_tokens}{cached} / 输出 {usage.output_tokens}"
+            f" / 总计 {usage.total_tokens} tokens"
+        )
 
     def _on_copy(self) -> None:
         QGuiApplication.clipboard().setText(self.chat.plain_text())

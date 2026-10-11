@@ -103,7 +103,7 @@ def test_settings_take_effect_immediately(context) -> None:
 
     context.settings.values[SETTINGS_KEYS.AUTOSCROLL] = False
     context.settings.values[SETTINGS_KEYS.LOG_CAPACITY] = 2
-    bootstrap._apply_settings(window, context)
+    bootstrap._apply_settings(window, context, bootstrap._analysis_service(context))
 
     assert context.pipeline.capacity == 2
     assert len(context.pipeline.entries()) == 2

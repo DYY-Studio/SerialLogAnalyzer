@@ -23,6 +23,7 @@ class SETTINGS_KEYS:
     LAST_BAUDRATE = "device/last_baudrate"
     CURRENT_PROFILE = "llm/current_profile"
     CHAT_DETAILS_EXPANDED = "llm/details_expanded"
+    LLM_HISTORY_ROUNDS = "llm/history_rounds"
     CURRENT_PRESET = "logs/current_preset"
     AUTOSCROLL = "logs/autoscroll"
     LOG_CAPACITY = "logs/capacity"

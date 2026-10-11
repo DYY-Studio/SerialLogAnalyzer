@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from serial_log_analyzer.core.errors import ConfigError
-from serial_log_analyzer.core.llm.adapter import StreamCondition, StreamRule
+from serial_log_analyzer.core.llm.adapter import StreamCondition, StreamRule, UsageSpec
 from serial_log_analyzer.core.llm.adapter_loader import load_adapter, load_adapters
 
 _ADAPTER_DIR = "providers/adapters"
@@ -42,7 +42,7 @@ def test_minimal_adapter_uses_documented_defaults(make_loader):
     assert adapter.messages_format == "openai"
     assert adapter.reasoning_pointers == ()
     assert adapter.model_discovery is None
-    assert adapter.usage_pointers == (None, None, None)
+    assert adapter.usage == UsageSpec()
     assert adapter.streaming is None
     assert adapter.streaming_supported is False
     assert adapter.schema_version == 3
@@ -65,6 +65,7 @@ def test_full_adapter_parses_headers_body_and_pointers(make_loader):
             "usage": {
                 "input_tokens_pointer": "/usage/prompt_tokens",
                 "output_tokens_pointer": "/usage/completion_tokens",
+                "input_cached_tokens_pointers": ["/usage/prompt_tokens_details/cached_tokens"],
             },
         }
     )
@@ -75,7 +76,11 @@ def test_full_adapter_parses_headers_body_and_pointers(make_loader):
     assert adapter.body_template["messages"] == "${messages}"
     assert adapter.messages_format == "anthropic"
     assert adapter.reasoning_pointers == ("/choices/0/message/reasoning_content",)
-    assert adapter.usage_pointers == ("/usage/prompt_tokens", "/usage/completion_tokens", None)
+    assert adapter.usage == UsageSpec(
+        input=("/usage/prompt_tokens",),
+        output=("/usage/completion_tokens",),
+        cached=("/usage/prompt_tokens_details/cached_tokens",),
+    )
     assert adapter.model_discovery is not None
     assert adapter.model_discovery["endpoint"] == "/v1/models"
     assert adapter.model_discovery["response_models_pointer"] == "/data"
@@ -258,10 +263,10 @@ def test_streaming_block_is_parsed(make_loader):
     assert spec.terminal_when is None
     assert spec.allow_clean_eof is True
     assert spec.request_body == {"stream_options": {"include_usage": True}}
-    assert spec.usage_pointers == (
-        ("/usage/prompt_tokens",),
-        ("/usage/completion_tokens",),
-        ("/usage/total_tokens",),
+    assert spec.usage == UsageSpec(
+        input=("/usage/prompt_tokens",),
+        output=("/usage/completion_tokens",),
+        total=("/usage/total_tokens",),
     )
     assert spec.error_events == (
         (
@@ -301,7 +306,7 @@ def test_streaming_defaults_for_optional_parts(make_loader):
     assert adapter.streaming.request_body == {}
     assert adapter.streaming.error_events == ()
     assert adapter.streaming.allow_clean_eof is False
-    assert adapter.streaming.usage_pointers == ((), (), ())
+    assert adapter.streaming.usage == UsageSpec()
 
 
 @pytest.mark.parametrize(
