@@ -314,6 +314,9 @@ class AnalysisState(Enum): IDLE, STREAMING, DONE, ERROR
 
 - 会话始终保留历史（结果面板含历史 + 输入框），要重开点“新会话”；界面显示当前会话轮数。
   一个 user 消息 + 一条 assistant 回复算一轮。
+- 发送框只有一个：会话未开始时发首轮（目标 + 上下文 + 文本，文本可为空），已开始时发追问
+  （只用文本，不重复发送上下文），因此「目标 / 上下文」只在首轮生效，会话开始后置灰；
+  Enter 发送、Shift+Enter 换行。
 - 上下文由 `AnalysisContextBuilder` 从 `LogPipeline` 取并叠加进新 user 消息；`SELECTED_WITH_NEIGHBORS` 窗口 N 默认 10。
 - Prompt：`prompts/*.md`，内置目标（定位错误 / 解释日志 / 给出修复建议）+ 自由输入；`string.Template`（`$context $goal $language`）安全替换。
 
@@ -357,9 +360,10 @@ Menu（文件：导出/导入/清空日志；配置：设置/模型服务/凭据
 Toolbar: Port │ Baud（可编辑）│ Refresh │ Connect │ Disconnect │ 串口参数… │ Command + 回复
 ┌─────────────────────────┬────────────────────┐
 │ 过滤: 级别 + 自动滚动    │  模型: [当前 Profile] │
-│      模块 + 关键字       │  上下文 / 目标 / 补充 │
+│      模块 + 关键字       │  上下文 / 目标      │
 │  Log Table              │  Result / Chat      │
 │  Time Level Module      │  当前会话 N 轮       │
+│                         │  发送框（Enter 发送） │
 └─────────────────────────┴────────────────────┘
 Status bar
 ```

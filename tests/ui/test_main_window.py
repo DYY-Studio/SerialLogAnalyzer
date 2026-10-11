@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from serial_log_analyzer.core.logs.pipeline import PipelineUpdate
 from serial_log_analyzer.core.models.analysis import (
+    AnalysisMessage,
     AnalysisRequest,
     AnalysisResult,
     AnalysisState,
     ContextSelector,
+    MessageRole,
     TokenUsage,
 )
 from serial_log_analyzer.core.models.device import FlowControl, Parity, StopBits
@@ -101,30 +103,52 @@ def test_level_filter_covers_every_level(qtbot) -> None:
     assert view.table_view.model().rowCount() == 2
 
 
-def test_analysis_panel_reflects_state_and_request(qtbot) -> None:
+def test_analysis_panel_first_turn_then_follow_up(qtbot) -> None:
     panel = AnalysisPanel()
     qtbot.addWidget(panel)
     panel.set_goals([])
-    captured: list[object] = []
-    panel.analyze_requested.connect(captured.append)
+    requests: list[object] = []
+    follow_ups: list[str] = []
+    panel.analyze_requested.connect(requests.append)
+    panel.follow_up_requested.connect(follow_ups.append)
 
-    panel.set_state(AnalysisState.STREAMING)
-    assert panel.analyze_btn.isEnabled() is False
-    assert panel.stop_btn.isEnabled() is True
+    panel.message_edit.setPlainText("看看这条")
+    panel.send_btn.click()
 
-    panel.set_result(
-        AnalysisResult(content="结论", usage=TokenUsage(3, 4, 7), state=AnalysisState.DONE)
-    )
-    assert panel.result_view.toPlainText() == "结论"
-    assert "3" in panel.usage_label.text() and "7" in panel.usage_label.text()
-
-    panel.set_state(AnalysisState.DONE)
-    panel.input_edit.setText("看看这条")
-    panel.analyze_btn.click()
-
-    request, selector = captured[-1]
+    request, selector = requests[-1]
     assert isinstance(request, AnalysisRequest) and request.user_input == "看看这条"
     assert selector is ContextSelector.SELECTED
+    assert panel.message_edit.toPlainText() == ""
+
+    panel.set_state(AnalysisState.STREAMING)
+    assert panel.send_btn.isEnabled() is False and panel.stop_btn.isEnabled() is True
+
+    panel.set_result(
+        AnalysisResult(
+            content="结论",
+            usage=TokenUsage(3, 4, 7),
+            state=AnalysisState.DONE,
+            conversation=[
+                AnalysisMessage(MessageRole.USER, "看看这条"),
+                AnalysisMessage(MessageRole.ASSISTANT, "结论"),
+            ],
+        )
+    )
+    panel.set_state(AnalysisState.DONE)
+    assert panel.result_view.toPlainText() == "结论"
+    assert "3" in panel.usage_label.text() and "7" in panel.usage_label.text()
+    assert panel.turns_label.text() == "当前会话 1 轮"
+    # 会话已开始：目标与上下文不再生效，发送走追问
+    assert panel.goal_combo.isEnabled() is False and panel.context_combo.isEnabled() is False
+
+    panel.message_edit.setPlainText("那内存呢")
+    panel.send_btn.click()
+    panel.send_btn.click()  # 空文本不再发
+    assert follow_ups == ["那内存呢"]
+
+    panel.new_session_btn.click()
+    assert panel.context_combo.isEnabled() is True and panel.goal_combo.isEnabled() is True
+    assert panel.turns_label.text() == ""
 
 
 def test_menu_actions_emit_intent_signals(qtbot) -> None:
