@@ -28,8 +28,9 @@ from serial_log_analyzer.core.llm.profile_loader import load_profile, load_profi
 from serial_log_analyzer.core.logs.parser import LogParser
 from serial_log_analyzer.core.logs.pipeline import LogPipeline
 from serial_log_analyzer.core.logs.preset_loader import load_preset, load_presets
+from serial_log_analyzer.core.models.device import DeviceConnectionState
 from serial_log_analyzer.core.prompts.loader import PromptLibrary
-from serial_log_analyzer.core.services.analysis import AnalysisContextBuilder
+from serial_log_analyzer.core.services.analysis import AnalysisContextBuilder, AnalysisService
 from serial_log_analyzer.core.services.credential_resolver import CredentialResolver
 from serial_log_analyzer.core.services.device_session import DeviceSession
 from serial_log_analyzer.diagnostics.app_logging import configure_logging
@@ -40,6 +41,14 @@ from serial_log_analyzer.io.paths import repo_root, user_config_dir
 from serial_log_analyzer.io.resources import CompositeResourceLoader
 from serial_log_analyzer.io.serial.qt_serial_transport import QtSerialTransport
 from serial_log_analyzer.io.settings.qt_settings_store import SETTINGS_KEYS, QtSettingsStore
+from serial_log_analyzer.ui.controllers.analysis_controller import AnalysisController
+from serial_log_analyzer.ui.controllers.device_controller import DeviceController
+from serial_log_analyzer.ui.controllers.main_controller import MainController
+from serial_log_analyzer.ui.main_window import MainWindow
+from serial_log_analyzer.ui.models.log_table_model import LogTableModel
+from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
+from serial_log_analyzer.ui.widgets.log_view import LogView
+from serial_log_analyzer.ui.widgets.serial_toolbar import SerialToolBar
 
 __all__ = ["ApplicationContext", "build_application", "main"]
 
@@ -144,20 +153,131 @@ def build_application(argv: list[str] | None = None) -> ApplicationContext:
     )
 
 
-def build_window(context: ApplicationContext) -> object:
-    """组装 ``ui`` 层（控制器 / 窗口 / 组件）并接通三个控制器。
+def build_window(context: ApplicationContext) -> MainWindow:
+    """组装 ``ui`` 层（控制器 / 窗口 / 组件）并接通信号。
 
     参数:
         context: :func:`build_application` 的组装结果。
 
-    异常:
-        NotImplementedError: ``ui`` 层仍是 stub，待界面实现落地后接通。
+    返回:
+        已接线的 :class:`MainWindow`。
     """
 
-    raise NotImplementedError(
-        "ui 层尚未实现：SerialToolBar / LogView / AnalysisPanel 与三个控制器仍是 stub，"
-        "待其实现后在此组装窗口、创建 AnalysisService 并显式注入依赖"
+    settings = context.settings
+    log_view = LogView(LogTableModel())
+    panel = AnalysisPanel()
+    panel.set_goals(context.prompts.goals())
+    toolbar = SerialToolBar()
+
+    device = DeviceController(context.session)
+    analysis = AnalysisController(
+        AnalysisService(
+            context.adapter,
+            context.http_transport,
+            context.prompts,
+            context.credentials,
+            profile=context.profile,
+        ),
+        context.context_builder,
     )
+    main = MainController(device, analysis, settings)
+    window = MainWindow(log_view, panel, toolbar, on_close=lambda: _shutdown(main, window, settings))
+
+    toolbar.refresh_requested.connect(device.refresh_ports)
+    toolbar.connect_requested.connect(device.connect)
+    toolbar.disconnect_requested.connect(device.disconnect)
+    toolbar.clear_requested.connect(device.clear_logs)
+    toolbar.clear_requested.connect(log_view.clear)
+    toolbar.command_submitted.connect(device.send_command)
+    device.ports_refreshed.connect(toolbar.set_ports)
+
+    def _on_connection(state: object, message: str) -> None:
+        toolbar.set_connected(state is DeviceConnectionState.CONNECTED)
+        window.show_status(message)
+
+    device.connection_changed.connect(_on_connection)
+    device.log_update.connect(log_view.append_update)
+    device.error_occurred.connect(window.show_status)
+    device.command_reply.connect(lambda reply: toolbar.set_command_reply(reply.text))
+
+    log_view.selection_changed.connect(analysis.selected_sequences)
+    log_view.clear_requested.connect(device.clear_logs)
+    log_view.clear_requested.connect(log_view.clear)
+    log_view.export_requested.connect(
+        lambda: window.show_status("导出功能待接通（io/storage 的 LogFileStore 已就绪）")
+    )
+
+    panel.analyze_requested.connect(lambda payload: analysis.start_analysis(*payload))
+    panel.follow_up_requested.connect(analysis.follow_up)
+    panel.cancel_requested.connect(analysis.cancel)
+    panel.reset_requested.connect(analysis.reset)
+    analysis.result_updated.connect(panel.set_result)
+    analysis.state_changed.connect(panel.set_state)
+    analysis.error_occurred.connect(window.show_status)
+
+    window.settings_requested.connect(lambda: _open_settings(window, settings))
+    window.provider_requested.connect(lambda: _open_provider(window, context))
+    window.credential_requested.connect(lambda: _open_credential(window, context))
+
+    _restore_view(window, toolbar, log_view, settings)
+    device.refresh_ports()
+    window.show_status("就绪")
+    return window
+
+
+def _open_settings(window: MainWindow, settings: Any) -> None:
+    """打开设置对话框（键值由 ``io.settings`` 决定落盘位置）。"""
+
+    from serial_log_analyzer.ui.dialogs.settings_dialog import SettingsDialog
+
+    SettingsDialog(settings, window).exec()
+
+
+def _open_provider(window: MainWindow, context: ApplicationContext) -> None:
+    """打开模型服务对话框；保存走 ``ProfileStore`` 写用户配置目录。"""
+
+    from serial_log_analyzer.io.storage.profile_store import ProfileStore
+    from serial_log_analyzer.ui.dialogs.provider_dialog import ProviderDialog
+
+    ProviderDialog(load_profiles(context.resources), window, store=ProfileStore()).exec()
+
+
+def _open_credential(window: MainWindow, context: ApplicationContext) -> None:
+    """打开凭据对话框；钥匙串账号与 Profile 声明保持一致。"""
+
+    from serial_log_analyzer.ui.dialogs.credential_dialog import CredentialDialog
+
+    credential = context.profile.credential
+    CredentialDialog(
+        context.keyring,
+        context.profile.profile_id,
+        window,
+        account=credential.name or context.profile.profile_id,
+    ).exec()
+
+
+def _restore_view(window: MainWindow, toolbar: SerialToolBar, log_view: LogView, settings: Any) -> None:
+    """按设置恢复窗口几何、splitter、串口选择与自动滚动。"""
+
+    geometry = settings.get(SETTINGS_KEYS.WINDOW_GEOMETRY)
+    if geometry is not None:
+        window.restoreGeometry(geometry)
+    sizes = settings.get(SETTINGS_KEYS.SPLITTER_SIZES)
+    if sizes:
+        window.splitter.setSizes([int(size) for size in sizes])
+    toolbar.restore(
+        str(settings.get(SETTINGS_KEYS.LAST_PORT, "") or ""),
+        str(settings.get(SETTINGS_KEYS.LAST_BAUDRATE, "115200") or "115200"),
+    )
+    log_view.set_autoscroll(bool(settings.get(SETTINGS_KEYS.AUTOSCROLL, True)))
+
+
+def _shutdown(main_controller: MainController, window: MainWindow, settings: Any) -> None:
+    """退出前清理并同步界面偏好。"""
+
+    main_controller.shutdown()
+    settings.set(SETTINGS_KEYS.WINDOW_GEOMETRY, window.saveGeometry())
+    settings.set(SETTINGS_KEYS.SPLITTER_SIZES, window.splitter.sizes())
 
 
 def main(argv: list[str] | None = None) -> int:

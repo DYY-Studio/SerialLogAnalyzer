@@ -310,6 +310,25 @@ def test_missing_credential_raises_synchronously(resources) -> None:
     assert recorder.transport.requests == []
 
 
+def test_ask_without_handlers_fails_loudly(resources, parser) -> None:
+    from serial_log_analyzer.core.llm.adapter_loader import load_adapter
+    from serial_log_analyzer.core.llm.profile_loader import load_profile
+    from serial_log_analyzer.core.prompts.loader import PromptLibrary
+    from serial_log_analyzer.core.services.analysis import AnalysisService
+
+    profile = load_profile(resources, "openai-default")
+    service = AnalysisService(
+        load_adapter(resources, profile.adapter_id),
+        FakeTransport(),
+        PromptLibrary(resources),
+        FakeCredentials(),
+        profile=profile,
+    )
+
+    with pytest.raises(ConfigError):
+        service.ask(AnalysisRequest(user_input="分析"))
+
+
 def test_non_streaming_parses_body(resources) -> None:
     recorder = Recorder()
     service = recorder.service(resources, stream=False)

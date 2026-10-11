@@ -1,11 +1,26 @@
-"""主窗口：布局、菜单、工具栏与状态栏。
+"""主窗口：只负责布局、菜单、工具栏与状态栏。
 
-保持轻量：不持有业务状态、不解析日志、不发 LLM 请求；所有动作委托给控制器。
+不持有业务状态、不解析日志、不发 LLM 请求；所有动作委托给控制器，
+退出清理通过构造时注入的回调执行。
 """
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QMainWindow
+from collections.abc import Callable
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import (
+    QMainWindow,
+    QSplitter,
+    QStatusBar,
+    QVBoxLayout,
+    QWidget,
+)
+
+from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
+from serial_log_analyzer.ui.widgets.log_view import LogView
+from serial_log_analyzer.ui.widgets.serial_toolbar import SerialToolBar
 
 __all__ = ["MainWindow"]
 
@@ -18,21 +33,76 @@ class MainWindow(QMainWindow):
         analysis_panel: 右侧分析面板。
         serial_toolbar: 顶部串口工具栏。
         parent: 可选父窗口。
+        on_close: 关闭前的清理回调（由组合根注入，例如断开设备、取消请求）。
+
+    信号（由组合根连接，窗口不自己构造对话框）:
+        settings_requested(): 请求打开设置对话框。
+        provider_requested(): 请求打开模型服务对话框。
+        credential_requested(): 请求打开凭据对话框。
     """
+
+    settings_requested = Signal()
+    provider_requested = Signal()
+    credential_requested = Signal()
 
     def __init__(
         self,
-        log_view: object,
-        analysis_panel: object,
-        serial_toolbar: object,
+        log_view: LogView,
+        analysis_panel: AnalysisPanel,
+        serial_toolbar: SerialToolBar,
         parent: QMainWindow | None = None,
+        *,
+        on_close: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
-        self._log_view = log_view
-        self._analysis_panel = analysis_panel
-        self._serial_toolbar = serial_toolbar
+        self._on_close = on_close
+        self.log_view = log_view
+        self.analysis_panel = analysis_panel
+        self.serial_toolbar = serial_toolbar
+        self.setWindowTitle("SerialLogAnalyzer - 串口日志分析工具")
+        self.resize(1200, 800)
+        self.addToolBar(serial_toolbar)
+        self._build_menu()
+
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.addWidget(log_view)
+        self.splitter.addWidget(analysis_panel)
+        self.splitter.setStretchFactor(0, 7)
+        self.splitter.setStretchFactor(1, 3)
+        self.splitter.setSizes([840, 360])
+
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.splitter)
+        self.setCentralWidget(central)
+
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+
+    def show_status(self, message: str) -> None:
+        """在状态栏显示一条消息。"""
+
+        self.status_bar.showMessage(message)
+
+    def _build_menu(self) -> None:
+        """构建菜单栏：只发射意图信号，对话框由组合根打开。"""
+
+        config_menu = self.menuBar().addMenu("配置")
+
+        def _add(title: str, signal: Signal) -> None:
+            action = QAction(title, self)
+            action.triggered.connect(signal.emit)
+            config_menu.addAction(action)
+
+        _add("设置…", self.settings_requested)
+        _add("模型服务…", self.provider_requested)
+        _add("凭据…", self.credential_requested)
 
     def closeEvent(self, event: object) -> None:
-        """窗口关闭：交由主控制器执行保存设置与断开设备等清理。"""
+        """窗口关闭：执行清理回调。"""
 
-        raise NotImplementedError
+        if self._on_close is not None:
+            self._on_close()
+        super().closeEvent(event)
