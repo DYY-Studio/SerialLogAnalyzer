@@ -37,6 +37,7 @@ class SerialToolBar(QToolBar):
         refresh_requested(): 请求刷新串口列表。
         clear_requested(): 请求清空日志。
         command_submitted(str): 请求发送一行命令。
+        serial_settings_requested(): 请求打开串口高级设置。
     """
 
     connect_requested = Signal(object)
@@ -44,9 +45,16 @@ class SerialToolBar(QToolBar):
     refresh_requested = Signal()
     clear_requested = Signal()
     command_submitted = Signal(str)
+    serial_settings_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._advanced: dict[str, object] = {
+            "data_bits": 8,
+            "parity": Parity.NONE,
+            "stop_bits": StopBits.ONE,
+            "flow_control": FlowControl.NONE,
+        }
         self._build()
 
     # ------------------------------------------------------------------
@@ -83,11 +91,27 @@ class SerialToolBar(QToolBar):
         return SerialConfig(
             port=str(port),
             baudrate=int(self.baud_combo.currentText()),
-            data_bits=8,
-            parity=Parity.NONE,
-            stop_bits=StopBits.ONE,
-            flow_control=FlowControl.NONE,
+            **self._advanced,
         )
+
+    def serial_values(self) -> dict[str, object]:
+        """返回当前串口参数（供高级设置对话框初始化）。"""
+
+        return {"baudrate": self.baud_combo.currentText(), **self._advanced}
+
+    def apply_serial_settings(self, values: dict[str, object]) -> None:
+        """应用高级设置对话框的结果。"""
+
+        baudrate = str(values.get("baudrate", "") or "")
+        if baudrate:
+            index = self.baud_combo.findText(baudrate)
+            if index >= 0:
+                self.baud_combo.setCurrentIndex(index)
+            else:
+                self.baud_combo.setEditText(baudrate)
+        for key in ("data_bits", "parity", "stop_bits", "flow_control"):
+            if key in values:
+                self._advanced[key] = values[key]
 
     def set_command_reply(self, text: str) -> None:
         """显示最近一条命令响应（DESIGN §7 的命令回复区）。"""
@@ -138,6 +162,10 @@ class SerialToolBar(QToolBar):
         self.clear_btn = QPushButton("清空")
         self.clear_btn.clicked.connect(self.clear_requested.emit)
         self.addWidget(self.clear_btn)
+
+        self.settings_btn = QPushButton("串口设置…")
+        self.settings_btn.clicked.connect(self.serial_settings_requested.emit)
+        self.addWidget(self.settings_btn)
 
         self.addSeparator()
         self.addWidget(QLabel(" 命令 "))
