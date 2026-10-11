@@ -88,6 +88,21 @@ class DeviceSession:
 
         self._handlers = handlers
 
+    def set_pipeline(self, pipeline: LogPipeline) -> None:
+        """替换日志流水线（切换日志 Preset 时使用）。
+
+        参数:
+            pipeline: 用新 Preset 构造的流水线。
+
+        异常:
+            SerialConnectionError: 设备已连接时不允许替换。
+        """
+
+        if self._state is not DeviceConnectionState.DISCONNECTED:
+            raise SerialConnectionError("设备已连接，无法切换日志 Preset")
+        self._pipeline = pipeline
+        self._framer.reset()
+
     @property
     def state(self) -> DeviceConnectionState:
         """当前连接状态。"""

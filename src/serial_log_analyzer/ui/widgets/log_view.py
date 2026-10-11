@@ -40,12 +40,14 @@ class LogView(QWidget):
         export_requested(): 用户请求导出日志。
         import_requested(): 用户请求导入历史日志。
         clear_requested(): 用户请求清空日志。
+        autoscroll_toggled(bool): 用户切换了自动滚动开关。
     """
 
     selection_changed = Signal(list)
     export_requested = Signal()
     import_requested = Signal()
     clear_requested = Signal()
+    autoscroll_toggled = Signal(bool)
 
     def __init__(self, model: LogTableModel, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -82,9 +84,13 @@ class LogView(QWidget):
         return entries
 
     def set_autoscroll(self, enabled: bool) -> None:
-        """设置新日志到达时是否自动滚动到底部。"""
+        """设置新日志到达时是否自动滚动到底部（同步勾选状态）。"""
 
         self._autoscroll = bool(enabled)
+        if self.autoscroll_box.isChecked() != self._autoscroll:
+            self.autoscroll_box.blockSignals(True)
+            self.autoscroll_box.setChecked(self._autoscroll)
+            self.autoscroll_box.blockSignals(False)
 
     def clear(self) -> None:
         """清空表格。"""
@@ -121,6 +127,11 @@ class LogView(QWidget):
         self.text_filter.setMaximumWidth(200)
         self.text_filter.textChanged.connect(self._apply_filters)
         bar.addWidget(self.text_filter)
+
+        self.autoscroll_box = QCheckBox("自动滚动")
+        self.autoscroll_box.setChecked(True)
+        self.autoscroll_box.toggled.connect(self._on_autoscroll_toggled)
+        bar.addWidget(self.autoscroll_box)
         bar.addStretch()
 
         export = QPushButton("导出")
@@ -163,6 +174,10 @@ class LogView(QWidget):
     def _on_rows_inserted(self, parent: object, first: int, last: int) -> None:
         if self._autoscroll:
             self.table_view.scrollToBottom()
+
+    def _on_autoscroll_toggled(self, enabled: bool) -> None:
+        self._autoscroll = enabled
+        self.autoscroll_toggled.emit(enabled)
 
     def _on_selection_changed(self) -> None:
         self.selection_changed.emit(

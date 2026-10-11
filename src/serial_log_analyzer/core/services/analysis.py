@@ -57,6 +57,11 @@ class AnalysisContextBuilder:
     def __init__(self, pipeline: LogPipeline) -> None:
         self._pipeline = pipeline
 
+    def set_pipeline(self, pipeline: LogPipeline) -> None:
+        """替换日志来源（切换日志 Preset 时由组合根调用）。"""
+
+        self._pipeline = pipeline
+
     def build(
         self,
         selector: ContextSelector,
@@ -164,6 +169,7 @@ class AnalysisService:
         self._profile = profile
         self._transport = transport
         self._prompts = prompts
+        self._credentials = credentials
         self._builder = RequestBuilder(adapter, profile, credentials)
         self._handlers = handlers
         self._conversation: list[AnalysisMessage] = []
@@ -183,6 +189,25 @@ class AnalysisService:
         """
 
         self._handlers = handlers
+
+    def set_profile(self, profile: ProviderProfile, adapter: JSONAdapter) -> None:
+        """切换目标 Profile 与对应 Adapter，后续请求使用新配置。
+
+        参数:
+            profile: 新的 Profile 声明。
+            adapter: 与 ``profile.adapter_id`` 匹配的 Adapter。
+
+        异常:
+            ConfigError: 已有进行中的请求，或 Profile 与 Adapter 不匹配。
+        """
+
+        if self._active:
+            raise ConfigError("已有进行中的分析，无法切换 Profile")
+        if adapter.adapter_id != profile.adapter_id:
+            raise ConfigError("Profile 与 Adapter 不匹配")
+        self._profile = profile
+        self._adapter = adapter
+        self._builder = RequestBuilder(adapter, profile, self._credentials)
 
     @property
     def conversation(self) -> list[AnalysisMessage]:

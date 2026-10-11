@@ -39,11 +39,13 @@ class MainWindow(QMainWindow):
         settings_requested(): 请求打开设置对话框。
         provider_requested(): 请求打开模型服务对话框。
         credential_requested(): 请求打开凭据对话框。
+        preset_requested(): 请求切换日志 Preset。
     """
 
     settings_requested = Signal()
     provider_requested = Signal()
     credential_requested = Signal()
+    preset_requested = Signal()
 
     def __init__(
         self,
@@ -99,6 +101,7 @@ class MainWindow(QMainWindow):
         _add("设置…", self.settings_requested)
         _add("模型服务…", self.provider_requested)
         _add("凭据…", self.credential_requested)
+        _add("切换日志 Preset…", self.preset_requested)
 
     def closeEvent(self, event: object) -> None:
         """窗口关闭：执行清理回调。"""

@@ -310,6 +310,53 @@ def test_missing_credential_raises_synchronously(resources) -> None:
     assert recorder.transport.requests == []
 
 
+def test_set_profile_switches_target_and_blocks_while_streaming(resources) -> None:
+    from serial_log_analyzer.core.errors import ConfigError
+    from serial_log_analyzer.core.llm.adapter_loader import load_adapter
+    from serial_log_analyzer.core.llm.profile_loader import load_profile
+
+    recorder = Recorder()
+    service = recorder.service(resources)
+    transport = recorder.transport
+
+    target = load_profile(resources, "sensenova")
+    service.set_profile(target, load_adapter(resources, target.adapter_id))
+
+    service.ask(AnalysisRequest(user_input="分析"))
+    assert transport.requests[-1].url.startswith("https://token.sensenova.cn/v1")
+
+    with pytest.raises(ConfigError):
+        service.set_profile(
+            load_profile(resources, "openai-default"),
+            load_adapter(resources, "openai-compatible"),
+        )
+
+
+def test_set_profile_rejects_adapter_mismatch(resources) -> None:
+    from serial_log_analyzer.core.errors import ConfigError
+    from serial_log_analyzer.core.llm.adapter_loader import load_adapter
+    from serial_log_analyzer.core.llm.profile_loader import load_profile
+
+    recorder = Recorder()
+    service = recorder.service(resources)
+
+    with pytest.raises(ConfigError):
+        service.set_profile(
+            load_profile(resources, "sensenova"), load_adapter(resources, "anthropic")
+        )
+
+
+def test_context_builder_follows_pipeline_swap(parser) -> None:
+    builder = AnalysisContextBuilder(_pipeline(parser))
+    other = LogPipeline(parser)
+    other.feed("[E] [mem] malloc failed", 9.0)
+
+    builder.set_pipeline(other)
+
+    context = builder.build(ContextSelector.RECENT)
+    assert "malloc failed" in context.render()
+
+
 def test_ask_without_handlers_fails_loudly(resources, parser) -> None:
     from serial_log_analyzer.core.llm.adapter_loader import load_adapter
     from serial_log_analyzer.core.llm.profile_loader import load_profile
