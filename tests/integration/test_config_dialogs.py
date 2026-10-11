@@ -1,7 +1,7 @@
 """配置类对话框的集成测试（需要 Qt，使用 pytest-qt）。
 
-覆盖「设置」「模型服务」「API Key」三个对话框与设置存储 / Profile 存储 / 钥匙串适配器的协作，
-并确认界面文案与 DESIGN.md §13 的凭据规则一致（运行时输入默认不写钥匙串）。
+覆盖「设置」「模型服务」两个对话框与设置存储 / Profile 存储 / 钥匙串适配器的协作：
+凭据来源随 Profile 落盘，密钥只写系统钥匙串（见 DESIGN.md §13 与 docs/protocols/credentials.md §4）。
 """
 
 from __future__ import annotations
@@ -24,16 +24,17 @@ from PySide6.QtWidgets import (
     QSpinBox,
 )
 
+from serial_log_analyzer.core.errors import ConfigError
 from serial_log_analyzer.core.llm.adapter_loader import load_adapters
 from serial_log_analyzer.core.llm.profile_loader import load_profile, load_profiles
-from serial_log_analyzer.core.models.provider import ModelOption
+from serial_log_analyzer.core.models.provider import CredentialKind, CredentialRef, ModelOption
 from serial_log_analyzer.io.credentials.keyring_store import KeyringStoreAdapter
 from serial_log_analyzer.io.resources import CompositeResourceLoader
 from serial_log_analyzer.io.settings.qt_settings_store import SETTINGS_KEYS, QtSettingsStore
 from serial_log_analyzer.io.storage.profile_store import ProfileStore
-from serial_log_analyzer.ui.dialogs.credential_dialog import CredentialDialog
 from serial_log_analyzer.ui.dialogs.provider_dialog import ProviderDialog
 from serial_log_analyzer.ui.dialogs.settings_dialog import SettingsDialog
+from serial_log_analyzer.ui.widgets.credential_editor import CredentialEditor
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -75,6 +76,13 @@ class UnavailableKeyring:
 
     def delete(self, credential_id: str) -> bool:  # pragma: no cover - 不应被调用
         return False
+
+
+def _editor(qtbot, *, keyring=None, credential: CredentialRef | None = None) -> CredentialEditor:
+    editor = CredentialEditor(keyring if keyring is not None else KeyringStoreAdapter(backend=FakeKeyringBackend()))
+    qtbot.addWidget(editor)
+    editor.load(credential or CredentialRef(kind=CredentialKind.KEYRING, name="deepseek"), "deepseek")
+    return editor
 
 
 # --------------------------------------------------------------------------- 设置对话框
@@ -124,13 +132,14 @@ def test_settings_dialog_accept_persists_values(qtbot, store: QtSettingsStore) -
 # --------------------------------------------------------------------------- 模型服务对话框
 
 
-def _provider_dialog(tmp_path, *, discovery=None) -> ProviderDialog:
+def _provider_dialog(tmp_path, *, discovery=None, keyring=None) -> ProviderDialog:
     """用「临时用户目录 + 仓库内置」构造对话框：reload 与落盘共用同一份资源。"""
 
     loader = CompositeResourceLoader([Path(tmp_path), _REPO_ROOT])
     return ProviderDialog(
         load_profiles(loader),
         load_adapters(loader),
+        keyring=keyring if keyring is not None else KeyringStoreAdapter(backend=FakeKeyringBackend()),
         reload=lambda: load_profiles(loader),
         store=ProfileStore(tmp_path),
         discovery=discovery,
@@ -144,7 +153,8 @@ def test_provider_dialog_lists_profiles(qtbot, tmp_path) -> None:
     assert dialog.selected_profile_id() == "deepseek"
     assert dialog.findChild(QComboBox, "provider-model").currentText() == "deepseek-chat"
     assert dialog.findChild(QComboBox, "provider-adapter").currentData() == "openai-compatible"
-    assert "系统钥匙串" in dialog.findChild(QLabel, "provider-credential").text()
+    assert dialog.findChild(QComboBox, "credential-source").currentData() is CredentialKind.KEYRING
+    assert dialog.findChild(QLineEdit, "credential-target").text() == "deepseek"
 
 
 def test_provider_dialog_switches_profile(qtbot, tmp_path) -> None:
@@ -156,7 +166,24 @@ def test_provider_dialog_switches_profile(qtbot, tmp_path) -> None:
 
     assert dialog.selected_profile_id() == "ollama-local"
     assert dialog.findChild(QLineEdit, "provider-base-url").text().startswith("http://localhost")
-    assert "环境变量：OLLAMA_API_KEY" in dialog.findChild(QLabel, "provider-credential").text()
+    assert dialog.findChild(QComboBox, "credential-source").currentData() is CredentialKind.ENVIRONMENT
+    assert dialog.findChild(QLineEdit, "credential-target").text() == "OLLAMA_API_KEY"
+
+
+def test_provider_dialog_saves_credential_source_to_yaml(qtbot, tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
+    store = ProfileStore(tmp_path)
+    dialog = _provider_dialog(tmp_path)
+    qtbot.addWidget(dialog)
+    source = dialog.findChild(QComboBox, "credential-source")
+    source.setCurrentIndex(source.findData(CredentialKind.ENVIRONMENT))
+    dialog.findChild(QLineEdit, "credential-target").setText("MY_DEEPSEEK_KEY")
+
+    qtbot.mouseClick(dialog.findChild(QPushButton, "provider-save"), Qt.MouseButton.LeftButton)
+
+    text = store.load_text("deepseek") or ""
+    assert "kind: environment" in text
+    assert "env_var: MY_DEEPSEEK_KEY" in text
 
 
 def test_provider_dialog_saves_edits_to_user_config(qtbot, tmp_path, monkeypatch) -> None:
@@ -182,12 +209,18 @@ def test_provider_dialog_saves_edits_to_user_config(qtbot, tmp_path, monkeypatch
 
 
 def test_provider_dialog_without_profiles(qtbot, tmp_path) -> None:
-    dialog = ProviderDialog([], [], reload=lambda: [], store=ProfileStore(tmp_path))
+    dialog = ProviderDialog(
+        [],
+        [],
+        keyring=KeyringStoreAdapter(backend=FakeKeyringBackend()),
+        reload=lambda: [],
+        store=ProfileStore(tmp_path),
+    )
     qtbot.addWidget(dialog)
 
     assert dialog.selected_profile_id() == ""
     assert dialog.findChild(QComboBox, "provider-adapter").count() == 0
-    assert dialog.findChild(QLabel, "provider-credential").text() == "（无可用 Profile）"
+    assert dialog.findChild(QLineEdit, "credential-target").text() == ""
     assert dialog.findChild(QPushButton, "provider-save").isEnabled() is False
 
 
@@ -292,112 +325,102 @@ def test_provider_dialog_fetches_models_with_edited_fields(qtbot, tmp_path) -> N
     assert "2" in dialog.findChild(QLabel, "provider-status").text()
 
 
+# --------------------------------------------------------------------------- 凭据编辑器
 
-# --------------------------------------------------------------------------- API Key 对话框
 
-
-def test_credential_dialog_saves_to_keyring_when_checked(qtbot) -> None:
+def test_credential_editor_saves_to_keyring(qtbot) -> None:
     backend = FakeKeyringBackend()
-    dialog = CredentialDialog(KeyringStoreAdapter(backend=backend), "deepseek")
-    qtbot.addWidget(dialog)
-    dialog.findChild(QLineEdit, "credential-secret").setText("sk-saved")
-    dialog.findChild(QCheckBox, "credential-save-keyring").setChecked(True)
+    editor = _editor(qtbot, keyring=KeyringStoreAdapter(backend=backend))
 
-    dialog.accept()
+    assert editor.credential() == CredentialRef(kind=CredentialKind.KEYRING, name="deepseek")
+    editor.findChild(QLineEdit, "credential-secret").setText("sk-saved")
+    qtbot.mouseClick(editor.findChild(QPushButton, "credential-save"), Qt.MouseButton.LeftButton)
 
     assert backend.values == {("SerialLogAnalyzer", "deepseek"): "sk-saved"}
+    assert editor.findChild(QLineEdit, "credential-secret").text() == ""  # 不回显已保存内容
+    assert editor.findChild(QLabel, "credential-state").text() == "已保存"
 
 
-def test_credential_dialog_uses_declared_account_name(qtbot) -> None:
+def test_credential_editor_uses_target_as_account_name(qtbot) -> None:
     backend = FakeKeyringBackend()
-    dialog = CredentialDialog(
-        KeyringStoreAdapter(backend=backend),
-        "deepseek",
-        account="deepseek-prod",
-    )
-    qtbot.addWidget(dialog)
-    dialog.findChild(QLineEdit, "credential-secret").setText("sk-prod")
-    dialog.findChild(QCheckBox, "credential-save-keyring").setChecked(True)
+    editor = _editor(qtbot, keyring=KeyringStoreAdapter(backend=backend))
+    editor.findChild(QLineEdit, "credential-target").setText("deepseek-prod")
+    editor.findChild(QLineEdit, "credential-secret").setText("sk-prod")
 
-    dialog.accept()
+    qtbot.mouseClick(editor.findChild(QPushButton, "credential-save"), Qt.MouseButton.LeftButton)
 
-    assert dialog.account() == "deepseek-prod"
+    assert editor.credential() == CredentialRef(kind=CredentialKind.KEYRING, name="deepseek-prod")
     assert backend.values == {("SerialLogAnalyzer", "deepseek-prod"): "sk-prod"}
 
 
-def test_credential_dialog_falls_back_to_profile_id_as_account(qtbot) -> None:
-    dialog = CredentialDialog(KeyringStoreAdapter(backend=FakeKeyringBackend()), "deepseek", account="  ")
-    qtbot.addWidget(dialog)
-
-    assert dialog.account() == "deepseek"
-
-
-def test_credential_dialog_toggles_echo_mode(qtbot) -> None:
-    dialog = CredentialDialog(KeyringStoreAdapter(backend=FakeKeyringBackend()), "deepseek")
-    qtbot.addWidget(dialog)
-    secret = dialog.findChild(QLineEdit, "credential-secret")
-
-    assert secret.echoMode() == QLineEdit.EchoMode.Password
-
-    dialog.findChild(QCheckBox, "credential-show").setChecked(True)
-
-    assert secret.echoMode() == QLineEdit.EchoMode.Normal
-
-
-def test_credential_dialog_blocks_empty_secret_when_saving(qtbot, monkeypatch) -> None:
+def test_credential_editor_blocks_empty_secret(qtbot, monkeypatch) -> None:
     warnings: list[str] = []
-    monkeypatch.setattr(
-        QMessageBox, "warning", lambda *args, **kwargs: warnings.append(str(args[2]))
-    )
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: warnings.append(str(args[2])))
     backend = FakeKeyringBackend()
-    dialog = CredentialDialog(KeyringStoreAdapter(backend=backend), "deepseek")
-    qtbot.addWidget(dialog)
-    dialog.findChild(QCheckBox, "credential-save-keyring").setChecked(True)
+    editor = _editor(qtbot, keyring=KeyringStoreAdapter(backend=backend))
 
-    dialog.accept()
+    qtbot.mouseClick(editor.findChild(QPushButton, "credential-save"), Qt.MouseButton.LeftButton)
 
-    assert dialog.result() == int(QDialog.DialogCode.Rejected)
     assert warnings and "请先输入 API Key" in warnings[0]
     assert backend.values == {}
 
 
-def test_credential_dialog_keeps_open_when_keyring_write_fails(qtbot, monkeypatch) -> None:
+def test_credential_editor_reports_keyring_write_failure(qtbot, monkeypatch) -> None:
     errors: list[str] = []
     monkeypatch.setattr(QMessageBox, "critical", lambda *args, **kwargs: errors.append(str(args[2])))
-    dialog = CredentialDialog(KeyringStoreAdapter(backend=FakeKeyringBackend(fail_on_save=True)), "deepseek")
-    qtbot.addWidget(dialog)
-    dialog.findChild(QLineEdit, "credential-secret").setText("sk-fail")
-    dialog.findChild(QCheckBox, "credential-save-keyring").setChecked(True)
+    editor = _editor(qtbot, keyring=KeyringStoreAdapter(backend=FakeKeyringBackend(fail_on_save=True)))
+    editor.findChild(QLineEdit, "credential-secret").setText("sk-fail")
 
-    dialog.accept()
+    qtbot.mouseClick(editor.findChild(QPushButton, "credential-save"), Qt.MouseButton.LeftButton)
 
-    assert dialog.result() == int(QDialog.DialogCode.Rejected)
     assert errors and "钥匙串" in errors[0]
 
 
-def test_credential_dialog_disables_saving_without_keyring(qtbot) -> None:
-    dialog = CredentialDialog(UnavailableKeyring(), "deepseek")
-    qtbot.addWidget(dialog)
-
-    assert dialog.save_to_keyring() is False
-    assert dialog.findChild(QCheckBox, "credential-save-keyring").isEnabled() is False
-    assert dialog.findChild(QPushButton, "credential-clear").isEnabled() is False
-    assert "系统钥匙串不可用" in dialog.findChild(QLabel, "credential-hint").text()
-
-
-def test_credential_dialog_clear_saved_secret(qtbot, monkeypatch) -> None:
+def test_credential_editor_clears_saved_secret(qtbot, monkeypatch) -> None:
     backend = FakeKeyringBackend()
     keyring = KeyringStoreAdapter(backend=backend)
     keyring.save("deepseek", "sk-old")
     monkeypatch.setattr(
         QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes
     )
-    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
-    dialog = CredentialDialog(keyring, "deepseek")
-    qtbot.addWidget(dialog)
+    editor = _editor(qtbot, keyring=keyring)
+    assert editor.findChild(QLabel, "credential-state").text() == "已保存"
 
-    qtbot.mouseClick(
-        dialog.findChild(QPushButton, "credential-clear"), Qt.MouseButton.LeftButton
-    )
+    qtbot.mouseClick(editor.findChild(QPushButton, "credential-clear"), Qt.MouseButton.LeftButton)
 
     assert backend.values == {}
+    assert editor.findChild(QLabel, "credential-state").text() == "未设置"
+
+
+def test_credential_editor_toggles_echo_mode(qtbot) -> None:
+    editor = _editor(qtbot)
+    secret = editor.findChild(QLineEdit, "credential-secret")
+
+    assert secret.echoMode() == QLineEdit.EchoMode.Password
+
+    editor.findChild(QCheckBox, "credential-show").setChecked(True)
+
+    assert secret.echoMode() == QLineEdit.EchoMode.Normal
+
+
+def test_credential_editor_without_keyring_disables_secret_controls(qtbot) -> None:
+    editor = _editor(qtbot, keyring=UnavailableKeyring())
+
+    assert editor.findChild(QPushButton, "credential-save").isEnabled() is False
+    assert editor.findChild(QPushButton, "credential-clear").isEnabled() is False
+    assert editor.findChild(QLabel, "credential-state").text() == "系统钥匙串不可用"
+
+
+def test_credential_editor_environment_kind_has_no_secret_input(qtbot) -> None:
+    editor = _editor(
+        qtbot,
+        credential=CredentialRef(kind=CredentialKind.ENVIRONMENT, env_var="DEMO_KEY"),
+    )
+
+    assert editor.findChild(QLineEdit, "credential-secret").isEnabled() is False
+    assert editor.findChild(QLabel, "credential-state").text() == "密钥来自环境变量"
+    assert editor.credential() == CredentialRef(kind=CredentialKind.ENVIRONMENT, env_var="DEMO_KEY")
+
+    editor.findChild(QLineEdit, "credential-target").setText("  ")
+    with pytest.raises(ConfigError):
+        editor.credential()

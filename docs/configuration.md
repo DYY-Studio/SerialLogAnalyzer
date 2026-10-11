@@ -147,7 +147,7 @@ extra_headers: {}
 | 删除 | 只删用户配置目录里的那份；不存在用户副本（纯内置）时明确拒绝并提示 |
 | 编辑 | `base_url` / `model` / `stream` / `request_timeout_seconds` / `adapter_id` / `extra_body` / `extra_headers` |
 | 拉取模型 | 用当前界面字段（含未保存编辑）向 `<base_url><models.endpoint>` 发 `GET`，把结果填进可编辑的模型下拉；失败弹窗提示 |
-| 凭据来源 | 只读展示；改凭据用「API Key」对话框（涉及密钥与系统钥匙串） |
+| 凭据 | 选来源（keyring / environment）与目标标识（账号名 / 变量名），随 Profile 一起落盘；密钥另外写入系统钥匙串（见 §5） |
 
 - `extra_body` / `extra_headers` 用 YAML 文本编辑：留空即不追加；不是合法映射或值不是字符串时
   明确报错且**不落盘**。

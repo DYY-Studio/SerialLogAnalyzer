@@ -11,7 +11,7 @@ PC 端**通用串口日志分析工具**：从任意串口设备实时接收并�
 - 日志表格：级别 / 模块 / 文本过滤、暂停滚动、清空、手动导入导出
 - LLM 分析：同一输入框首轮 + 多轮追问，SSE 流式输出
 - Provider 配置驱动：OpenAI 兼容、OpenAI Responses、Anthropic、Google Gemini（YAML 声明）
-- 凭据管理：按 Profile 声明的 `kind` 从系统 Keychain / 环境变量取值，不跨来源回落
+- 凭据管理：在「模型服务」里为每个 Profile 选来源（系统 Keychain / 环境变量），密钥只写钥匙串，不跨来源回落
 - 配置与资源：用户配置目录覆盖内置 YAML Preset / Adapter / Profile 与 Prompt 模板
 - 日志留档：导出为文本 / CSV / JSONL，也可导入历史日志回看
 - 诊断报告：一条命令列出资源来源、已加载配置、配置错误与日志末尾（`python -m serial_log_analyzer.diagnostics`）

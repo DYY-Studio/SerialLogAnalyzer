@@ -226,7 +226,6 @@ def test_menu_actions_emit_intent_signals(qtbot) -> None:
     window.clear_requested.connect(lambda: seen.append("clear"))
     window.settings_requested.connect(lambda: seen.append("settings"))
     window.provider_requested.connect(lambda: seen.append("provider"))
-    window.credential_requested.connect(lambda: seen.append("credential"))
 
     menus = window.menuBar().actions()
     assert [menu.text() for menu in menus] == ["文件", "配置", "视图"]
@@ -236,7 +235,6 @@ def test_menu_actions_emit_intent_signals(qtbot) -> None:
     assert [action.text() for action in config_actions] == [
         "设置…",
         "模型服务…",
-        "凭据…",
         "切换日志 Preset…",
     ]
     # 「视图」里必须能开关停靠面板，否则关掉就找不回来
@@ -250,10 +248,10 @@ def test_menu_actions_emit_intent_signals(qtbot) -> None:
         assert dock.features() & QDockWidget.DockWidgetFeature.DockWidgetFloatable
         assert dock.features() & QDockWidget.DockWidgetFeature.DockWidgetMovable
 
-    for action in (*file_actions, *config_actions[:3]):
+    for action in (*file_actions, *config_actions[:2]):
         action.trigger()
 
-    assert seen == ["export", "import", "clear", "settings", "provider", "credential"]
+    assert seen == ["export", "import", "clear", "settings", "provider"]
 
 
 def test_toolbar_emits_config(qtbot) -> None:

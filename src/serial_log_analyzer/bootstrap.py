@@ -250,7 +250,6 @@ def build_window(context: ApplicationContext) -> MainWindow:
 
     window.settings_requested.connect(lambda: _open_settings(window, context, service))
     window.provider_requested.connect(lambda: _open_provider(window, context, service))
-    window.credential_requested.connect(lambda: _open_credential(window, context))
     window.preset_requested.connect(lambda: _choose_preset(window, context))
 
     _restore_view(window, toolbar, log_view, settings)
@@ -413,7 +412,7 @@ def _open_provider(
     """打开模型服务对话框（可新建 / 编辑 / 删除 Profile、拉取模型列表）。
 
     关闭后重读 Profile 列表：当前 Profile 已被删除时切到第一个可用项，仍存在时把
-    改动（base_url / model / extra_* 等）应用到分析服务。
+    改动（base_url / model / extra_* / 凭据来源等）应用到分析服务。
     """
 
     from serial_log_analyzer.core.llm.adapter_loader import load_adapters
@@ -426,6 +425,7 @@ def _open_provider(
         reload_profiles(),
         load_adapters(context.resources),
         window,
+        keyring=context.keyring,
         reload=reload_profiles,
         store=ProfileStore(),
         discovery=ModelDiscoveryService(context.http_transport, context.credentials),
@@ -454,20 +454,6 @@ def _refresh_profiles(
         except AppError as exc:
             window.show_status(f"Profile 改动未能即时生效：{exc}")
     window.analysis_panel.set_profiles(profiles, context.profile.profile_id)
-
-
-def _open_credential(window: MainWindow, context: ApplicationContext) -> None:
-    """打开凭据对话框；钥匙串账号与 Profile 声明保持一致。"""
-
-    from serial_log_analyzer.ui.dialogs.credential_dialog import CredentialDialog
-
-    credential = context.profile.credential
-    CredentialDialog(
-        context.keyring,
-        context.profile.profile_id,
-        window,
-        account=credential.name or context.profile.profile_id,
-    ).exec()
 
 
 def _switch_profile(

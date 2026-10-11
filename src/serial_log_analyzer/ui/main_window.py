@@ -50,7 +50,6 @@ class MainWindow(QMainWindow):
         clear_requested(): 请求清空日志。
         settings_requested(): 请求打开设置对话框。
         provider_requested(): 请求打开模型服务对话框。
-        credential_requested(): 请求打开凭据对话框。
         preset_requested(): 请求切换日志 Preset。
     """
 
@@ -59,7 +58,6 @@ class MainWindow(QMainWindow):
     clear_requested = Signal()
     settings_requested = Signal()
     provider_requested = Signal()
-    credential_requested = Signal()
     preset_requested = Signal()
 
     def __init__(
@@ -164,7 +162,6 @@ class MainWindow(QMainWindow):
         config_menu = self.menuBar().addMenu("配置")
         _add(config_menu, "设置…", self.settings_requested)
         _add(config_menu, "模型服务…", self.provider_requested)
-        _add(config_menu, "凭据…", self.credential_requested)
         _add(config_menu, "切换日志 Preset…", self.preset_requested)
 
         view_menu = self.menuBar().addMenu("视图")

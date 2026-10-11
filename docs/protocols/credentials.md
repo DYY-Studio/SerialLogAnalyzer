@@ -41,11 +41,11 @@ SecretService（GNOME Keyring / KWallet）。
 
 ## 4. 界面行为
 
-- Keyring 可用时：凭据对话框提供“保存到系统钥匙串”选项；
-- 用户输入的密钥只有勾选保存时才写入钥匙串，不自动落盘；
-- Keyring 不可用（如 headless Linux）时：保存选项置灰，并提示声明了 `kind: keyring` 的 Profile 取不到密钥，
-  需要改用 `environment` 来源；
-- 密钥输入框使用密码遮蔽，且不回显已保存的密钥内容（只显示“已保存”状态）。
+- 凭据区在「模型服务」对话框里（见 `docs/configuration.md` §4.4）：来源与目标标识随 Profile 落盘；
+- Keyring 可用时：「保存到钥匙串」把当前输入的密钥写入系统钥匙串（账号名即 `name`）；
+- Keyring 不可用（如 headless Linux）时：保存 / 清除置灰，并提示声明了 `kind: keyring` 的 Profile
+  取不到密钥，需要改用 `environment` 来源；
+- 密钥输入框使用密码遮蔽；界面**不读回**已保存的密钥内容，只用「已保存 / 未设置」表示状态。
 
 ## 5. 禁止事项
 
