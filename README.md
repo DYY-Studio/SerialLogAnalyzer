@@ -43,7 +43,8 @@ python main.py
 2. 日志实时进入表格；使用过滤栏按级别 / 模块 / 关键字筛选。
 3. 选中若干行日志，在右侧分析面板选择上下文范围与目标，提交给 LLM。
 4. 结果流式显示；可在同一会话中继续追问。
-5. 需要留档时，通过“导出日志”保存为文本文件。
+5. 需要留档时在日志视图点「导出」（文本 / CSV / JSONL），也可用「导入」回看历史日志；
+   串口高级参数（数据位 / 校验位 / 停止位 / 流控）在工具栏「串口设置…」，仅本次会话有效。
 
 ## 项目结构
 
@@ -81,7 +82,7 @@ docs/protocols/          协议规范
 `kind: environment` 的 Profile 会先读进程环境、再回落该文件；`.env` 已被 Git 忽略。
 两个 Profile 复用 `openai-compatible` Adapter，其流式声明会发送 `stream_options.include_usage`——
 若这两个服务拒收该字段，按 [`docs/llm-integration.md`](docs/llm-integration.md) 的说明调整声明。
-完整窗口与启动入口仍待实现（`bootstrap.build_application/main` 未完成）。
+完整窗口与启动入口已接通：`python main.py` 或 `bootstrap.main()` 可启动应用。
 
 ## 许可
 
