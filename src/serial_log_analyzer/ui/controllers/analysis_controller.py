@@ -64,10 +64,7 @@ class AnalysisController(QObject):
         """按界面选择（含上下文选择器）构造上下文并开始一轮分析。"""
 
         try:
-            manual = request.user_input if selector is ContextSelector.MANUAL else ""
-            context = self._builder.build(
-                selector, selected_sequences=self._selected, manual_text=manual
-            )
+            context = self._builder.build(selector, selected_sequences=self._selected)
             self._service.ask(replace(request, context=context))
         except AppError as exc:
             self.error_occurred.emit(str(exc))

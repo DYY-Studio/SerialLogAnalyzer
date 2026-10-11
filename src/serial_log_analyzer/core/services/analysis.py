@@ -47,7 +47,7 @@ _MAX_BODY_BYTES = 8 * 1024 * 1024
 
 
 class AnalysisContextBuilder:
-    """把选中日志 / 最近日志 / 手动输入构造为 :class:`AnalysisContext`。
+    """把选中日志 / 最近日志构造为 :class:`AnalysisContext`；``NONE`` 返回空上下文。
 
     参数:
         pipeline: 日志流水线（提供条目查询与渲染）。
@@ -68,7 +68,6 @@ class AnalysisContextBuilder:
         selected_sequences: list[int] | None = None,
         window: int = 10,
         recent_count: int = 100,
-        manual_text: str = "",
     ) -> AnalysisContext:
         """按选择器构造上下文。
 
@@ -77,17 +76,13 @@ class AnalysisContextBuilder:
             selected_sequences: 用户在表格中选中的条目序号。
             window: 前后扩展行数。
             recent_count: ``RECENT`` / ``ERRORS_ONLY`` 使用的条数上限。
-            manual_text: ``MANUAL`` 时的用户输入。
 
         异常:
             ConfigError: 选择器要求的数据缺失（例如未选中任何行）。
         """
 
-        if selector is ContextSelector.MANUAL:
-            text = manual_text.strip()
-            if not text:
-                raise ConfigError("手动上下文不能为空")
-            return AnalysisContext(selector=selector, manual_text=text, window=window)
+        if selector is ContextSelector.NONE:
+            return AnalysisContext(selector=selector)
 
         entries = self._select(selector, selected_sequences, window, recent_count)
         if not entries:

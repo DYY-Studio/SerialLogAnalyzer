@@ -306,7 +306,7 @@ QNetworkReply.readyRead → readAll() → SSEParser.feed(bytes) -> list[payload]
 ## 12. 分析与上下文
 
 ```python
-class ContextSelector(Enum): SELECTED, SELECTED_WITH_NEIGHBORS, RECENT, ERRORS_ONLY, MANUAL
+class ContextSelector(Enum): SELECTED, SELECTED_WITH_NEIGHBORS, RECENT, ERRORS_ONLY, NONE
 class AnalysisState(Enum): IDLE, STREAMING, DONE, ERROR
 
 @dataclass AnalysisMessage: role, content, summary（summary 仅用于界面展示）

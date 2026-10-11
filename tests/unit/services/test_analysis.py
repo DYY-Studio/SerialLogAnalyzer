@@ -17,6 +17,7 @@ from serial_log_analyzer.core.llm.adapter_loader import load_adapter
 from serial_log_analyzer.core.llm.profile_loader import load_profile
 from serial_log_analyzer.core.logs.pipeline import LogPipeline
 from serial_log_analyzer.core.models.analysis import (
+    AnalysisContext,
     AnalysisRequest,
     AnalysisState,
     ContextSelector,
@@ -145,8 +146,8 @@ def test_context_builder_selects_entries(parser) -> None:
     )
     assert len(neighbors.entries) == 2
 
-    manual = builder.build(ContextSelector.MANUAL, manual_text="  粘贴的日志  ")
-    assert manual.render() == "粘贴的日志"
+    none = builder.build(ContextSelector.NONE)
+    assert none.render() == "" and none.entries == ()
 
 
 @pytest.mark.parametrize(
@@ -154,7 +155,6 @@ def test_context_builder_selects_entries(parser) -> None:
     [
         (ContextSelector.SELECTED, {}),
         (ContextSelector.SELECTED_WITH_NEIGHBORS, {}),
-        (ContextSelector.MANUAL, {"manual_text": "   "}),
     ],
 )
 def test_context_builder_rejects_missing_input(parser, selector, kwargs) -> None:
@@ -195,6 +195,24 @@ def test_ask_streams_content_usage_and_finishes(resources, parser) -> None:
     body = transport.requests[0].body
     assert "connected" in body["messages"][0]["content"]
     assert body["stream"] is True
+
+
+def test_ask_without_goal_or_context_sends_raw_input(resources) -> None:
+    """目标与上下文都选「无」时，发出的 user 消息就是输入原文：不套模板、也不重复。"""
+
+    recorder = Recorder()
+    service = recorder.service(resources)
+    transport = recorder.transport
+
+    service.ask(
+        AnalysisRequest(
+            user_input="ping", context=AnalysisContext(selector=ContextSelector.NONE)
+        )
+    )
+    transport.push(_sse('{"choices":[{"delta":{"content":"OK"}}]}', "[DONE]"))
+    transport.done()
+
+    assert transport.requests[0].body["messages"][-1]["content"] == "ping"
 
 
 def test_ask_keeps_history_until_reset(resources) -> None:

@@ -39,7 +39,7 @@ _CONTEXT_CHOICES: tuple[tuple[str, ContextSelector], ...] = (
     ("选中 + 前后各 10 行", ContextSelector.SELECTED_WITH_NEIGHBORS),
     ("最近 100 条", ContextSelector.RECENT),
     ("仅错误日志", ContextSelector.ERRORS_ONLY),
-    ("手动输入", ContextSelector.MANUAL),
+    ("无", ContextSelector.NONE),
 )
 
 

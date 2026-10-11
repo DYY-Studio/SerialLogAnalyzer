@@ -28,7 +28,7 @@ class ContextSelector(Enum):
     SELECTED_WITH_NEIGHBORS = "selected_with_neighbors"
     RECENT = "recent"
     ERRORS_ONLY = "errors_only"
-    MANUAL = "manual"
+    NONE = "none"
 
 
 class AnalysisState(Enum):
@@ -72,19 +72,15 @@ class AnalysisContext:
         selector: 上下文来源方式。
         entries: 参与上下文的日志条目文本（已渲染，含级别与模块前缀）。
         window: ``SELECTED_WITH_NEIGHBORS`` 使用的前后行数。
-        manual_text: ``MANUAL`` 时用户手工输入的文本。
     """
 
     selector: ContextSelector
     entries: tuple[str, ...] = ()
     window: int = 10
-    manual_text: str = ""
 
     def render(self) -> str:
-        """把上下文渲染为提交给模型的纯文本块。"""
+        """把上下文渲染为提交给模型的纯文本块；``NONE`` 时为空串。"""
 
-        if self.manual_text:
-            return self.manual_text
         return "\n".join(self.entries)
 
 
