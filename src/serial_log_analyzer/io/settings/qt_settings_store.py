@@ -22,6 +22,7 @@ class SETTINGS_KEYS:
     LAST_PORT = "device/last_port"
     LAST_BAUDRATE = "device/last_baudrate"
     CURRENT_PROFILE = "llm/current_profile"
+    CHAT_DETAILS_EXPANDED = "llm/details_expanded"
     CURRENT_PRESET = "logs/current_preset"
     AUTOSCROLL = "logs/autoscroll"
     LOG_CAPACITY = "logs/capacity"

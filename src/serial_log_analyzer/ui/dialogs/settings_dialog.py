@@ -60,6 +60,9 @@ class SettingsDialog(QDialog):
         self._log_level.setObjectName("settings-log-level")
         self._log_level.addItems(_LOG_LEVELS)
 
+        self._details_expanded = QCheckBox("分析细节（思考 / 参考内容）默认展开")
+        self._details_expanded.setObjectName("settings-details-expanded")
+
         self._export_dir = QLineEdit()
         self._export_dir.setObjectName("settings-export-dir")
         self._export_dir.setPlaceholderText("留空使用默认导出目录")
@@ -75,6 +78,7 @@ class SettingsDialog(QDialog):
         form.addRow("日志容量", self._capacity)
         form.addRow("自动滚动", self._autoscroll)
         form.addRow("应用日志级别", self._log_level)
+        form.addRow("分析细节", self._details_expanded)
         form.addRow("默认导出目录", export_row)
 
         hint = QLabel(
@@ -106,6 +110,9 @@ class SettingsDialog(QDialog):
             self._settings.set(SETTINGS_KEYS.AUTOSCROLL, self._autoscroll.isChecked())
             self._settings.set(SETTINGS_KEYS.LOG_CAPACITY, self._capacity.value())
             self._settings.set(SETTINGS_KEYS.LOG_LEVEL, self._log_level.currentText())
+            self._settings.set(
+                SETTINGS_KEYS.CHAT_DETAILS_EXPANDED, self._details_expanded.isChecked()
+            )
             self._settings.set(SETTINGS_KEYS.EXPORT_DIR, self._export_dir.text().strip())
             sync = getattr(self._settings, "sync", None)
             if callable(sync):
@@ -127,6 +134,9 @@ class SettingsDialog(QDialog):
         if level not in _LOG_LEVELS:
             level = _DEFAULT_LOG_LEVEL
         self._log_level.setCurrentText(level)
+        self._details_expanded.setChecked(
+            _as_bool(self._settings.get(SETTINGS_KEYS.CHAT_DETAILS_EXPANDED), False)
+        )
         self._export_dir.setText(str(self._settings.get(SETTINGS_KEYS.EXPORT_DIR) or ""))
 
     def _choose_export_dir(self) -> None:

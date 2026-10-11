@@ -260,10 +260,13 @@ def _open_serial_settings(window: MainWindow, toolbar: SerialToolBar) -> None:
 
 
 def _apply_settings(window: MainWindow, context: ApplicationContext) -> None:
-    """把设置里可即时生效的项应用出来：自动滚动、日志容量、应用日志级别。"""
+    """把设置里可即时生效的项应用出来：自动滚动、日志容量、应用日志级别、分析细节折叠。"""
 
     settings = context.settings
     window.log_view.set_autoscroll(bool(settings.get(SETTINGS_KEYS.AUTOSCROLL, True)))
+    window.analysis_panel.set_details_expanded(
+        bool(settings.get(SETTINGS_KEYS.CHAT_DETAILS_EXPANDED, False))
+    )
     context.pipeline.capacity = _capacity(settings)
     dropped = context.pipeline.enforce_capacity()
     if dropped:
@@ -499,7 +502,7 @@ def _switch_preset(window: MainWindow, context: ApplicationContext, preset_id: s
 
 
 def _restore_view(window: MainWindow, toolbar: SerialToolBar, log_view: LogView, settings: Any) -> None:
-    """按设置恢复窗口几何、工具栏/停靠布局、串口选择与自动滚动。"""
+    """按设置恢复窗口几何、工具栏/停靠布局、串口选择、自动滚动与分析细节折叠。"""
 
     geometry = settings.get(SETTINGS_KEYS.WINDOW_GEOMETRY)
     if geometry is not None:
@@ -507,6 +510,9 @@ def _restore_view(window: MainWindow, toolbar: SerialToolBar, log_view: LogView,
     state = settings.get(SETTINGS_KEYS.WINDOW_STATE)
     if state is not None:
         window.restoreState(state)
+    window.analysis_panel.set_details_expanded(
+        bool(settings.get(SETTINGS_KEYS.CHAT_DETAILS_EXPANDED, False))
+    )
     toolbar.restore(
         str(settings.get(SETTINGS_KEYS.LAST_PORT, "") or ""),
         str(settings.get(SETTINGS_KEYS.LAST_BAUDRATE, "115200") or "115200"),

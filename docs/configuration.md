@@ -203,6 +203,7 @@ export MY_DEEPSEEK_API_KEY=sk-...
 | `device/last_port` | 最近使用的串口 | 空 |
 | `device/last_baudrate` | 最近波特率 | 空 |
 | `llm/current_profile` | 当前 Profile | 首个可用 |
+| `llm/details_expanded` | 「思考 / 参考内容」折叠块默认展开 | `false`（折叠） |
 | `logs/current_preset` | 当前 Preset | 首个可用 |
 | `logs/autoscroll` | 自动滚动 | `true` |
 | `logs/capacity` | 日志环形缓冲容量（1000–1000000） | `100000` |

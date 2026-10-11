@@ -223,7 +223,7 @@ class AnalysisService:
         """
 
         self._ensure_idle()
-        self._start(self._compose(request), request)
+        self._start(self._compose(request), request, self._summary(request))
 
     def follow_up(self, text: str) -> None:
         """在当前会话中追加一轮追问。
@@ -235,7 +235,11 @@ class AnalysisService:
         self._ensure_idle()
         if not self._conversation:
             raise ConfigError("尚无会话历史，无法追问")
-        self._start(self._prompts.render_freeform(text), AnalysisRequest(user_input=text))
+        self._start(
+            self._prompts.render_freeform(text),
+            AnalysisRequest(user_input=text),
+            text.strip(),
+        )
 
     def cancel(self) -> None:
         """取消进行中的请求；未进行时为空操作。
@@ -278,10 +282,20 @@ class AnalysisService:
             return self._prompts.render_freeform(context)
         raise ConfigError("分析内容不能为空")
 
-    def _start(self, text: str, request: AnalysisRequest) -> None:
+    def _summary(self, request: AnalysisRequest) -> str:
+        """给界面用的短摘要：目标名 + 用户输入；都没有时说明只有日志上下文。"""
+
+        goal = self._prompts.find(request.goal_id) if request.goal_id else None
+        parts = [goal.display_name] if goal is not None else []
+        text = request.user_input.strip()
+        if text:
+            parts.append(text)
+        return " · ".join(parts) or "（仅日志上下文）"
+
+    def _start(self, text: str, request: AnalysisRequest, summary: str) -> None:
         """发送一轮请求并进入流式状态机。"""
 
-        message = AnalysisMessage(MessageRole.USER, text)
+        message = AnalysisMessage(MessageRole.USER, text, summary)
         http = self._builder.build([*self._conversation, message], request)
         self._conversation.append(message)
         self._cancelled = False

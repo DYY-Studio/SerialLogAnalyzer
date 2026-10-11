@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QGuiApplication, QKeyEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -28,6 +28,7 @@ from serial_log_analyzer.core.models.analysis import (
 )
 from serial_log_analyzer.core.models.provider import ProviderProfile
 from serial_log_analyzer.core.prompts.loader import PromptGoal
+from serial_log_analyzer.ui.widgets.chat_view import ChatView
 
 __all__ = ["AnalysisPanel"]
 
@@ -90,9 +91,9 @@ class AnalysisPanel(QWidget):
     # ------------------------------------------------------------------
 
     def set_result(self, result: AnalysisResult) -> None:
-        """展示累积后的完整结果快照，并刷新会话轮数。"""
+        """展示累积后的结果快照：转录按轮次刷新，并更新轮数与用量。"""
 
-        self.result_view.setPlainText(result.content)
+        self.chat.render(result)
         self._update_turns(result.conversation)
         self._has_session = bool(result.conversation)
         self._sync_enabled()
@@ -130,6 +131,11 @@ class AnalysisPanel(QWidget):
         first_turn = idle and not self._has_session
         self.goal_combo.setEnabled(first_turn)
         self.context_combo.setEnabled(first_turn)
+
+    def set_details_expanded(self, expanded: bool) -> None:
+        """设置「思考 / 参考内容」折叠块的默认展开状态。"""
+
+        self.chat.set_details_expanded(expanded)
 
     def set_goals(self, goals: list[PromptGoal]) -> None:
         """填充预设分析目标下拉列表。"""
@@ -214,10 +220,8 @@ class AnalysisPanel(QWidget):
         status_row.addWidget(self.turns_label)
         layout.addLayout(status_row)
 
-        self.result_view = QPlainTextEdit()
-        self.result_view.setReadOnly(True)
-        self.result_view.setPlaceholderText("分析结果将显示在这里")
-        layout.addWidget(self.result_view, stretch=1)
+        self.chat = ChatView()
+        layout.addWidget(self.chat, stretch=1)
 
         self.usage_label = QLabel()
         layout.addWidget(self.usage_label)
@@ -251,7 +255,7 @@ class AnalysisPanel(QWidget):
         self.analyze_requested.emit((request, self.context_combo.currentData()))
 
     def _on_reset(self) -> None:
-        self.result_view.clear()
+        self.chat.clear()
         self.usage_label.clear()
         self.turns_label.clear()
         self.message_edit.clear()
@@ -266,5 +270,4 @@ class AnalysisPanel(QWidget):
         self.turns_label.setText(f"当前会话 {rounds} 轮" if rounds else "")
 
     def _on_copy(self) -> None:
-        self.result_view.selectAll()
-        self.result_view.copy()
+        QGuiApplication.clipboard().setText(self.chat.plain_text())

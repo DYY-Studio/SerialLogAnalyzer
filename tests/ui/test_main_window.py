@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QDockWidget
 
 from serial_log_analyzer.core.device.command import CommandReply
@@ -141,7 +142,7 @@ def test_analysis_panel_first_turn_then_follow_up(qtbot) -> None:
         )
     )
     panel.set_state(AnalysisState.DONE)
-    assert panel.result_view.toPlainText() == "结论"
+    assert "结论" in panel.chat.plain_text()
     assert "3" in panel.usage_label.text() and "7" in panel.usage_label.text()
     assert panel.turns_label.text() == "当前会话 1 轮"
     # 会话已开始：目标与上下文不再生效，发送走追问
@@ -151,6 +152,9 @@ def test_analysis_panel_first_turn_then_follow_up(qtbot) -> None:
     panel.send_btn.click()
     panel.send_btn.click()  # 空文本不再发
     assert follow_ups == ["那内存呢"]
+
+    panel.copy_btn.click()
+    assert "结论" in QGuiApplication.clipboard().text()
 
     panel.new_session_btn.click()
     assert panel.context_combo.isEnabled() is True and panel.goal_combo.isEnabled() is True

@@ -50,10 +50,18 @@ class MessageRole(Enum):
 
 @dataclass(frozen=True)
 class AnalysisMessage:
-    """一条对话消息。"""
+    """一条对话消息。
+
+    参数:
+        role: 消息角色。
+        content: 消息正文；user 轮为实际提交给模型的文本（首轮含目标模板与日志上下文）。
+        summary: 仅供界面展示的短摘要（user 轮为「目标 · 用户输入」）；assistant 轮为 ``None``。
+            请求只使用 ``role`` 与 ``content``，``summary`` 不参与线上行为。
+    """
 
     role: MessageRole
     content: str
+    summary: str | None = None
 
 
 @dataclass(frozen=True)

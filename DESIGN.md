@@ -309,6 +309,7 @@ QNetworkReply.readyRead → readAll() → SSEParser.feed(bytes) -> list[payload]
 class ContextSelector(Enum): SELECTED, SELECTED_WITH_NEIGHBORS, RECENT, ERRORS_ONLY, MANUAL
 class AnalysisState(Enum): IDLE, STREAMING, DONE, ERROR
 
+@dataclass AnalysisMessage: role, content, summary（summary 仅用于界面展示）
 @dataclass AnalysisRequest: selector, user_input, goal_id, context, temperature, max_output_tokens
 @dataclass AnalysisResult: content, reasoning, usage, state, conversation
 ```
@@ -319,6 +320,12 @@ class AnalysisState(Enum): IDLE, STREAMING, DONE, ERROR
   （只用文本，不重复发送上下文），因此「目标 / 上下文」只在首轮生效，会话开始后置灰；
   Enter 发送、Shift+Enter 换行。
 - 上下文由 `AnalysisContextBuilder` 从 `LogPipeline` 取并叠加进新 user 消息；`SELECTED_WITH_NEIGHBORS` 窗口 N 默认 10。
+- 结果区是按轮次堆叠的卡片（`ui/widgets/chat_view.py`）：user 卡片显示短摘要（`AnalysisMessage.summary`，
+  如「定位错误 · 重点看 uart」），完整 prompt（目标模板 + 日志上下文）收进可折叠的「参考内容」；
+  assistant 卡片把思考收进可折叠的「思考」，正文随流式更新。折叠默认状态由 `llm/details_expanded`
+  决定（默认折叠），设置保存后立即生效。
+- 思考不回传请求（见 `docs/llm-integration.md`），但留在卡片上，所以历史轮次的思考在界面里仍然看得到；
+  `AnalysisMessage.summary` 只用于展示，请求只发 `role` + `content`。
 - Prompt：`prompts/*.md`，内置目标（定位错误 / 解释日志 / 给出修复建议）+ 自由输入；`string.Template`（`$context $goal $language`）安全替换。
 
 ## 13. 设置 / 凭据 / 存储
