@@ -323,7 +323,7 @@ def _export_logs(window: MainWindow, context: ApplicationContext) -> None:
     from serial_log_analyzer.io.storage.log_file_store import ExportFormat
 
     store = _log_store(context)
-    formats = ";;".join(f"{fmt.display_name()} (*{fmt.suffix})" for fmt in ExportFormat)
+    formats = ";;".join(f"{fmt.display_name} (*{fmt.suffix})" for fmt in ExportFormat)
     path_text, selected = QFileDialog.getSaveFileName(
         window, "导出日志", str(store.suggested_path(fmt=ExportFormat.TEXT)), formats
     )
@@ -348,7 +348,7 @@ def _import_logs(window: MainWindow, context: ApplicationContext) -> None:
     from serial_log_analyzer.core.errors import AppError
 
     path_text, _ = QFileDialog.getOpenFileName(
-        window, "导入日志", str(_log_store(context).default_dir()), "日志文本 (*.log *.txt)"
+        window, "导入日志", str(_log_store(context).default_dir), "日志文本 (*.log *.txt)"
     )
     if not path_text:
         return
