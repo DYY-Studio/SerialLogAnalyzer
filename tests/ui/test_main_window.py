@@ -162,6 +162,21 @@ def test_analysis_panel_first_turn_then_follow_up(qtbot) -> None:
     assert panel.turns_label.text() == ""
 
 
+def test_restore_layout_reapplies_bottom_right_corner(qtbot) -> None:
+    """恢复旧布局不能让右下角归属回退（否则分析面板不再贯通上下）。"""
+
+    from PySide6.QtCore import Qt
+
+    window = _build_window(qtbot)
+    state = window.saveState()
+    # 模拟旧版本存下来的状态：右下角归底部停靠区
+    window.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.BottomDockWidgetArea)
+
+    window.restore_layout(state)
+
+    assert window.corner(Qt.Corner.BottomRightCorner) is Qt.DockWidgetArea.RightDockWidgetArea
+
+
 def test_menu_actions_emit_intent_signals(qtbot) -> None:
     window = _build_window(qtbot)
     seen: list[str] = []

@@ -519,7 +519,7 @@ def _restore_view(window: MainWindow, toolbar: SerialToolBar, log_view: LogView,
         window.restoreGeometry(geometry)
     state = settings.get(SETTINGS_KEYS.WINDOW_STATE)
     if state is not None:
-        window.restoreState(state)
+        window.restore_layout(state)
     window.analysis_panel.set_details_expanded(
         bool(settings.get(SETTINGS_KEYS.CHAT_DETAILS_EXPANDED, False))
     )

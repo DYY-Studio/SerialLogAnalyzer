@@ -83,10 +83,7 @@ class MainWindow(QMainWindow):
         self.command_dock = self._make_dock(
             "command-dock", "命令", command_panel, Qt.DockWidgetArea.BottomDockWidgetArea
         )
-        # 右下角交给右侧停靠区，让分析面板贯通上下，命令面板只占左下。
-        self.setCorner(
-            Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea
-        )
+        self._apply_dock_corners()
         self._build_menu()
         self.setCentralWidget(log_view)
 
@@ -97,6 +94,21 @@ class MainWindow(QMainWindow):
         """在状态栏显示一条消息。"""
 
         self.status_bar.showMessage(message)
+
+    def restore_layout(self, state: object) -> None:
+        """恢复工具栏 / 停靠布局。
+
+        右下角归属是固定策略而不是用户状态，而 ``restoreState`` 会把它一起带回来，
+        因此恢复之后必须重新声明，否则分析面板不再贯通上下。
+        """
+
+        self.restoreState(state)
+        self._apply_dock_corners()
+
+    def _apply_dock_corners(self) -> None:
+        """右下角交给右侧停靠区：分析面板贯通上下，命令面板只占左下。"""
+
+        self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
 
     def _make_dock(
         self, name: str, title: str, widget: QWidget, area: Qt.DockWidgetArea
