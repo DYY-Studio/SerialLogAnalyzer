@@ -34,8 +34,9 @@ from PySide6.QtGui import (
 
 __all__ = ["MarkdownRenderer", "split_font_runs"]
 
-# 从 Base/Text 派生的比例：次要材料底色 / 描边 / 次要文字。
+# 从 Base/Text 派生的比例：次要材料底色 / 更淡一档的容器底色 / 描边 / 次要文字。
 _TINT_RATIO = 0.10
+_FAINT_RATIO = 0.05
 _BORDER_RATIO = 0.22
 _MUTED_RATIO = 0.55
 
@@ -184,14 +185,21 @@ class MarkdownRenderer:
         text = palette.color(QPalette.ColorRole.Text)
         self._point_size = base_point_size if base_point_size > 0 else 9.0
         self._tint = _mix(base, text, _TINT_RATIO)
+        self._faint = _mix(base, text, _FAINT_RATIO)
         self._muted = _mix(base, text, _MUTED_RATIO)
         self._border = _mix(base, text, _BORDER_RATIO)
 
     @property
     def tint(self) -> QColor:
-        """次要材料（代码块、思考块）的底色。"""
+        """次要材料的底色（代码块、行内代码、表头）。"""
 
         return self._tint
+
+    @property
+    def faint(self) -> QColor:
+        """比 :attr:`tint` 更淡一档的底色，用作次要材料容器的背景。"""
+
+        return self._faint
 
     @property
     def muted(self) -> QColor:

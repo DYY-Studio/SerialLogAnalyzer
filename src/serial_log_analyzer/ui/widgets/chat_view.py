@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
     QFrame,
     QLabel,
@@ -53,8 +54,17 @@ class _CollapsibleBlock(QWidget):
         self._renderer = renderer
         self._text = ""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(6, 4, 6, 4)
         layout.setSpacing(2)
+
+        # 次要材料：淡底色 + 灰字，和正文区分开。底色比代码块再淡一档，
+        # 否则块内的代码块与容器同色、看不出边界。
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Window, renderer.faint)
+        palette.setColor(QPalette.ColorRole.Text, renderer.muted)
+        palette.setColor(QPalette.ColorRole.WindowText, renderer.muted)
+        self.setPalette(palette)
+        self.setAutoFillBackground(True)
 
         self._toggle = QToolButton()
         self._toggle.setCheckable(True)
