@@ -58,6 +58,23 @@ def _handlers(**kwargs) -> DeviceSessionHandlers:
     )
 
 
+def test_pipeline_can_be_replaced_while_disconnected(parser) -> None:
+    session = DeviceSession(FakeTransport(), LogPipeline(parser), _handlers())
+    replacement = LogPipeline(parser)
+
+    session.set_pipeline(replacement)
+
+    assert session.pipeline is replacement
+
+
+def test_pipeline_swap_is_rejected_while_connected(parser) -> None:
+    session = DeviceSession(FakeTransport(), LogPipeline(parser), _handlers())
+    session.connect(SerialConfig(port="COM1"))
+
+    with pytest.raises(SerialConnectionError):
+        session.set_pipeline(LogPipeline(parser))
+
+
 def test_session_requires_handlers_before_connect(parser) -> None:
     session = DeviceSession(FakeTransport(), LogPipeline(parser))
 
