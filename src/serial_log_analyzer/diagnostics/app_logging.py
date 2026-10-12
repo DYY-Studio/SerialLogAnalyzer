@@ -98,7 +98,7 @@ def configure_logging(
 
     _log_file = None
     if target is not None:
-        if reset:
+        if reset and target.exists():
             try:
                 target.write_text("", encoding="utf-8")
             except OSError as exc:
