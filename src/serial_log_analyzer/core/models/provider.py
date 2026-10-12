@@ -111,7 +111,7 @@ class ProviderProfile:
     adapter_id: str
     base_url: str
     model: str
-    credential: CredentialRef = field(default_factory=lambda: CredentialRef(CredentialKind.RUNTIME))
+    credential: CredentialRef = field(default_factory=lambda: CredentialRef(CredentialKind.ENVIRONMENT))
     stream: bool = True
     request_timeout_seconds: float = 120.0
     extra_body: dict[str, object] = field(default_factory=dict)
