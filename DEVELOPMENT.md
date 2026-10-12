@@ -159,6 +159,7 @@ SLA_HW_PORT=COM3 uv run pytest tests/integration/test_hardware_link.py -v
 | 流式无输出 | 检查 profile `stream` 与 adapter `streaming` 声明是否匹配 |
 | 发 LLM 请求时进程直接退出（0xC0000005） | 进程里同时存在两套 OpenSSL：`keyring`（经 `jaraco.context`）会导入 Python 的 `ssl`，而 Qt 的 OpenSSL 插件默认绑定系统 `System32\libssl-3-x64.dll`，混用即在 HTTPS 里崩。启动时已固定用系统 TLS（`bootstrap._use_system_tls_backend`）；若仍复现，检查 Qt 的 `tls` 插件是否完整 |
 | 自建 Preset / Profile 没生效 | 运行 `python -m serial_log_analyzer.diagnostics`，对照报告里的资源根目录与配置错误 |
+| 结果区首次渲染「中文代码注释」时卡几秒 | 等宽字体缺中文字形会走系统回退，Windows 上实测每进程一次要 2.5–4 s。结果区把含中文的代码片段换成本机探测到的「等宽且含中文」字体（`ui/markdown.py`）；本机若没有这类字体只能由平台处理，属已知现象 |
 | 导出的日志找不到 | 看设置里的 `logs/export_dir`，留空则用 `SLA_EXPORT_DIR` / `<仓库根>/exports` |
 
 ## 分支与提交约定

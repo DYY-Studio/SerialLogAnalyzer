@@ -329,6 +329,15 @@ class AnalysisState(Enum): IDLE, STREAMING, DONE, ERROR
   如「定位错误 · 重点看 uart」），完整 prompt（目标模板 + 日志上下文）收进可折叠的「参考内容」；
   assistant 卡片把思考收进可折叠的「思考」，正文随流式更新。折叠默认状态由 `llm/details_expanded`
   决定（默认折叠），设置保存后立即生效。
+- 卡片文本按 Markdown 渲染成 GitHub 那种形式（`ui/markdown.py`）：标题分级与 h1/h2 下细线、代码块整片底色、
+  行内代码、表格、引用、链接与行距。Qt 富文本只支持 HTML/CSS 子集，所以直接改块 / 字符 / 表格格式而不是写 CSS；
+  颜色一律从调色板 `Base`/`Text` 派生（主题可能把 `AlternateBase` 等角色设成与正文无关的颜色），
+  代码字体在运行时探测「等宽且含中文」的族，避免缺字触发系统回退（Windows 实测首次渲染卡数秒）。
+  卡片同时保留 Markdown 原文，「复制结果」导出原文而非渲染后的 HTML。
+- 「思考」「参考内容」是次要材料：淡底色 + 灰字（同样按调色板派生，底色比代码块再淡一档，
+  否则块内代码块与容器同色看不出边界），与正文的亮色正文区分开。
+- 流式期间结果区一直跟随到底：滚动条 `rangeChanged` 时贴底，`valueChanged` 时同步「是否贴底」，
+  用户手动上滚即暂停跟随，滚回底部或出现新一轮时恢复。
 - 思考不回传请求（见 `docs/llm-integration.md`），但留在卡片上，所以历史轮次的思考在界面里仍然看得到；
   `AnalysisMessage.summary` 只用于展示，请求只发 `role` + `content`。
 - Prompt：`prompts/*.md`，内置目标（定位错误 / 解释日志 / 给出修复建议）+ 自由输入；`string.Template`（`$context $goal $language`）安全替换；界面目标下拉首项是「无」= 不套模板，只发输入与上下文，便于做对照测试。
