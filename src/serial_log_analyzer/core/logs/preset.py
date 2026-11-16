@@ -113,6 +113,7 @@ class LogPreset:
         fallback: 降级规则。
         source_path: 加载来源路径，用于错误提示。
         commands: 可选设备快捷命令列表。
+        prompt: 可选板卡/固件背景系统提示词，用于 LLM 分析时提供设备上下文。
     """
 
     preset_id: str
@@ -122,6 +123,7 @@ class LogPreset:
     schema_version: int = 1
     source_path: str = ""
     commands: tuple[PresetCommand, ...] = ()
+    prompt: str = ""
 
     def level_from_token(self, token: str) -> LogLevel:
         """把板上级别标识映射为 :class:`LogLevel`。
