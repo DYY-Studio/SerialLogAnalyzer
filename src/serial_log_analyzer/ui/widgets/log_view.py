@@ -275,7 +275,6 @@ class LogView(QWidget):
         self.table_view.setColumnWidth(1, 106)
         self.table_view.setColumnWidth(2, 68)
         self.table_view.setColumnWidth(3, 120)
-        self.table_view.setColumnWidth(4, 170)
 
         self._empty_state = self._build_empty_state(self.table_view.viewport())
         layout.addWidget(self.table_view, stretch=1)

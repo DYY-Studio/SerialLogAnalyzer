@@ -634,8 +634,8 @@ def test_analysis_panel_export_report_button_emits_signal(qtbot) -> None:
     assert fired == [True]
 
 
-def test_log_table_extra_column_role_and_keyword_filter(qtbot) -> None:
-    """日志表格第 4 列展示提取字段，关键字过滤同时命中消息正文与 extra 字段。"""
+def test_log_table_compact_columns_extra_role_and_keyword_filter(qtbot) -> None:
+    """日志表格恢复 5 列紧凑布局，消息列占满剩余宽度，关键字过滤与 Tooltip 仍覆盖 extra 字段。"""
 
     from PySide6.QtCore import Qt
 
@@ -646,12 +646,16 @@ def test_log_table_extra_column_role_and_keyword_filter(qtbot) -> None:
 
     view = LogView(LogTableModel())
     qtbot.addWidget(view)
+    view.resize(900, 400)
+    view.show()
+    qtbot.waitExposed(view)
     model = view._model
     proxy = view.table_view.model()
 
-    assert COLUMN_HEADERS == ("序号", "时间", "级别", "模块", "字段", "消息")
-    assert model.columnCount() == 6
-    assert view.table_view.columnWidth(4) == 170
+    assert COLUMN_HEADERS == ("序号", "时间", "级别", "模块", "消息")
+    assert model.columnCount() == 5
+    assert view.table_view.horizontalHeader().stretchLastSection() is True
+    assert view.table_view.columnWidth(4) > 400
     assert view.text_filter.placeholderText() == "搜索日志关键字或字段…"
 
     view.append_update(
@@ -671,12 +675,12 @@ def test_log_table_extra_column_role_and_keyword_filter(qtbot) -> None:
         )
     )
 
-    assert model.data(model.index(0, 4), Qt.ItemDataRole.DisplayRole) == "-"
-    assert model.data(model.index(0, 5), Qt.ItemDataRole.DisplayRole) == "boot done"
+    assert model.data(model.index(0, 4), Qt.ItemDataRole.DisplayRole) == "boot done"
     assert model.data(model.index(0, 0), LOG_EXTRA_ROLE) == ""
-    assert model.data(model.index(1, 4), Qt.ItemDataRole.DisplayRole) == "temperature=29.7  humidity=43.6"
-    assert model.data(model.index(1, 5), Qt.ItemDataRole.DisplayRole) == "sample ok"
+    assert model.data(model.index(1, 4), Qt.ItemDataRole.DisplayRole) == "sample ok"
     assert model.data(model.index(1, 0), LOG_EXTRA_ROLE) == "temperature=29.7 humidity=43.6"
+    tooltip = model.data(model.index(1, 4), Qt.ItemDataRole.ToolTipRole)
+    assert "字段: temperature=29.7  humidity=43.6" in tooltip
 
     for query in ("temperature", "29.7", "TEMPERATURE=29.7"):
         view.text_filter.setText(query)

@@ -42,7 +42,7 @@ LEVEL_LABELS: dict[LogLevel, str] = {
     LogLevel.UNKNOWN: "未知",
 }
 
-COLUMN_HEADERS = ("序号", "时间", "级别", "模块", "字段", "消息")
+COLUMN_HEADERS = ("序号", "时间", "级别", "模块", "消息")
 
 
 class LogTableModel(QAbstractTableModel):
@@ -213,7 +213,7 @@ class LogTableModel(QAbstractTableModel):
         if role == LOG_MESSAGE_ROLE:
             return entry.message
         if role == LOG_EXTRA_ROLE:
-            return self._format_extra(entry.extra, sep=" ")
+            return self._format_extra(entry.extra)
         return None
 
     def headerData(
@@ -232,9 +232,9 @@ class LogTableModel(QAbstractTableModel):
         return f"{time.strftime('%H:%M:%S', time.localtime(moment))}.{int(moment % 1 * 1000):03d}"
 
     @staticmethod
-    def _format_extra(extra: dict[str, str], *, sep: str = "  ", empty: str = "") -> str:
+    def _format_extra(extra: dict[str, str], *, sep: str = " ") -> str:
         if not extra:
-            return empty
+            return ""
         return sep.join(f"{key}={value}" for key, value in extra.items())
 
     @classmethod
@@ -247,8 +247,6 @@ class LogTableModel(QAbstractTableModel):
             return LEVEL_LABELS.get(entry.level, entry.level.name)
         if column == 3:
             return entry.module or "-"
-        if column == 4:
-            return cls._format_extra(entry.extra, sep="  ", empty="-")
         return entry.message
 
     @classmethod
