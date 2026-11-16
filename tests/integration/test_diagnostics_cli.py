@@ -31,6 +31,7 @@ def test_cli_prints_report_and_returns_zero(capsys) -> None:
     assert "配置错误    : 无" in out
     assert "资源根目录  :" in out
     assert "Preset（2）:" in out
+    assert "异常规则（1）:" in out
 
 
 def test_cli_json_output_is_machine_readable(capsys) -> None:
@@ -40,6 +41,7 @@ def test_cli_json_output_is_machine_readable(capsys) -> None:
     assert code == 0
     assert payload["config_errors"] == []
     assert len(payload["presets"]) == 2
+    assert len(payload["rule_sets"]) == 1
     assert {item.split("（", 1)[0] for item in payload["presets"]} == {
         "hi3861-default",
         "hi3861-timestamped",

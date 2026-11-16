@@ -37,13 +37,27 @@ class CredentialEditor(QWidget):
     参数:
         keyring: 系统钥匙串适配器。
         parent: 可选父对象。
+        target_hint: 钥匙串模式下账号输入占位文案。
+        secret_hint: 密钥输入框占位文案。
+        empty_secret_msg: 未输入密钥即点击保存时的提示文案。
     """
 
-    def __init__(self, keyring: KeyringStore, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        keyring: KeyringStore,
+        parent: QWidget | None = None,
+        *,
+        target_hint: str = "钥匙串账号名（留空用 profile_id）",
+        secret_hint: str = "API Key（只写入系统钥匙串）",
+        empty_secret_msg: str = "请先输入 API Key。",
+    ) -> None:
         super().__init__(parent)
         self._keyring = keyring
         self._keyring_available = _keyring_available(keyring)
         self._profile_id = ""
+        self._target_hint = target_hint
+        self._secret_hint = secret_hint
+        self._empty_secret_msg = empty_secret_msg
         self._build()
 
     def load(self, credential: CredentialRef, profile_id: str) -> None:
@@ -127,6 +141,7 @@ class CredentialEditor(QWidget):
         buttons.addStretch()
         self._state = QLabel()
         self._state.setObjectName("credential-state")
+        self._state.setProperty("role", "status-pill")
         buttons.addWidget(self._state)
         layout.addLayout(buttons)
 
@@ -136,8 +151,8 @@ class CredentialEditor(QWidget):
         """按当前来源调整字段文案与可用性，并刷新状态。"""
 
         keyring = self._source.currentData() is CredentialKind.KEYRING
-        self._target.setPlaceholderText("钥匙串账号名（留空用 profile_id）" if keyring else "环境变量名")
-        self._secret.setPlaceholderText("API Key（只写入系统钥匙串）")
+        self._target.setPlaceholderText(self._target_hint if keyring else "环境变量名")
+        self._secret.setPlaceholderText(self._secret_hint)
         self._secret.setEnabled(keyring)
         self._show.setEnabled(keyring)
         self._save.setEnabled(keyring and self._keyring_available)
@@ -171,7 +186,7 @@ class CredentialEditor(QWidget):
 
         value = self._secret.text().strip()
         if not value:
-            QMessageBox.warning(self, "无法保存", "请先输入 API Key。")
+            QMessageBox.warning(self, "无法保存", self._empty_secret_msg)
             return
         try:
             self._keyring.save(self._account(), value)

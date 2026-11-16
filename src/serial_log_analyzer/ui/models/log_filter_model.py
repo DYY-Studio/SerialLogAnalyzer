@@ -6,6 +6,7 @@ from PySide6.QtCore import QModelIndex, QSortFilterProxyModel
 
 from serial_log_analyzer.core.models.logs import LogLevel
 from serial_log_analyzer.ui.models.log_table_model import (
+    LOG_EXTRA_ROLE,
     LOG_LEVEL_ROLE,
     LOG_MESSAGE_ROLE,
     LOG_MODULE_ROLE,
@@ -17,7 +18,7 @@ __all__ = ["LogFilterModel"]
 class LogFilterModel(QSortFilterProxyModel):
     """日志过滤代理。
 
-    过滤条件互不影响，可组合使用：级别白名单、模块子串、消息子串（均不区分大小写）。
+    过滤条件互不影响，可组合使用：级别白名单、模块子串、关键字子串（匹配消息或提取字段，均不区分大小写）。
     """
 
     def __init__(self, parent: object | None = None) -> None:
@@ -39,7 +40,7 @@ class LogFilterModel(QSortFilterProxyModel):
         self.invalidate()
 
     def set_text_filter(self, text: str) -> None:
-        """设置消息关键字过滤（子串匹配，不区分大小写）。"""
+        """设置关键字过滤（匹配消息正文或提取字段，不区分大小写）。"""
 
         self._text = text.strip().lower()
         self.invalidate()
@@ -62,9 +63,11 @@ class LogFilterModel(QSortFilterProxyModel):
                 return False
         if self._module and self._module not in self._value(model, source_row, source_parent, LOG_MODULE_ROLE):
             return False
-        return not self._text or self._text in self._value(
-            model, source_row, source_parent, LOG_MESSAGE_ROLE
-        )
+        if not self._text:
+            return True
+        message = self._value(model, source_row, source_parent, LOG_MESSAGE_ROLE)
+        extra = self._value(model, source_row, source_parent, LOG_EXTRA_ROLE)
+        return self._text in message or self._text in extra
 
     @staticmethod
     def _value(model: object, row: int, parent: QModelIndex, role: int) -> str:

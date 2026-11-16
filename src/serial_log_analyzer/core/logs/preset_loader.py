@@ -19,6 +19,8 @@ from serial_log_analyzer.core.logs.preset import (
     ContinuationMode,
     FallbackRule,
     LogPreset,
+    PresetCommand,
+    PresetCommandMode,
     PresetLineRule,
 )
 from serial_log_analyzer.core.models.logs import LogLevel
@@ -28,9 +30,17 @@ __all__ = ["load_preset", "load_presets"]
 
 _BUILTIN_DIR = "presets/logs"
 
-_TOP_LEVEL_FIELDS = {"schema_version", "preset_id", "display_name", "line", "fallback"}
+_TOP_LEVEL_FIELDS = {
+    "schema_version",
+    "preset_id",
+    "display_name",
+    "line",
+    "fallback",
+    "commands",
+}
 _LINE_FIELDS = {"pattern", "level_map", "continuation_pattern", "fields"}
 _FALLBACK_FIELDS = {"enabled", "level"}
+_COMMAND_FIELDS = {"label", "command", "mode", "tooltip"}
 _PRESET_ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
 
@@ -161,12 +171,15 @@ def _validate_and_build(
             level=_level_from_name(fallback_data.get("level", "UNKNOWN")),
         )
 
+    commands = _parse_commands(data.get("commands"))
+
     return LogPreset(
         preset_id=declared_id,
         display_name=display_name,
         line=line_rule,
         fallback=fallback,
         source_path=source_path,
+        commands=commands,
     )
 
 
@@ -240,3 +253,58 @@ def _level_from_name(name: object) -> LogLevel:
         return LogLevel[name]
     except KeyError as exc:
         raise PresetError(f"未知级别：{name}") from exc
+
+
+def _parse_commands(raw: object) -> tuple[PresetCommand, ...]:
+    """解析可选 ``commands`` 快捷命令列表并严格校验字段。
+
+    异常:
+        PresetError: 非列表、存在未知字段、字段类型错误或 ``mode`` 非法。
+    """
+
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise PresetError("commands 必须是列表")
+
+    commands: list[PresetCommand] = []
+    for index, item in enumerate(raw):
+        loc = f"commands[{index}]"
+        if not isinstance(item, dict):
+            raise PresetError(f"{loc} 必须是对象")
+        unknown = set(item) - _COMMAND_FIELDS
+        if unknown:
+            raise PresetError(f"{loc} 出现未知字段：{sorted(unknown)}")
+
+        raw_label = item.get("label")
+        if not isinstance(raw_label, str) or not raw_label.strip():
+            raise PresetError(f"{loc}.label 必填且为非空字符串")
+        label = raw_label.strip()
+
+        raw_mode = item.get("mode", PresetCommandMode.SEND.value)
+        if not isinstance(raw_mode, str):
+            raise PresetError(f"{loc}.mode 必须是字符串")
+        try:
+            mode = PresetCommandMode(raw_mode)
+        except ValueError as exc:
+            raise PresetError(f"{loc}.mode 非法：{raw_mode}") from exc
+
+        raw_command = item.get("command")
+        if not isinstance(raw_command, str) or not raw_command.strip():
+            raise PresetError(f"{loc}.command 必填且为非空字符串")
+        command = raw_command.strip() if mode is PresetCommandMode.SEND else raw_command.lstrip()
+
+        raw_tooltip = item.get("tooltip", "")
+        if not isinstance(raw_tooltip, str):
+            raise PresetError(f"{loc}.tooltip 必须是字符串")
+        tooltip = raw_tooltip.strip()
+
+        commands.append(
+            PresetCommand(
+                label=label,
+                command=command,
+                mode=mode,
+                tooltip=tooltip,
+            )
+        )
+    return tuple(commands)

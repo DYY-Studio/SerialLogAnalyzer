@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QSize, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QLabel,
@@ -22,6 +22,8 @@ from serial_log_analyzer.core.models.device import (
     SerialPortInfo,
     StopBits,
 )
+from serial_log_analyzer.ui.icons import render_icon
+from serial_log_analyzer.ui.theme import ThemeTokens, default_tokens
 
 __all__ = ["SerialToolBar"]
 
@@ -45,8 +47,15 @@ class SerialToolBar(QToolBar):
     serial_settings_requested = Signal()
     error_occurred = Signal(str)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        tokens: ThemeTokens | None = None,
+    ) -> None:
         super().__init__(parent)
+        self._tokens = tokens if tokens is not None else default_tokens()
+        self._connected = False
         self._advanced: dict[str, object] = {
             "data_bits": 8,
             "parity": Parity.NONE,
@@ -54,10 +63,19 @@ class SerialToolBar(QToolBar):
             "flow_control": FlowControl.NONE,
         }
         self._build()
+        self.set_theme_tokens(self._tokens)
 
     # ------------------------------------------------------------------
     # 外部接口
     # ------------------------------------------------------------------
+
+    def set_theme_tokens(self, tokens: ThemeTokens) -> None:
+        """按主题 Token 刷新按钮图标与连接状态指示点。"""
+
+        self._tokens = tokens
+        self.refresh_btn.setIcon(render_icon("refresh", tokens.text_secondary, size=14))
+        self.settings_btn.setIcon(render_icon("sliders", tokens.text_secondary, size=14))
+        self._sync_connection_visuals()
 
     def set_ports(self, ports: list[SerialPortInfo]) -> None:
         """填充串口下拉列表，尽量保留当前选择。"""
@@ -75,10 +93,21 @@ class SerialToolBar(QToolBar):
     def set_connected(self, connected: bool) -> None:
         """按连接状态切换按钮与控件可用性。"""
 
+        self._connected = bool(connected)
         self.connect_btn.setEnabled(not connected)
         self.disconnect_btn.setEnabled(connected)
         self.port_combo.setEnabled(not connected)
         self.baud_combo.setEnabled(not connected)
+        self._sync_connection_visuals()
+
+    def active_endpoint_label(self) -> str:
+        """返回当前选择的端口与波特率简要文本，供状态栏展示。"""
+
+        port = str(self.port_combo.currentData() or self.port_combo.currentText().strip())
+        baud = self.baud_combo.currentText().strip()
+        if port and baud:
+            return f"{port} · {baud}"
+        return port or baud
 
     def current_config(self) -> SerialConfig:
         """按当前界面选择构造 :class:`SerialConfig`。
@@ -137,27 +166,49 @@ class SerialToolBar(QToolBar):
     # ------------------------------------------------------------------
 
     def _build(self) -> None:
-        self.addWidget(QLabel(" 串口 "))
+        self.setMovable(False)
+        self.setFloatable(False)
+        self.setIconSize(QSize(14, 14))
+
+        self.status_dot = QLabel()
+        self.status_dot.setObjectName("toolbar-status-dot")
+        self.status_dot.setFixedSize(8, 8)
+        self.addWidget(self.status_dot)
+
+        port_label = QLabel("串口")
+        port_label.setContentsMargins(2, 0, 2, 0)
+        self.addWidget(port_label)
         self.port_combo = QComboBox()
-        self.port_combo.setMinimumWidth(200)
+        self.port_combo.setMinimumWidth(210)
+        self.port_combo.setPlaceholderText("未检测到可用串口")
+        self.port_combo.model().rowsInserted.connect(self._select_first_port_if_unset)
         self.addWidget(self.port_combo)
 
-        self.addWidget(QLabel(" 波特率 "))
+        baud_label = QLabel("波特率")
+        baud_label.setContentsMargins(6, 0, 2, 0)
+        self.addWidget(baud_label)
         self.baud_combo = QComboBox()
         self.baud_combo.setEditable(True)
+        self.baud_combo.setMinimumWidth(96)
         self.baud_combo.addItems(_BAUDRATES)
         self.baud_combo.setCurrentText("115200")
         self.addWidget(self.baud_combo)
 
         self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn.setProperty("variant", "ghost")
+        self.refresh_btn.setToolTip("刷新可用串口列表")
         self.refresh_btn.clicked.connect(self.refresh_requested.emit)
         self.addWidget(self.refresh_btn)
 
+        self.addSeparator()
+
         self.connect_btn = QPushButton("连接")
+        self.connect_btn.setProperty("variant", "primary")
         self.connect_btn.clicked.connect(self._on_connect)
         self.addWidget(self.connect_btn)
 
         self.disconnect_btn = QPushButton("断开")
+        self.disconnect_btn.setProperty("variant", "danger")
         self.disconnect_btn.setEnabled(False)
         self.disconnect_btn.clicked.connect(self.disconnect_requested.emit)
         self.addWidget(self.disconnect_btn)
@@ -165,6 +216,29 @@ class SerialToolBar(QToolBar):
         self.settings_btn = QPushButton("串口参数…")
         self.settings_btn.clicked.connect(self.serial_settings_requested.emit)
         self.addWidget(self.settings_btn)
+
+    def _select_first_port_if_unset(self, *_args: object) -> None:
+        if self.port_combo.currentIndex() < 0 and self.port_combo.count() > 0:
+            self.port_combo.setCurrentIndex(0)
+
+    def _sync_connection_visuals(self) -> None:
+        color = self._tokens.success if self._connected else self._tokens.text_muted
+        self.status_dot.setStyleSheet(f"background-color: {color}; border-radius: 4px;")
+        self.status_dot.setToolTip("设备已连接" if self._connected else "设备未连接")
+        self.connect_btn.setIcon(
+            render_icon(
+                "connect",
+                self._tokens.text_muted if self._connected else self._tokens.text_on_accent,
+                size=14,
+            )
+        )
+        self.disconnect_btn.setIcon(
+            render_icon(
+                "disconnect",
+                self._tokens.danger if self._connected else self._tokens.text_muted,
+                size=14,
+            )
+        )
 
     def _on_connect(self) -> None:
         """连接前先在本地校验参数；非法时提示而不发起连接。"""

@@ -12,7 +12,14 @@ from enum import Enum
 
 from serial_log_analyzer.core.models.logs import LogLevel
 
-__all__ = ["ContinuationMode", "FallbackRule", "LogPreset", "PresetLineRule"]
+__all__ = [
+    "ContinuationMode",
+    "FallbackRule",
+    "LogPreset",
+    "PresetCommand",
+    "PresetCommandMode",
+    "PresetLineRule",
+]
 
 
 class ContinuationMode(Enum):
@@ -23,6 +30,33 @@ class ContinuationMode(Enum):
 
     NONE = "none"
     """不做合并，每行独立成条。"""
+
+
+class PresetCommandMode(Enum):
+    """Preset 快捷命令点击后的触发方式。"""
+
+    SEND = "send"
+    """点击后直接提交发送命令。"""
+
+    PREFILL = "prefill"
+    """点击后预填到输入框并聚焦光标至末尾，由用户补全后发送。"""
+
+
+@dataclass(frozen=True)
+class PresetCommand:
+    """Preset 声明的设备快捷命令项。
+
+    参数:
+        label: 快捷按钮显示文案。
+        command: 发送或预填的命令文本。
+        mode: 点击行为（直接发送或预填）。
+        tooltip: 可选按钮悬停提示文本。
+    """
+
+    label: str
+    command: str
+    mode: PresetCommandMode = PresetCommandMode.SEND
+    tooltip: str = ""
 
 
 @dataclass(frozen=True)
@@ -78,6 +112,7 @@ class LogPreset:
         line: 行规则。
         fallback: 降级规则。
         source_path: 加载来源路径，用于错误提示。
+        commands: 可选设备快捷命令列表。
     """
 
     preset_id: str
@@ -86,6 +121,7 @@ class LogPreset:
     fallback: FallbackRule = field(default_factory=FallbackRule)
     schema_version: int = 1
     source_path: str = ""
+    commands: tuple[PresetCommand, ...] = ()
 
     def level_from_token(self, token: str) -> LogLevel:
         """把板上级别标识映射为 :class:`LogLevel`。

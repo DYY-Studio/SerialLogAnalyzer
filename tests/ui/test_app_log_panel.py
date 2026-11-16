@@ -26,6 +26,21 @@ def test_path_label_elides_and_copies_on_click(qtbot) -> None:
     assert QGuiApplication.clipboard().text() == full
 
 
+def test_copy_path_button_copies_full_path(qtbot, monkeypatch) -> None:
+    from PySide6.QtGui import QGuiApplication
+
+    copied: list[str] = []
+    clipboard = QGuiApplication.clipboard()
+    monkeypatch.setattr(clipboard, "setText", copied.append)
+
+    full = "C:/Users/ASUS/AppData/Roaming/SerialLogAnalyzer/logs/serial-log-analyzer.log"
+    panel = AppLogPanel(lambda: [], full)
+    qtbot.addWidget(panel)
+    panel.copy_path_btn.click()
+
+    assert copied == [full]
+
+
 def test_reload_follows_the_provider_and_polls_only_while_visible(qtbot) -> None:
     lines = ["第一行"]
     panel = AppLogPanel(lambda: list(lines), "D:/logs/app.log")

@@ -5,15 +5,16 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QGuiApplication, QKeyEvent
 from PySide6.QtWidgets import (
     QComboBox,
-    QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -29,6 +30,8 @@ from serial_log_analyzer.core.models.analysis import (
 )
 from serial_log_analyzer.core.models.provider import ProviderProfile
 from serial_log_analyzer.core.prompts.loader import PromptGoal
+from serial_log_analyzer.ui.icons import render_icon
+from serial_log_analyzer.ui.theme import ThemeTokens, default_tokens
 from serial_log_analyzer.ui.widgets.chat_view import ChatView
 
 __all__ = ["AnalysisPanel"]
@@ -72,6 +75,7 @@ class AnalysisPanel(QWidget):
         cancel_requested(): 请求取消。
         reset_requested(): 请求清空会话。
         profile_changed(str): 用户切换了 LLM Profile（携带 profile_id）。
+        export_report_requested(): 请求导出结构化诊断报告。
     """
 
     analyze_requested = Signal(object)
@@ -79,17 +83,36 @@ class AnalysisPanel(QWidget):
     cancel_requested = Signal()
     reset_requested = Signal()
     profile_changed = Signal(str)
+    export_report_requested = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        tokens: ThemeTokens | None = None,
+    ) -> None:
         super().__init__(parent)
+        self._tokens = tokens if tokens is not None else default_tokens()
         self._has_session = False
         self._streaming = False
         self._build()
+        self.set_theme_tokens(self._tokens)
         self.set_state(AnalysisState.IDLE)
 
     # ------------------------------------------------------------------
     # 外部接口
     # ------------------------------------------------------------------
+
+    def set_theme_tokens(self, tokens: ThemeTokens) -> None:
+        """按主题 Token 刷新按钮图标与对话卡片样式。"""
+
+        self._tokens = tokens
+        self.new_session_btn.setIcon(render_icon("new-session", tokens.text_secondary, size=14))
+        self.copy_btn.setIcon(render_icon("copy", tokens.text_secondary, size=14))
+        self.export_report_btn.setIcon(render_icon("export", tokens.text_secondary, size=14))
+        self.send_btn.setIcon(render_icon("send", tokens.text_on_accent, size=14))
+        self.stop_btn.setIcon(render_icon("stop", tokens.danger, size=14))
+        self.chat.set_theme_tokens(tokens)
 
     def set_result(self, result: AnalysisResult) -> None:
         """展示累积后的结果快照：转录按轮次刷新，并更新轮数与用量。"""
@@ -98,7 +121,9 @@ class AnalysisPanel(QWidget):
         self._update_turns(result.conversation)
         self._has_session = bool(result.conversation)
         self._sync_enabled()
-        self.usage_label.setText(self._usage_text(result.usage))
+        usage_text = self._usage_text(result.usage)
+        self.usage_label.setText(usage_text)
+        self.usage_label.setVisible(bool(usage_text))
         if result.state is AnalysisState.ERROR and result.error:
             self.status_label.setText(f"出错：{result.error}")
 
@@ -114,19 +139,26 @@ class AnalysisPanel(QWidget):
             }[state]
         )
         self._streaming = state is AnalysisState.STREAMING
-        self.stop_btn.setEnabled(self._streaming)
         self._sync_enabled()
 
     def _sync_enabled(self) -> None:
-        """按"是否流式中 / 是否已有会话"统一控件可用性。"""
+        """按"是否流式中 / 是否已有会话"统一控件可用性与发/停槽位。"""
 
         idle = not self._streaming
         self.send_btn.setEnabled(idle)
+        self.stop_btn.setEnabled(self._streaming)
+        self._action_stack.setCurrentWidget(self.stop_btn if self._streaming else self.send_btn)
         self.new_session_btn.setEnabled(idle)
-        # 追问不重复发送上下文，所以会话开始后目标与上下文不再生效，置灰避免静默忽略。
+        # 追问不重复发送上下文，所以会话开始后目标与上下文不再生效，置灰并折叠成摘要条。
         first_turn = idle and not self._has_session
         self.goal_combo.setEnabled(first_turn)
         self.context_combo.setEnabled(first_turn)
+        self._scope_widget.setVisible(not self._has_session)
+        self._scope_summary.setVisible(self._has_session)
+        if self._has_session:
+            self._scope_summary.setText(
+                f"首轮范围：{self.goal_combo.currentText()} · {self.context_combo.currentText()}"
+            )
 
     def set_details_expanded(self, expanded: bool) -> None:
         """设置「思考 / 参考内容」折叠块的默认展开状态。"""
@@ -177,45 +209,83 @@ class AnalysisPanel(QWidget):
 
     def _build(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(8, 6, 8, 8)
         layout.setSpacing(6)
 
-        form = QFormLayout()
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-
+        header_row = QHBoxLayout()
+        header_row.setSpacing(6)
         self.profile_combo = QComboBox()
         self.profile_combo.setObjectName("panel-profile")
+        self.profile_combo.setMinimumWidth(120)
+        self.profile_combo.setToolTip("切换当前 LLM Profile")
         self.profile_combo.currentIndexChanged.connect(
             lambda _index: self.profile_changed.emit(self.current_profile())
         )
-        form.addRow("模型:", self.profile_combo)
+        header_row.addWidget(self.profile_combo, stretch=1)
 
+        self.new_session_btn = QPushButton("新会话")
+        self.new_session_btn.setProperty("variant", "ghost")
+        self.new_session_btn.setToolTip("清空历史并开始新会话")
+        self.new_session_btn.setIconSize(QSize(14, 14))
+        self.new_session_btn.clicked.connect(self._on_reset)
+        header_row.addWidget(self.new_session_btn)
+
+        self.copy_btn = QPushButton("复制")
+        self.copy_btn.setProperty("variant", "ghost")
+        self.copy_btn.setToolTip("复制全部会话 Markdown 原文")
+        self.copy_btn.setIconSize(QSize(14, 14))
+        self.copy_btn.clicked.connect(self._on_copy)
+        header_row.addWidget(self.copy_btn)
+
+        self.export_report_btn = QPushButton("报告")
+        self.export_report_btn.setObjectName("panel-export-report")
+        self.export_report_btn.setProperty("variant", "ghost")
+        self.export_report_btn.setToolTip("导出诊断报告（Markdown / JSON）")
+        self.export_report_btn.setIconSize(QSize(14, 14))
+        self.export_report_btn.clicked.connect(self.export_report_requested.emit)
+        header_row.addWidget(self.export_report_btn)
+        layout.addLayout(header_row)
+
+        self._scope_widget = QWidget()
+        scope_row = QHBoxLayout(self._scope_widget)
+        scope_row.setContentsMargins(0, 0, 0, 0)
+        scope_row.setSpacing(6)
+
+        goal_col = QVBoxLayout()
+        goal_col.setSpacing(2)
+        goal_lbl = QLabel("目标")
+        goal_lbl.setProperty("role", "muted-caption")
+        goal_col.addWidget(goal_lbl)
+        self.goal_combo = QComboBox()
+        goal_col.addWidget(self.goal_combo)
+        scope_row.addLayout(goal_col, stretch=1)
+
+        ctx_col = QVBoxLayout()
+        ctx_col.setSpacing(2)
+        ctx_lbl = QLabel("上下文")
+        ctx_lbl.setProperty("role", "muted-caption")
+        ctx_col.addWidget(ctx_lbl)
         self.context_combo = QComboBox()
         for label, selector in _CONTEXT_CHOICES:
             self.context_combo.addItem(label, selector)
-        form.addRow("上下文:", self.context_combo)
+        ctx_col.addWidget(self.context_combo)
+        scope_row.addLayout(ctx_col, stretch=1)
+        layout.addWidget(self._scope_widget)
 
-        self.goal_combo = QComboBox()
-        form.addRow("目标:", self.goal_combo)
-        layout.addLayout(form)
-
-        buttons = QHBoxLayout()
-        self.stop_btn = QPushButton("停止")
-        self.stop_btn.clicked.connect(self.cancel_requested.emit)
-        buttons.addWidget(self.stop_btn)
-        self.new_session_btn = QPushButton("新会话")
-        self.new_session_btn.clicked.connect(self._on_reset)
-        buttons.addWidget(self.new_session_btn)
-        self.copy_btn = QPushButton("复制结果")
-        self.copy_btn.clicked.connect(self._on_copy)
-        buttons.addWidget(self.copy_btn)
-        layout.addLayout(buttons)
+        self._scope_summary = QLabel()
+        self._scope_summary.setProperty("role", "muted-caption")
+        self._scope_summary.setVisible(False)
+        layout.addWidget(self._scope_summary)
 
         status_row = QHBoxLayout()
+        status_row.setSpacing(6)
         self.status_label = QLabel()
+        self.status_label.setProperty("role", "muted-caption")
         status_row.addWidget(self.status_label)
         status_row.addStretch()
         self.turns_label = QLabel()
+        self.turns_label.setProperty("role", "status-pill")
+        self.turns_label.setVisible(False)
         status_row.addWidget(self.turns_label)
         layout.addLayout(status_row)
 
@@ -223,17 +293,48 @@ class AnalysisPanel(QWidget):
         layout.addWidget(self.chat, stretch=1)
 
         self.usage_label = QLabel()
+        self.usage_label.setProperty("role", "muted-caption")
+        self.usage_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.usage_label.setVisible(False)
         layout.addWidget(self.usage_label)
 
-        self.message_edit = _SubmitEdit()
-        self.message_edit.setPlaceholderText("输入分析要求或追问；Enter 发送，Shift+Enter 换行")
-        self.message_edit.setFixedHeight(84)
-        self.message_edit.submitted.connect(self._on_send)
-        layout.addWidget(self.message_edit)
+        composer = QFrame()
+        composer.setObjectName("chat-composer")
+        composer_layout = QVBoxLayout(composer)
+        composer_layout.setContentsMargins(6, 4, 6, 6)
+        composer_layout.setSpacing(4)
 
+        self.message_edit = _SubmitEdit()
+        self.message_edit.setFrameShape(QFrame.Shape.NoFrame)
+        self.message_edit.setStyleSheet("QPlainTextEdit { border: none; background: transparent; padding: 2px; }")
+        self.message_edit.setPlaceholderText("输入分析要求或追问；Enter 发送，Shift+Enter 换行")
+        self.message_edit.setMinimumHeight(54)
+        self.message_edit.setMaximumHeight(82)
+        self.message_edit.submitted.connect(self._on_send)
+        composer_layout.addWidget(self.message_edit)
+
+        footer = QHBoxLayout()
+        footer.setSpacing(6)
+        hint = QLabel("Enter 发送 · Shift+Enter 换行")
+        hint.setProperty("role", "muted-caption")
+        footer.addWidget(hint)
+        footer.addStretch()
+
+        self._action_stack = QStackedWidget()
         self.send_btn = QPushButton("发送")
+        self.send_btn.setProperty("variant", "primary")
+        self.send_btn.setIconSize(QSize(14, 14))
         self.send_btn.clicked.connect(self._on_send)
-        layout.addWidget(self.send_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        self.stop_btn = QPushButton("停止")
+        self.stop_btn.setProperty("variant", "danger")
+        self.stop_btn.setIconSize(QSize(14, 14))
+        self.stop_btn.clicked.connect(self.cancel_requested.emit)
+        self._action_stack.addWidget(self.send_btn)
+        self._action_stack.addWidget(self.stop_btn)
+        self._action_stack.setFixedHeight(self.send_btn.sizeHint().height())
+        footer.addWidget(self._action_stack)
+        composer_layout.addLayout(footer)
+        layout.addWidget(composer)
 
     def _on_send(self) -> None:
         """发送：会话未开始时作为首轮分析，已开始时作为追问。"""
@@ -256,7 +357,9 @@ class AnalysisPanel(QWidget):
     def _on_reset(self) -> None:
         self.chat.clear()
         self.usage_label.clear()
+        self.usage_label.setVisible(False)
         self.turns_label.clear()
+        self.turns_label.setVisible(False)
         self.message_edit.clear()
         self._has_session = False
         self._sync_enabled()
@@ -266,7 +369,9 @@ class AnalysisPanel(QWidget):
         """按会话历史里的 user 消息数量显示轮数；空会话不显示。"""
 
         rounds = sum(1 for message in conversation if message.role is MessageRole.USER)
-        self.turns_label.setText(f"当前会话 {rounds} 轮" if rounds else "")
+        text = f"当前会话 {rounds} 轮" if rounds else ""
+        self.turns_label.setText(text)
+        self.turns_label.setVisible(bool(text))
 
     @staticmethod
     def _usage_text(usage: TokenUsage | None) -> str:

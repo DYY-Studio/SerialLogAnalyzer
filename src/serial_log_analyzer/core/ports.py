@@ -11,12 +11,14 @@ from typing import Any, Protocol, runtime_checkable
 
 from serial_log_analyzer.core.errors import AppError
 from serial_log_analyzer.core.models.device import SerialConfig, SerialPortInfo
+from serial_log_analyzer.core.models.notification import SmtpConfig
 from serial_log_analyzer.core.models.provider import CredentialRef, HttpRequest
 
 __all__ = [
     "BytesHandler",
     "CancellationToken",
     "CredentialProvider",
+    "EmailNotifier",
     "EnvironmentReader",
     "ErrorHandler",
     "HttpTransport",
@@ -165,8 +167,24 @@ class ResourceLoader(Protocol):
 
 
 class CredentialProvider(Protocol):
-    """LLM 请求所需的凭据解析端口；由凭据服务实现。"""
+    """LLM / SMTP 请求所需的凭据解析端口；由凭据服务实现。"""
 
     def resolve(self, credential: CredentialRef) -> str:
         """根据引用返回非空密钥；不可用时抛出 ``CredentialError``。"""
+
+
+@runtime_checkable
+class EmailNotifier(Protocol):
+    """异步邮件发送端口；由 ``io`` 层实现（``core`` 不依赖 ``smtplib`` 或 Qt）。"""
+
+    def send(
+        self,
+        config: SmtpConfig,
+        password: str,
+        subject: str,
+        body: str,
+        on_done: VoidHandler,
+        on_error: ErrorHandler,
+    ) -> None:
+        """异步投递一封邮件；终态回调（``on_done`` / ``on_error``）合计只执行一次。"""
 

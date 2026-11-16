@@ -29,6 +29,16 @@ line:                           # 必填，行匹配规则
 fallback:                       # 选填，无法匹配时的降级规则
   enabled: true
   level: UNKNOWN
+
+commands:                       # 选填，命令面板快捷命令按钮列表
+  - label: "PING"               # 必填，非空字符串（首尾去空白）
+    command: "PING"             # 必填，发送或预填的文本
+    mode: send                  # 选填，send（直接发送，默认）| prefill（预填到输入框）
+    tooltip: "检查命令通道连通性" # 选填，按钮悬停提示
+  - label: "TEST …"
+    command: "TEST "            # prefill 模式保留末尾空格
+    mode: prefill
+    tooltip: "预填 TEST 前缀，等待补充场景名"
 ```
 
 ## 2. 行规则 `line`
@@ -68,7 +78,18 @@ Preset 负责把板上的任意标识（`V` / `verbose` / `FATAL` …）映射�
 
 `enabled: false` 时，不匹配的行会被静默忽略（`raw` 不再保留），仅在日志格式高度可控时使用。
 
-## 5. 资源查找顺序
+## 5. 快捷命令 `commands`
+
+`commands` 为可选列表，声明命令面板中展示的快捷按钮；省略或设为 `[]` 时隐藏快捷按钮栏。每个列表项必须是包含下列字段的对象：
+
+| 字段 | 必填 | 默认 | 说明 |
+|---|---|---|---|
+| `label` | 是 | — | 按钮展示文案，必须为非空字符串（加载时首尾去空白） |
+| `command` | 是 | — | 发送或预填的命令文本，`.strip()` 后必须非空；`mode: send` 时首尾去空白（`.strip()`），`mode: prefill` 时仅去左侧空白（`.lstrip()`）以保留末尾空格 |
+| `mode` | 否 | `send` | 仅允许 `send`（点击后直接发送）或 `prefill`（点击后填入输入框并把光标移至末尾，不直接发送） |
+| `tooltip` | 否 | `""` | 可选悬停提示文本，必须为字符串（首尾去空白） |
+
+## 6. 资源查找顺序
 
 1. 用户配置目录 `presets/logs/`（Windows `%APPDATA%\SerialLogAnalyzer`，
    其他平台 `~/.config/SerialLogAnalyzer`，可用 `SLA_CONFIG_HOME` 覆盖）
@@ -78,7 +99,7 @@ Preset 负责把板上的任意标识（`V` / `verbose` / `FATAL` …）映射�
 同 `preset_id` 时高优先级覆盖低优先级，便于在不改仓库的前提下适配自己的固件。
 完整规则见 `docs/configuration.md`。
 
-## 6. 校验与错误
+## 7. 校验与错误
 
 | 情况 | 行为 |
 |---|---|
@@ -86,10 +107,11 @@ Preset 负责把板上的任意标识（`V` / `verbose` / `FATAL` …）映射�
 | 缺少必填字段 / 类型错误 | 同上 |
 | 正则编译失败或缺少必需组 | 同上 |
 | `fields` 非对象 / 字段名为空 / 字段正则非法 | 同上 |
+| `commands` 非列表 / 元素含未知字段 / `mode` 非法 / `label` 或 `command` 为空 | 同上 |
 | 未知顶层字段 | 报错（避免拼写错误被静默忽略） |
 | 级别标识未命中映射 | 运行期降级为 `UNKNOWN`，不报错 |
 
-## 7. 示例：新增一个固件格式
+## 8. 示例：新增一个固件格式
 
 ```yaml
 schema_version: 1

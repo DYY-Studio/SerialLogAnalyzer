@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QDockWidget
 
 from serial_log_analyzer.core.device.command import CommandReply
 from serial_log_analyzer.core.logs.pipeline import PipelineUpdate
+from serial_log_analyzer.core.logs.preset import PresetCommand, PresetCommandMode
 from serial_log_analyzer.core.models.analysis import (
     AnalysisMessage,
     AnalysisRequest,
@@ -135,6 +136,7 @@ def test_analysis_panel_first_turn_then_follow_up(qtbot) -> None:
 
     panel.set_state(AnalysisState.STREAMING)
     assert panel.send_btn.isEnabled() is False and panel.stop_btn.isEnabled() is True
+    assert panel._action_stack.currentWidget() is panel.stop_btn
 
     panel.set_result(
         AnalysisResult(
@@ -148,6 +150,9 @@ def test_analysis_panel_first_turn_then_follow_up(qtbot) -> None:
         )
     )
     panel.set_state(AnalysisState.DONE)
+    assert panel._action_stack.currentWidget() is panel.send_btn
+    assert panel._scope_widget.isHidden() is True
+    assert panel._scope_summary.isHidden() is False
     assert "结论" in panel.chat.plain_text()
     assert "3" in panel.usage_label.text() and "7" in panel.usage_label.text()
     assert "缓存 2" in panel.usage_label.text()
@@ -165,6 +170,8 @@ def test_analysis_panel_first_turn_then_follow_up(qtbot) -> None:
 
     panel.new_session_btn.click()
     assert panel.context_combo.isEnabled() is True and panel.goal_combo.isEnabled() is True
+    assert panel._scope_widget.isHidden() is False
+    assert panel._scope_summary.isHidden() is True
     assert panel.turns_label.text() == ""
 
 
@@ -244,6 +251,7 @@ def test_menu_actions_emit_intent_signals(qtbot) -> None:
     window = _build_window(qtbot)
     seen: list[str] = []
     window.export_requested.connect(lambda: seen.append("export"))
+    window.export_report_requested.connect(lambda: seen.append("export_report"))
     window.import_requested.connect(lambda: seen.append("import"))
     window.clear_requested.connect(lambda: seen.append("clear"))
     window.settings_requested.connect(lambda: seen.append("settings"))
@@ -253,27 +261,50 @@ def test_menu_actions_emit_intent_signals(qtbot) -> None:
     assert [menu.text() for menu in menus] == ["文件", "配置", "视图"]
     file_actions = [item for item in menus[0].menu().actions() if not item.isSeparator()]
     config_actions = menus[1].menu().actions()
-    assert [action.text() for action in file_actions] == ["导出日志…", "导入日志…", "清空日志"]
+    assert [action.text() for action in file_actions] == [
+        "导出日志…",
+        "导出诊断报告…",
+        "导入日志…",
+        "清空日志",
+    ]
     assert [action.text() for action in config_actions] == [
         "设置…",
         "模型服务…",
         "切换日志 Preset…",
     ]
     # 「视图」里必须能开关停靠面板，否则关掉就找不回来
-    assert [action.text() for action in menus[2].menu().actions()] == ["LLM 分析", "命令", "应用日志"]
+    assert [action.text() for action in menus[2].menu().actions()] == [
+        "LLM 分析",
+        "命令",
+        "应用日志",
+        "异常与告警",
+        "数据图表",
+    ]
     assert window.analysis_dock.widget() is window.analysis_panel
     assert window.command_dock.widget() is window.command_panel
     assert window.app_log_dock.widget() is window.app_log_panel
-    # 命令与应用日志共用底部区域，按标签页切换
-    assert window.tabifiedDockWidgets(window.command_dock) == [window.app_log_dock]
-    for dock in (window.analysis_dock, window.command_dock, window.app_log_dock):
+    assert window.anomaly_dock.widget() is window.anomaly_panel
+    assert window.chart_dock.widget() is window.chart_panel
+    # 命令、应用日志、异常与图表面板共用底部区域，按标签页切换
+    assert set(window.tabifiedDockWidgets(window.command_dock)) == {
+        window.app_log_dock,
+        window.anomaly_dock,
+        window.chart_dock,
+    }
+    for dock in (
+        window.analysis_dock,
+        window.command_dock,
+        window.app_log_dock,
+        window.anomaly_dock,
+        window.chart_dock,
+    ):
         assert dock.features() & QDockWidget.DockWidgetFeature.DockWidgetFloatable
         assert dock.features() & QDockWidget.DockWidgetFeature.DockWidgetMovable
 
     for action in (*file_actions, *config_actions[:2]):
         action.trigger()
 
-    assert seen == ["export", "import", "clear", "settings", "provider"]
+    assert seen == ["export", "export_report", "import", "clear", "settings", "provider"]
 
 
 def test_toolbar_emits_config(qtbot) -> None:
@@ -303,14 +334,73 @@ def test_command_panel_echoes_command_and_appends_reply(qtbot) -> None:
 
     panel.append_reply(CommandReply(text="PONG", ok=True))
     panel.append_reply(CommandReply(text="rx overflow", ok=False, code=7))
+    panel.append_timeout("VERSION")
     assert panel.reply_view.toPlainText().splitlines() == [
         "→ PING",
         "← PONG",
         "← 失败 [7] rx overflow",
+        "⏱ 超时未收到响应：VERSION",
     ]
 
     panel.send_btn.click()  # 空命令不发
     assert sent == ["PING"]
+
+    # 快捷命令芯片：PING 直接发送，TEST 仅预填前缀且不直接提交
+    from PySide6.QtWidgets import QToolButton
+
+    panel.findChild(QToolButton, "cmd-chip-ping").click()
+    assert sent == ["PING", "PING"]
+
+    panel.findChild(QToolButton, "cmd-chip-test").click()
+    assert panel.command_edit.text() == "TEST "
+    assert sent == ["PING", "PING"]
+
+    panel.findChild(QToolButton, "cmd-clear").click()
+    assert panel.reply_view.toPlainText() == ""
+
+
+def test_command_panel_set_commands_replaces_chips_and_hides_when_empty(qtbot) -> None:
+    """运行期替换快捷命令即时更新按钮、重名 slug、提示文案，空列表时隐藏快捷栏。"""
+
+    from PySide6.QtWidgets import QToolButton
+
+    panel = CommandPanel()
+    qtbot.addWidget(panel)
+    sent: list[str] = []
+    panel.command_submitted.connect(sent.append)
+
+    assert panel.findChild(QToolButton, "cmd-chip-ping") is not None
+
+    panel.set_commands(
+        [
+            PresetCommand(label="AT", command="AT", tooltip="检查模组响应"),
+            PresetCommand(label="TEST …", command="TEST ", mode=PresetCommandMode.PREFILL),
+            PresetCommand(label="TEST!", command="TEST all"),
+        ]
+    )
+
+    assert panel.findChild(QToolButton, "cmd-chip-ping") is None
+    at_btn = panel.findChild(QToolButton, "cmd-chip-at")
+    test_prefill_btn = panel.findChild(QToolButton, "cmd-chip-test")
+    test_dup_btn = panel.findChild(QToolButton, "cmd-chip-test-2")
+    assert at_btn is not None and at_btn.toolTip() == "检查模组响应"
+    assert test_prefill_btn is not None and test_dup_btn is not None
+    assert "AT" in panel.command_edit.placeholderText()
+    assert panel._quick_label.isHidden() is False
+    assert panel._chips_container.isHidden() is False
+
+    at_btn.click()
+    test_prefill_btn.click()
+    assert panel.command_edit.text() == "TEST "
+    test_dup_btn.click()
+    assert sent == ["AT", "TEST all"]
+
+    panel.set_commands([])
+    assert panel.findChild(QToolButton, "cmd-chip-at") is None
+    assert panel._quick_label.isHidden() is True
+    assert panel._chips_container.isHidden() is True
+    assert panel.clear_btn.isHidden() is False
+    assert panel.command_edit.placeholderText() == "输入板端命令"
 
 
 def test_panel_profile_combo_emits_change(qtbot) -> None:
@@ -390,3 +480,216 @@ def test_invalid_baudrate_reports_and_skips_connect(qtbot) -> None:
 
     assert configs == []
     assert len(errors) == 2 and all("波特率" in message for message in errors)
+
+
+def test_head_drop_uses_incremental_remove_and_preserves_selection(qtbot) -> None:
+    """连续头部淘汰应保持后续行选中状态，并支持 O(log N) 序号查行。"""
+
+    window = _build_window(qtbot)
+    view = window.log_view
+    model = view._model
+    view.append_update(PipelineUpdate(added=tuple(_entry(i) for i in range(5))))
+
+    view.table_view.selectRow(3)
+    assert [entry.sequence for entry in view.selected_log_entries()] == [3]
+
+    reset_seen: list[bool] = []
+    model.modelReset.connect(lambda: reset_seen.append(True))
+    removed = model.remove_sequences([0, 1])
+
+    assert removed == 2
+    assert reset_seen == []  # 命中连续头部增量移除，未触发整表 reset
+    assert [entry.sequence for entry in view.selected_log_entries()] == [3]
+    assert model.row_for_sequence(0) is None
+    assert model.row_for_sequence(2) == 0
+    assert model.row_for_sequence(3) == 1
+    assert model.row_for_sequence(99) is None
+
+    # 非连续删除退化为整表 reset，确保视图正确
+    assert model.remove_sequences([4]) == 1
+    assert reset_seen == [True]
+    assert [model.entry_at(row).sequence for row in range(model.rowCount())] == [2, 3]
+
+
+def test_log_view_empty_state_clear_filters_and_delegate_render(qtbot) -> None:
+    """空状态指引切换、一键清空过滤、结构化 Tooltip 与胶囊委托渲染。"""
+
+    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtGui import QPainter, QPixmap
+    from PySide6.QtWidgets import QStyleOptionViewItem
+
+    from serial_log_analyzer.ui.delegates import LogLevelDelegate
+
+    window = _build_window(qtbot)
+    view = window.log_view
+    assert view._empty_state.isHidden() is False
+    assert "暂无" in view._empty_title.text()
+
+    rich_entry = LogEntry(
+        sequence=0,
+        received_at=1700000000.0,
+        level=LogLevel.ERROR,
+        message="temperature=29.7",
+        raw="[1.234] [E] [sensor] temperature=29.7",
+        device_time="1.234",
+        module="sensor",
+        extra={"temperature": "29.7"},
+    )
+    view.append_update(PipelineUpdate(added=(rich_entry,)))
+    assert view._empty_state.isHidden() is True
+
+    # 过滤为空后提示无匹配项，点重置恢复全部显示
+    view.text_filter.setText("missing")
+    assert view._empty_state.isHidden() is False
+    assert "没有匹配" in view._empty_title.text()
+    view.reset_filter_btn.click()
+    assert view._empty_state.isHidden() is True
+    assert view.table_view.model().rowCount() == 1
+
+    # 结构化 Tooltip 含板上时间、extra 与原文
+    tooltip = view._model.data(view._model.index(0, 4), Qt.ItemDataRole.ToolTipRole)
+    assert "1.234" in tooltip and "temperature=29.7" in tooltip and rich_entry.raw in tooltip
+
+    # 第 2 列挂载 LogLevelDelegate，可在离屏画布真实渲染胶囊
+    delegate = view.table_view.itemDelegateForColumn(2)
+    assert isinstance(delegate, LogLevelDelegate)
+    pixmap = QPixmap(80, 28)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    option = QStyleOptionViewItem()
+    option.rect = QRect(0, 0, 80, 28)
+    delegate.paint(painter, option, view.table_view.model().index(0, 2))
+    painter.end()
+    assert not pixmap.toImage().isNull()
+
+
+def test_main_window_segmented_status_and_dock_title_bars(qtbot) -> None:
+    """主窗口 Dock 紧凑标题栏、状态栏分段胶囊与连接/Preset/告警状态同步。"""
+
+    window = _build_window(qtbot)
+    assert window.analysis_dock.titleBarWidget() is not None
+    assert window.command_dock.titleBarWidget() is not None
+    assert window.app_log_dock.titleBarWidget() is not None
+    assert window.anomaly_dock.titleBarWidget() is not None
+    assert window.chart_dock.titleBarWidget() is not None
+
+    window.set_connection_status(True, "COM3 · 115200")
+    window.set_preset_name("hi3861-timestamped")
+    window.set_log_count(42)
+    assert "COM3 · 115200" in window.connection_status_label.text()
+    assert "hi3861-timestamped" in window.preset_status_label.text()
+    assert window.log_count_label.text() == "日志 42 条"
+
+    assert window.alert_badge_btn.text() == "告警 0"
+    assert window.alert_badge_btn.property("alertState") == "idle"
+    window.set_alert_count(2, severe=True)
+    assert window.alert_badge_btn.text() == "告警 2"
+    assert window.alert_badge_btn.property("alertState") == "danger"
+    window.anomaly_dock.hide()
+    window.alert_badge_btn.click()
+    assert window.anomaly_dock.isHidden() is False
+
+    window.set_connection_status(False)
+    assert "未连接" in window.connection_status_label.text()
+
+
+def test_log_view_scroll_to_sequence_handles_visible_filtered_and_missing(qtbot) -> None:
+    """证据跳转精确选中目标序号；被过滤隐藏或不存在时返回 False 且不误选。"""
+
+    view = LogView(LogTableModel())
+    qtbot.addWidget(view)
+    view.append_update(
+        PipelineUpdate(
+            added=(
+                _entry(0, LogLevel.INFO, message="boot ok"),
+                _entry(1, LogLevel.ERROR, message="malloc failed"),
+                _entry(2, LogLevel.INFO, message="heartbeat"),
+            )
+        )
+    )
+
+    assert view.scroll_to_sequence(1) is True
+    assert [entry.sequence for entry in view.selected_log_entries()] == [1]
+
+    # 隐藏 ERROR 级别后再次跳转到序号 1，必须明确返回 False 并保持无法定位语义
+    view._level_boxes[LogLevel.ERROR].setChecked(False)
+    assert view.scroll_to_sequence(1) is False
+    assert view.scroll_to_sequence(99) is False
+
+    # 恢复显示后再次跳转正常选中
+    view._level_boxes[LogLevel.ERROR].setChecked(True)
+    assert view.scroll_to_sequence(1) is True
+    assert [entry.sequence for entry in view.selected_log_entries()] == [1]
+
+
+def test_analysis_panel_export_report_button_emits_signal(qtbot) -> None:
+    """分析面板头部「报告」按钮发出 export_report_requested 信号。"""
+
+    panel = AnalysisPanel()
+    qtbot.addWidget(panel)
+    fired: list[bool] = []
+    panel.export_report_requested.connect(lambda: fired.append(True))
+
+    panel.export_report_btn.click()
+    assert fired == [True]
+
+
+def test_log_table_compact_columns_extra_role_and_keyword_filter(qtbot) -> None:
+    """日志表格恢复 5 列紧凑布局，消息列占满剩余宽度，关键字过滤与 Tooltip 仍覆盖 extra 字段。"""
+
+    from PySide6.QtCore import Qt
+
+    from serial_log_analyzer.ui.models.log_table_model import (
+        COLUMN_HEADERS,
+        LOG_EXTRA_ROLE,
+    )
+
+    view = LogView(LogTableModel())
+    qtbot.addWidget(view)
+    view.resize(900, 400)
+    view.show()
+    qtbot.waitExposed(view)
+    model = view._model
+    proxy = view.table_view.model()
+
+    assert COLUMN_HEADERS == ("序号", "时间", "级别", "模块", "消息")
+    assert model.columnCount() == 5
+    assert view.table_view.horizontalHeader().stretchLastSection() is True
+    assert view.table_view.columnWidth(4) > 400
+    assert view.text_filter.placeholderText() == "搜索日志关键字或字段…"
+
+    view.append_update(
+        PipelineUpdate(
+            added=(
+                _entry(0, LogLevel.INFO, module="boot", message="boot done"),
+                LogEntry(
+                    sequence=1,
+                    received_at=1700000001.0,
+                    level=LogLevel.INFO,
+                    message="sample ok",
+                    raw="[I] [sensor] sample ok",
+                    module="sensor",
+                    extra={"temperature": "29.7", "humidity": "43.6"},
+                ),
+            )
+        )
+    )
+
+    assert model.data(model.index(0, 4), Qt.ItemDataRole.DisplayRole) == "boot done"
+    assert model.data(model.index(0, 0), LOG_EXTRA_ROLE) == ""
+    assert model.data(model.index(1, 4), Qt.ItemDataRole.DisplayRole) == "sample ok"
+    assert model.data(model.index(1, 0), LOG_EXTRA_ROLE) == "temperature=29.7 humidity=43.6"
+    tooltip = model.data(model.index(1, 4), Qt.ItemDataRole.ToolTipRole)
+    assert "字段: temperature=29.7  humidity=43.6" in tooltip
+
+    for query in ("temperature", "29.7", "TEMPERATURE=29.7"):
+        view.text_filter.setText(query)
+        assert proxy.rowCount() == 1
+        assert proxy.index(0, 0).data() == "1"
+
+    view.text_filter.setText("boot")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data() == "0"
+
+    view.text_filter.clear()
+    assert proxy.rowCount() == 2

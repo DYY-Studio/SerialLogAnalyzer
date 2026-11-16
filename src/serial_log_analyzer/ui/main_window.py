@@ -8,23 +8,65 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QDockWidget,
+    QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMenu,
     QStatusBar,
+    QToolButton,
     QWidget,
 )
 
+from serial_log_analyzer.ui.icons import render_icon
+from serial_log_analyzer.ui.theme import ThemeTokens, default_tokens
 from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
+from serial_log_analyzer.ui.widgets.anomaly_panel import AnomalyPanel
 from serial_log_analyzer.ui.widgets.app_log_panel import AppLogPanel
+from serial_log_analyzer.ui.widgets.chart_panel import ChartPanel
 from serial_log_analyzer.ui.widgets.command_panel import CommandPanel
 from serial_log_analyzer.ui.widgets.log_view import LogView
 from serial_log_analyzer.ui.widgets.serial_toolbar import SerialToolBar
 
 __all__ = ["MainWindow"]
+
+
+class _DockTitleBar(QWidget):
+    """紧凑扁平的 Dock 标题栏：左对齐标题 + 图标化浮动与隐藏按钮。"""
+
+    def __init__(self, title: str, dock: QDockWidget) -> None:
+        super().__init__(dock)
+        self.setObjectName("dock-title-bar")
+        self.setFixedHeight(26)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 2, 6, 2)
+        layout.setSpacing(4)
+
+        label = QLabel(title)
+        label.setObjectName("dock-title-label")
+        layout.addWidget(label)
+        layout.addStretch()
+
+        self.float_btn = QToolButton()
+        self.float_btn.setToolTip("浮动 / 停靠")
+        self.float_btn.setIconSize(QSize(12, 12))
+        self.float_btn.clicked.connect(lambda: dock.setFloating(not dock.isFloating()))
+        layout.addWidget(self.float_btn)
+
+        self.close_btn = QToolButton()
+        self.close_btn.setToolTip("隐藏面板")
+        self.close_btn.setIconSize(QSize(12, 12))
+        self.close_btn.clicked.connect(dock.close)
+        layout.addWidget(self.close_btn)
+
+    def refresh_icons(self, tokens: ThemeTokens) -> None:
+        """按主题色刷新浮动与关闭按钮图标。"""
+
+        self.float_btn.setIcon(render_icon("dock-float", tokens.text_secondary, size=12))
+        self.close_btn.setIcon(render_icon("disconnect", tokens.text_secondary, size=12))
 
 
 class MainWindow(QMainWindow):
@@ -36,16 +78,19 @@ class MainWindow(QMainWindow):
         serial_toolbar: 顶部串口工具栏。
         command_panel: 底部命令面板（输入 + 回复历史）。
         app_log_panel: 底部应用日志面板（与命令面板同区，切换标签页）。
+        anomaly_panel: 底部异常与告警面板（可选，缺省按默认配置构造）。
+        chart_panel: 底部实时遥测图表面板（可选，缺省按默认配置构造）。
         parent: 可选父窗口。
         on_close: 关闭前的清理回调（由组合根注入，例如断开设备、取消请求）。
 
-    布局：中央是日志表格，「LLM 分析」停靠在右侧、「命令」与「应用日志」停靠在底部
-    （同一区域的两个标签页），都可拖动 / 浮动 / 关闭，「视图」菜单控制显隐。
+    布局：中央是日志表格，「LLM 分析」停靠在右侧，「命令」「应用日志」「异常与告警」与
+    「数据图表」停靠在底部（同一区域的多个标签页），都可拖动 / 浮动 / 关闭，「视图」菜单控制显隐。
     布局通过 ``saveState`` / :meth:`restore_layout` 记忆，但只在面板集合没变时恢复
     （见 ``bootstrap._restore_layout``）。
 
     信号（由组合根连接，窗口不自己构造对话框）:
         export_requested(): 请求导出内存日志。
+        export_report_requested(): 请求导出结构化诊断报告。
         import_requested(): 请求导入历史日志。
         clear_requested(): 请求清空日志。
         settings_requested(): 请求打开设置对话框。
@@ -54,6 +99,7 @@ class MainWindow(QMainWindow):
     """
 
     export_requested = Signal()
+    export_report_requested = Signal()
     import_requested = Signal()
     clear_requested = Signal()
     settings_requested = Signal()
@@ -67,17 +113,25 @@ class MainWindow(QMainWindow):
         serial_toolbar: SerialToolBar,
         command_panel: CommandPanel,
         app_log_panel: AppLogPanel,
+        anomaly_panel: AnomalyPanel | None = None,
+        chart_panel: ChartPanel | None = None,
         parent: QMainWindow | None = None,
         *,
         on_close: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._on_close = on_close
+        self._tokens = default_tokens()
+        self._dock_titles: list[_DockTitleBar] = []
+        self._alert_active_count = 0
+        self._alert_severe = False
         self.log_view = log_view
         self.analysis_panel = analysis_panel
         self.serial_toolbar = serial_toolbar
         self.command_panel = command_panel
         self.app_log_panel = app_log_panel
+        self.anomaly_panel = anomaly_panel if anomaly_panel is not None else AnomalyPanel()
+        self.chart_panel = chart_panel if chart_panel is not None else ChartPanel()
         self.setWindowTitle("SerialLogAnalyzer - 串口日志分析工具")
         self.resize(1200, 800)
         self.addToolBar(serial_toolbar)
@@ -90,8 +144,16 @@ class MainWindow(QMainWindow):
         self.app_log_dock = self._make_dock(
             "app-log-dock", "应用日志", app_log_panel, Qt.DockWidgetArea.BottomDockWidgetArea
         )
-        # 与应用日志共用底部区域，用标签页切换，避免再占一块高度。
+        self.anomaly_dock = self._make_dock(
+            "anomaly-dock", "异常与告警", self.anomaly_panel, Qt.DockWidgetArea.BottomDockWidgetArea
+        )
+        self.chart_dock = self._make_dock(
+            "chart-dock", "数据图表", self.chart_panel, Qt.DockWidgetArea.BottomDockWidgetArea
+        )
+        # 与命令、应用日志、异常面板共用底部区域，用标签页切换，避免挤压日志表格高度。
         self.tabifyDockWidget(self.command_dock, self.app_log_dock)
+        self.tabifyDockWidget(self.app_log_dock, self.anomaly_dock)
+        self.tabifyDockWidget(self.anomaly_dock, self.chart_dock)
         self.command_dock.raise_()
         self._apply_dock_corners()
         self._build_menu()
@@ -99,11 +161,140 @@ class MainWindow(QMainWindow):
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
+        self.connection_status_label = self._make_status_pill("status-connection", "○ 未连接")
+        self.preset_status_label = self._make_status_pill("status-preset", "Preset: -")
+        self.usage_status_label = self._make_status_pill("status-usage", "")
+        self.usage_status_label.setVisible(False)
+        self.alert_badge_btn = self._make_alert_badge()
+        self.log_count_label = self._make_status_pill("status-log-count", "日志 0 条")
+        self.status_bar.addPermanentWidget(self.connection_status_label)
+        self.status_bar.addPermanentWidget(self.preset_status_label)
+        self.status_bar.addPermanentWidget(self.usage_status_label)
+        self.status_bar.addPermanentWidget(self.alert_badge_btn)
+        self.status_bar.addPermanentWidget(self.log_count_label)
+        self.set_theme_tokens(self._tokens)
+
+    @staticmethod
+    def _make_status_pill(object_name: str, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName(object_name)
+        label.setProperty("role", "status-pill")
+        return label
+
+    def _make_alert_badge(self) -> QToolButton:
+        badge = QToolButton()
+        badge.setObjectName("status-alerts")
+        badge.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        badge.setIconSize(QSize(12, 12))
+        badge.setCursor(Qt.CursorShape.PointingHandCursor)
+        badge.setText("告警 0")
+        badge.setToolTip("打开或切换到异常与告警面板")
+        badge.clicked.connect(self.focus_anomaly_dock)
+        return badge
+
+    def set_theme_tokens(self, tokens: ThemeTokens) -> None:
+        """将新主题 Token 同步到停靠栏标题图标、工具栏、日志视图与各功能面板。"""
+
+        self._tokens = tokens
+        for bar in self._dock_titles:
+            bar.refresh_icons(tokens)
+        self.serial_toolbar.set_theme_tokens(tokens)
+        self.log_view.set_theme_tokens(tokens)
+        self.analysis_panel.set_theme_tokens(tokens)
+        self.command_panel.set_theme_tokens(tokens)
+        self.app_log_panel.set_theme_tokens(tokens)
+        self.anomaly_panel.set_theme_tokens(tokens)
+        self.chart_panel.set_theme_tokens(tokens)
+        self._refresh_alert_badge()
+
+    def set_alert_count(self, active_count: int, *, severe: bool = False) -> None:
+        """更新状态栏右侧的可点击异常告警角标。
+
+        参数:
+            active_count: 当前未解决的活动异常簇数量。
+            severe: 是否存在 ``HIGH`` 或 ``CRITICAL`` 级别的活动异常簇。
+        """
+
+        self._alert_active_count = max(0, int(active_count))
+        self._alert_severe = bool(severe and self._alert_active_count > 0)
+        self.alert_badge_btn.setText(f"告警 {self._alert_active_count}")
+        self.alert_badge_btn.setToolTip(
+            f"当前有 {self._alert_active_count} 个活动异常簇（点击查看）"
+            if self._alert_active_count
+            else "当前无活动异常（点击打开异常与告警面板）"
+        )
+        self._refresh_alert_badge()
+
+    def focus_anomaly_dock(self) -> None:
+        """显示并切换到「异常与告警」停靠面板。"""
+
+        self.anomaly_dock.show()
+        self.anomaly_dock.raise_()
+
+    def focus_analysis_dock(self) -> None:
+        """显示并切换到「LLM 分析」停靠面板。"""
+
+        self.analysis_dock.show()
+        self.analysis_dock.raise_()
+
+    def focus_chart_dock(self) -> None:
+        """显示并切换到「数据图表」停靠面板。"""
+
+        self.chart_dock.show()
+        self.chart_dock.raise_()
+
+    def _refresh_alert_badge(self) -> None:
+        tokens = self._tokens
+        if self._alert_active_count <= 0:
+            state = "idle"
+            color = tokens.text_muted
+        elif self._alert_severe:
+            state = "danger"
+            color = tokens.danger
+        else:
+            state = "warning"
+            color = tokens.warning
+        self.alert_badge_btn.setProperty("alertState", state)
+        self.alert_badge_btn.style().unpolish(self.alert_badge_btn)
+        self.alert_badge_btn.style().polish(self.alert_badge_btn)
+        self.alert_badge_btn.setIcon(render_icon("alert", color, size=12))
+
+    def set_connection_status(self, connected: bool, detail: str = "") -> None:
+        """更新状态栏右侧的串口连接状态胶囊。"""
+
+        if not connected:
+            self.connection_status_label.setText("○ 未连接")
+            return
+        self.connection_status_label.setText(f"● {detail}" if detail else "● 已连接")
+
+    def set_preset_name(self, preset_id: str) -> None:
+        """更新状态栏右侧的当前日志 Preset 标识。"""
+
+        self.preset_status_label.setText(f"Preset: {preset_id or '-'}")
 
     def show_status(self, message: str) -> None:
         """在状态栏显示一条消息。"""
 
         self.status_bar.showMessage(message)
+
+    def set_log_count(self, count: int) -> None:
+        """更新状态栏右侧的日志条数指示。"""
+
+        self.log_count_label.setText(f"日志 {count} 条")
+
+    def set_usage_summary(self, input_tokens: int, output_tokens: int, total_tokens: int) -> None:
+        """更新状态栏右侧的 LLM Token 用量摘要。"""
+
+        self.usage_status_label.setText(
+            f"Token: {input_tokens} / {output_tokens} / {total_tokens}"
+        )
+        self.usage_status_label.setVisible(True)
+
+    def clear_usage_summary(self) -> None:
+        """清空状态栏右侧的 LLM Token 用量摘要。"""
+
+        self.usage_status_label.clear()
+        self.usage_status_label.setVisible(False)
 
     def restore_layout(self, state: object) -> None:
         """恢复工具栏 / 停靠布局。
@@ -133,6 +324,9 @@ class MainWindow(QMainWindow):
         dock = QDockWidget(title, self)
         dock.setObjectName(name)
         dock.setWidget(widget)
+        title_bar = _DockTitleBar(title, dock)
+        dock.setTitleBarWidget(title_bar)
+        self._dock_titles.append(title_bar)
         dock.setFeatures(
             QDockWidget.DockWidgetFeature.DockWidgetMovable
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
@@ -155,6 +349,7 @@ class MainWindow(QMainWindow):
 
         file_menu = self.menuBar().addMenu("文件")
         _add(file_menu, "导出日志…", self.export_requested)
+        _add(file_menu, "导出诊断报告…", self.export_report_requested)
         _add(file_menu, "导入日志…", self.import_requested)
         file_menu.addSeparator()
         _add(file_menu, "清空日志", self.clear_requested)
@@ -168,6 +363,8 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.analysis_dock.toggleViewAction())
         view_menu.addAction(self.command_dock.toggleViewAction())
         view_menu.addAction(self.app_log_dock.toggleViewAction())
+        view_menu.addAction(self.anomaly_dock.toggleViewAction())
+        view_menu.addAction(self.chart_dock.toggleViewAction())
 
     def closeEvent(self, event: object) -> None:
         """窗口关闭：执行清理回调。"""

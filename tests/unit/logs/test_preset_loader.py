@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from serial_log_analyzer.core.errors import ConfigError, PresetError
+from serial_log_analyzer.core.logs.preset import PresetCommand, PresetCommandMode
 from serial_log_analyzer.core.logs.preset_loader import load_preset, load_presets
 from serial_log_analyzer.core.models.logs import LogLevel
 
@@ -15,6 +16,21 @@ def test_load_default_preset_reads_level_map(make_loader, default_preset_yaml: s
     assert preset.preset_id == "hi3861-default"
     assert preset.level_from_token("I") is LogLevel.INFO
     assert preset.line.continuation_pattern is not None
+    assert [cmd.label for cmd in preset.commands] == [
+        "PING",
+        "VERSION",
+        "HELP",
+        "TEST …",
+        "TEST wifi",
+        "TEST all",
+    ]
+    assert preset.commands[3] == PresetCommand(
+        label="TEST …",
+        command="TEST ",
+        mode=PresetCommandMode.PREFILL,
+        tooltip=preset.commands[3].tooltip,
+    )
+    assert all(cmd.tooltip for cmd in preset.commands)
 
 
 def test_missing_required_field_raises(make_loader) -> None:
@@ -96,3 +112,59 @@ def test_fields_must_be_mapping(make_loader) -> None:
     )
     with pytest.raises(PresetError):
         load_preset(make_loader({"presets/logs/bad.yaml": bad}), "bad")
+
+
+_MINIMAL_PRESET = (
+    "schema_version: 1\npreset_id: custom\ndisplay_name: Custom\n"
+    "line:\n"
+    r"  pattern: '\[(?P<level>\w+)\]\[(?P<module>[^\]]+)\] (?P<message>.*)'" + "\n"
+    "  level_map:\n    I: INFO\n"
+)
+
+
+def test_commands_parsing_defaults_and_whitespace_rules(make_loader) -> None:
+    """无 commands 时为空元组；send 去双端空白，prefill 保留末尾空格。"""
+
+    empty = load_preset(make_loader({"presets/logs/custom.yaml": _MINIMAL_PRESET}), "custom")
+    assert empty.commands == ()
+
+    yaml_text = _MINIMAL_PRESET + (
+        "commands:\n"
+        "  - label: '  AT  '\n"
+        "    command: '  AT+GMR  '\n"
+        "  - label: 'TEST …'\n"
+        "    command: '  TEST '\n"
+        "    mode: prefill\n"
+        "    tooltip: '  预填测试  '\n"
+    )
+    preset = load_preset(make_loader({"presets/logs/custom.yaml": yaml_text}), "custom")
+    assert preset.commands == (
+        PresetCommand(label="AT", command="AT+GMR", mode=PresetCommandMode.SEND, tooltip=""),
+        PresetCommand(
+            label="TEST …",
+            command="TEST ",
+            mode=PresetCommandMode.PREFILL,
+            tooltip="预填测试",
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "commands_yaml",
+    [
+        "commands: 'PING'\n",
+        "commands:\n  - 'PING'\n",
+        "commands:\n  - label: 'PING'\n    command: 'PING'\n    unknown: 1\n",
+        "commands:\n  - label: '   '\n    command: 'PING'\n",
+        "commands:\n  - label: 123\n    command: 'PING'\n",
+        "commands:\n  - label: 'PING'\n",
+        "commands:\n  - label: 'PING'\n    command: '   '\n",
+        "commands:\n  - label: 'PING'\n    command: 'TEST '\n    mode: prefill_bad\n",
+        "commands:\n  - label: 'PING'\n    command: 'PING'\n    mode: 1\n",
+        "commands:\n  - label: 'PING'\n    command: 'PING'\n    tooltip: 123\n",
+    ],
+)
+def test_invalid_commands_schema_raises(make_loader, commands_yaml: str) -> None:
+    bad = _MINIMAL_PRESET + commands_yaml
+    with pytest.raises(PresetError):
+        load_preset(make_loader({"presets/logs/custom.yaml": bad}), "custom")

@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from serial_log_analyzer import __version__
+from serial_log_analyzer.core.anomalies.rule_loader import load_rule_sets
 from serial_log_analyzer.core.errors import AppError
 from serial_log_analyzer.core.llm.adapter_loader import load_adapters
 from serial_log_analyzer.core.llm.profile_loader import load_profiles
@@ -45,6 +46,7 @@ class DiagnosticsReport:
         log_file: 应用日志文件路径（未启用时为空串）。
         resource_roots: 参与查找的资源根目录，按优先级排列。
         presets: 已加载的 Preset 摘要。
+        rule_sets: 已加载的异常规则集摘要。
         adapters: 已加载的 Adapter 摘要。
         profiles: 已加载的 Provider Profile 摘要。
         config_errors: 配置/资源加载错误（逐条中文描述）。
@@ -60,6 +62,7 @@ class DiagnosticsReport:
     log_file: str
     resource_roots: tuple[str, ...]
     presets: tuple[str, ...] = ()
+    rule_sets: tuple[str, ...] = ()
     adapters: tuple[str, ...] = ()
     profiles: tuple[str, ...] = ()
     config_errors: tuple[str, ...] = ()
@@ -82,6 +85,7 @@ class DiagnosticsReport:
             "log_file": self.log_file or None,
             "resource_roots": list(self.resource_roots),
             "presets": list(self.presets),
+            "rule_sets": list(self.rule_sets),
             "adapters": list(self.adapters),
             "profiles": list(self.profiles),
             "config_errors": list(self.config_errors),
@@ -106,6 +110,7 @@ class DiagnosticsReport:
         ]
         lines.extend(f"  - {root}" for root in self.resource_roots)
         lines.extend(_section("Preset", self.presets))
+        lines.extend(_section("异常规则", self.rule_sets))
         lines.extend(_section("Adapter", self.adapters))
         lines.extend(_section("Profile", self.profiles))
         if self.config_errors:
@@ -163,7 +168,7 @@ def collect(
 ) -> DiagnosticsReport:
     """采集一次诊断快照。
 
-    加载 Preset / Adapter / Profile 时的失败会被记录进 ``config_errors`` 而不向外抛出，
+    加载 Preset / 异常规则 / Adapter / Profile 时的失败会被记录进 ``config_errors`` 而不向外抛出，
     这样即使配置损坏，用户依然能拿到一份可粘贴的诊断报告。
 
     参数：
@@ -184,6 +189,15 @@ def collect(
         presets = tuple(_preset_label(item) for item in load_presets(loader))
     except AppError as exc:
         errors.append(f"Preset：{exc}")
+
+    rule_sets: tuple[str, ...] = ()
+    try:
+        rule_sets = tuple(
+            f"{item.rule_set_id}（{item.display_name}，{len(item.rules)} 条）"
+            for item in load_rule_sets(loader)
+        )
+    except AppError as exc:
+        errors.append(f"异常规则：{exc}")
 
     adapters: tuple[str, ...] = ()
     try:
@@ -215,6 +229,7 @@ def collect(
         log_file=str(log_path) if log_path is not None else "",
         resource_roots=tuple(str(root) for root in resource_roots),
         presets=presets,
+        rule_sets=rule_sets,
         adapters=adapters,
         profiles=profiles,
         config_errors=tuple(errors),

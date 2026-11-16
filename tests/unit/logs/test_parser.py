@@ -63,6 +63,14 @@ def test_render_for_llm(parser) -> None:
     assert parser.render_for_llm(entry) == "[INFO] [main] hi"
 
 
+def test_render_for_llm_appends_extra_fields(parser) -> None:
+    entry = parser.parse("[I] [sensor] led=1 temperature=29.7", 1, 0.0).entry
+    assert (
+        parser.render_for_llm(entry)
+        == "[INFO] [sensor] led=1 temperature=29.7 [extra: led=1 temperature=29.7]"
+    )
+
+
 def test_fields_extracted_into_extra(parser) -> None:
     line = (
         "[I] [sensor] led=1 fan=0 temperature=29.7 humidity=43.6 "

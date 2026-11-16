@@ -1,17 +1,17 @@
 # 配置文件与本地数据
 
 本文说明 SerialLogAnalyzer 的**文件放在哪里、字段怎么填、API Key 与设置如何加载与保存、日志如何导入导出、诊断信息从哪里取**。
-完整的资源 schema 校验规则见 `docs/protocols/`（Preset / Provider / 凭据 / JSON Pointer），本文只做汇总与索引。
+完整的资源 schema 校验规则见 `docs/protocols/`（Preset / 异常规则 / Provider / 凭据 / JSON Pointer），本文只做汇总与索引。
 
 ## 1. 总原则
 
-- **声明式**：设备日志格式、模型服务、Prompt 全部由 YAML / Markdown 资源描述，代码里不硬编码具体芯片或厂商。
+- **声明式**：设备日志格式、异常检测规则、模型服务、Prompt 全部由 YAML / Markdown 资源描述，代码里不硬编码具体芯片或厂商。
   仓库中**没有**任何脚本式配置，也不允许通过 `eval` / `exec` 执行配置内容。
 - **用户资源覆盖内置资源**：同名资源以优先级更高的目录为准，内置文件本身永不被改写。
 - **未知字段即错误**：任何资源的未知字段、非法值都会抛出 `ConfigError` / `PresetError`（继承自 `AppError`），
   错误信息带中文说明与来源文件路径；不会静默忽略。
-- **`schema_version` 必填**：Preset = 1，Provider Profile = 1，LLM Adapter = 3。版本不符直接报错。
-- **标识符即文件名**：`preset_id` / `profile_id` / `adapter_id` 必须与所在 YAML 的文件名（去扩展名）一致，
+- **`schema_version` 必填**：Preset = 1，异常规则集 = 1，Provider Profile = 1，LLM Adapter = 3。版本不符直接报错。
+- **标识符即文件名**：`preset_id` / `rule_set_id` / `profile_id` / `adapter_id` 必须与所在 YAML 的文件名（去扩展名）一致，
   且匹配 `^[a-z][a-z0-9-]*$`。
 
 ## 2. 资源目录与查找顺序
@@ -30,6 +30,7 @@
 | 资源 | 相对路径 | 格式 |
 |---|---|---|
 | 日志解析 Preset | `presets/logs/*.yaml` | YAML |
+| 异常检测规则 | `rules/anomalies/*.yaml` | YAML |
 | LLM Adapter | `providers/adapters/*.yaml` | YAML |
 | LLM Profile | `providers/profiles/*.yaml` | YAML |
 | Prompt 模板 | `prompts/*.md` | Markdown + `string.Template` |
@@ -50,6 +51,7 @@
 | `line.continuation_pattern` | 否 | 命中则并入上一条日志（多行栈堆） |
 | `line.fields` | 否 | 从 `message` 抽取结构化字段（`name: 正则`，需含命名组 `value`） |
 | `fallback.enabled` / `fallback.level` | 否 | 未匹配行是否保留，默认 `true` / `UNKNOWN` |
+| `commands` | 否 | 命令面板快捷命令列表（每项 `{label, command, mode?, tooltip?}`，`mode` 为 `send` 或 `prefill`） |
 
 级别标识未在 `level_map` 中命中时**不报错**，运行期记为 `UNKNOWN`。
 
@@ -69,6 +71,15 @@ line:
 fallback:
   enabled: true
   level: UNKNOWN
+commands:
+  - label: "PING"
+    command: "PING"
+    mode: send
+    tooltip: "检查设备命令通道连通性"
+  - label: "TEST …"
+    command: "TEST "
+    mode: prefill
+    tooltip: "预填 TEST 前缀"
 ```
 
 ## 4. LLM Adapter 与 Profile
@@ -207,8 +218,20 @@ export MY_DEEPSEEK_API_KEY=sk-...
 | `logs/capacity` | 日志环形缓冲容量（1000–1000000） | `100000` |
 | `logs/app_log_level` | 应用日志级别 | `INFO` |
 | `logs/export_dir` | 默认导出目录（留空用默认目录） | 空 |
+| `alert/smtp_enabled` | 是否启用 SMTP 邮件告警 | `false` |
+| `alert/smtp_host` | SMTP 服务器主机名 | 空 |
+| `alert/smtp_port` | SMTP 端口（1–65535） | `587` |
+| `alert/smtp_security` | 传输安全模式（`none` / `starttls` / `ssl`） | `starttls` |
+| `alert/smtp_username` | 认证用户名（留空表示免密中继） | 空 |
+| `alert/smtp_sender` | 发件人邮箱地址 | 空 |
+| `alert/smtp_recipients` | 收件人列表（逗号或分号分隔） | 空 |
+| `alert/smtp_credential_kind` | SMTP 密码凭据来源（`keyring` / `environment`） | `keyring` |
+| `alert/smtp_credential_target` | 钥匙串账号名或环境变量名 | `smtp-alert` |
+| `alert/smtp_min_severity` | 触发邮件告警的最低级别（`LOW` / `MEDIUM` / `HIGH` / `CRITICAL`） | `HIGH` |
+| `alert/smtp_include_evidence` | 邮件正文是否附带最多 5 条原始日志（默认脱敏摘要） | `false` |
+| `alert/smtp_timeout_seconds` | SMTP 单次发送超时秒数 | `15.0` |
 
-- 复杂配置（Profile）**不放进** QSettings，统一用 YAML。
+- 复杂配置（Profile）**不放进** QSettings，统一用 YAML；SMTP **密码/授权码绝不写入** QSettings，仍只通过 `CredentialResolver` 从系统钥匙串或环境变量读取。
 - 布尔值经 `get_bool()` 读取，兼容 `true`/`false` 与 `0`/`1`；`get_int()` / `get_str()` 在类型不符时回退默认值。
 - 「设置」对话框只读写上述键，保存失败会提示用户并保持对话框打开。
 - 保存后**立即生效**的项：自动滚动、日志容量（超出部分当场裁掉并同步表格）、应用日志级别、
@@ -259,7 +282,7 @@ uv run python -m serial_log_analyzer.diagnostics --log-file app.log --no-log-tai
 
 - 应用版本、Python 版本、可执行文件、操作系统；
 - 用户配置目录、应用日志文件、**全部资源根目录（按优先级）**；
-- 已加载的 Preset / Adapter / Profile 清单；
+- 已加载的 Preset / 异常规则 / Adapter / Profile 清单；
 - 逐条**配置错误**（加载失败不会被隐藏，诊断本身也不会因此失败）；
 - 系统钥匙串可用性；
 - 应用日志末尾若干行。
@@ -294,6 +317,7 @@ uv run python -m serial_log_analyzer.diagnostics --log-file app.log --no-log-tai
 ## 11. 相关文档
 
 - [`docs/protocols/log-preset.md`](protocols/log-preset.md)：Preset schema 与校验规则
+- [`docs/protocols/anomaly-rules.md`](protocols/anomaly-rules.md)：异常检测规则 schema 与校验规则
 - [`docs/protocols/provider.md`](protocols/provider.md)：Adapter / Profile schema 与占位符
 - [`docs/protocols/credentials.md`](protocols/credentials.md)：凭据来源与优先级
 - [`docs/protocols/json-pointer.md`](protocols/json-pointer.md)：扩展 JSON Pointer（含负索引）

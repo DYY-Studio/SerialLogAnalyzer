@@ -67,7 +67,17 @@ PC 端发送以 `\r\n` 结尾的文本命令，固件以 `@OK ...` 或 `@ERR <co
 | `PING` | `@OK PONG` | 连通性检查 |
 | `VERSION` | `@OK fw=1.0.0 chip=hi3861` | 固件与芯片版本 |
 | `HELP` | `@OK PING VERSION HELP TEST` | 命令列表 |
-| `TEST <name>` | `@OK TEST wifi started` | 触发指定自测（wifi / uart / gpio） |
+| `TEST <name>` | `@OK TEST wifi started` | 触发指定可控自测（支持 `wifi` / `uart` / `gpio` / `memory` / `sensor` / `watchdog` / `all`） |
+
+支持的 `TEST <name>` 场景（均在返回 `@OK TEST <name> started` 后安全输出对应 `[LEVEL] [tag] message` 与缩进续行，不触发真实死机或硬件复位）：
+
+- `wifi`：Wi-Fi 扫描、重试与 `reconnect failed` 通信异常；
+- `uart`：连续 3 条 `uart rx overflow` 串口接收溢出异常（便于观察窗口聚合与冷却）；
+- `gpio`：LED2 / GPIO 自检正常日志；
+- `memory`：`malloc failed` 内存分配失败及 `LOG_CONT` 多行栈回溯；
+- `sensor`：`i2c read failed` 与传感器读失败驱动异常；
+- `watchdog`：调度超期告警、`watchdog timeout` 与 `LOG_CONT` 栈回溯；
+- `all`：依次输出以上全部自测日志序列。
 
 约定：
 

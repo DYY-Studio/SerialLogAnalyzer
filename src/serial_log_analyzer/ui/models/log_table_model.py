@@ -7,28 +7,30 @@
 from __future__ import annotations
 
 import time
+from bisect import bisect_left
+from collections.abc import Sequence
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 
 from serial_log_analyzer.core.models.logs import LogEntry, LogLevel
+from serial_log_analyzer.ui.theme import LevelStyle, ThemeTokens, default_tokens, level_styles
 
-__all__ = ["COLUMN_HEADERS", "LEVEL_COLORS", "LOG_LEVEL_ROLE", "LOG_MESSAGE_ROLE", "LOG_MODULE_ROLE", "LogTableModel"]
+__all__ = [
+    "COLUMN_HEADERS",
+    "LEVEL_LABELS",
+    "LOG_EXTRA_ROLE",
+    "LOG_LEVEL_ROLE",
+    "LOG_MESSAGE_ROLE",
+    "LOG_MODULE_ROLE",
+    "LogTableModel",
+]
 
 # 供过滤代理读取原始字段，避免依赖展示文案。
 LOG_LEVEL_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 LOG_MODULE_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 LOG_MESSAGE_ROLE = int(Qt.ItemDataRole.UserRole) + 3
-
-# 级别着色（浅色主题）。
-LEVEL_COLORS: dict[LogLevel, QColor] = {
-    LogLevel.VERBOSE: QColor(120, 130, 145),
-    LogLevel.DEBUG: QColor(49, 130, 206),
-    LogLevel.INFO: QColor(56, 161, 105),
-    LogLevel.WARN: QColor(214, 158, 46),
-    LogLevel.ERROR: QColor(229, 62, 62),
-    LogLevel.UNKNOWN: QColor(128, 90, 213),
-}
+LOG_EXTRA_ROLE = int(Qt.ItemDataRole.UserRole) + 4
 
 # 级别展示文案（用户可见文案用中文）。
 LEVEL_LABELS: dict[LogLevel, str] = {
@@ -44,7 +46,7 @@ COLUMN_HEADERS = ("序号", "时间", "级别", "模块", "消息")
 
 
 class LogTableModel(QAbstractTableModel):
-    """日志表格模型：批量插入 / 更新 / 移除，按级别着色。
+    """日志表格模型：批量插入 / 更新 / 移除，按主题级别着色。
 
     信号:
         row_count_changed(int): 行数变化后发出，供状态栏展示。
@@ -52,9 +54,33 @@ class LogTableModel(QAbstractTableModel):
 
     row_count_changed = Signal(int)
 
-    def __init__(self, parent: object | None = None) -> None:
+    def __init__(
+        self,
+        parent: object | None = None,
+        *,
+        tokens: ThemeTokens | None = None,
+    ) -> None:
         super().__init__(parent)
         self._entries: list[LogEntry] = []
+        self._tokens = tokens if tokens is not None else default_tokens()
+        self._level_styles = level_styles(self._tokens)
+
+    def set_tokens(self, tokens: ThemeTokens) -> None:
+        """更新主题 Token 并刷新可见单元格前景色与行提示底色。"""
+
+        self._tokens = tokens
+        self._level_styles = level_styles(tokens)
+        if self._entries:
+            self.dataChanged.emit(
+                self.index(0, 0),
+                self.index(len(self._entries) - 1, self.columnCount() - 1),
+                [Qt.ItemDataRole.ForegroundRole, Qt.ItemDataRole.BackgroundRole],
+            )
+
+    def level_style(self, level: LogLevel) -> LevelStyle:
+        """返回指定日志级别在当前主题下的语义视觉色。"""
+
+        return self._level_styles[level]
 
     # ------------------------------------------------------------------
     # 数据变更（由 LogView 依据 PipelineUpdate 调用）
@@ -88,12 +114,26 @@ class LogTableModel(QAbstractTableModel):
             updated += 1
         return updated
 
-    def remove_sequences(self, sequences: list[int]) -> int:
-        """按 ``sequence`` 批量移除（容量截断），返回移除数量。"""
+    def remove_sequences(self, sequences: Sequence[int]) -> int:
+        """按 ``sequence`` 批量移除（容量截断），返回移除数量。
+
+        若待移除序列精确匹配表头连续前 K 条，使用 ``beginRemoveRows`` 保护
+        当前选区与滚动位置；否则退化为 ``beginResetModel`` 保证视图一致。
+        """
+
+        if not sequences or not self._entries:
+            return 0
+        count = len(sequences)
+        if count <= len(self._entries) and all(
+            self._entries[index].sequence == sequence for index, sequence in enumerate(sequences)
+        ):
+            self.beginRemoveRows(QModelIndex(), 0, count - 1)
+            del self._entries[:count]
+            self.endRemoveRows()
+            self.row_count_changed.emit(len(self._entries))
+            return count
 
         dropped = set(sequences)
-        if not dropped:
-            return 0
         keep = [entry for entry in self._entries if entry.sequence not in dropped]
         removed = len(self._entries) - len(keep)
         if removed:
@@ -134,6 +174,14 @@ class LogTableModel(QAbstractTableModel):
 
         return list(self._entries)
 
+    def row_for_sequence(self, sequence: int) -> int | None:
+        """按递增 ``sequence`` 查找所在行号；不存在时返回 ``None``。"""
+
+        index = bisect_left(self._entries, sequence, key=lambda entry: entry.sequence)
+        if index < len(self._entries) and self._entries[index].sequence == sequence:
+            return index
+        return None
+
     # ------------------------------------------------------------------
     # QAbstractTableModel
     # ------------------------------------------------------------------
@@ -152,16 +200,20 @@ class LogTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DisplayRole:
             return self._display(entry, column)
         if role == Qt.ItemDataRole.ForegroundRole and column == 2:
-            color = LEVEL_COLORS.get(entry.level)
-            return QBrush(color) if color is not None else None
+            return QBrush(QColor(self._level_styles[entry.level].foreground))
+        if role == Qt.ItemDataRole.BackgroundRole:
+            row_bg = self._level_styles[entry.level].row_bg
+            return QBrush(QColor(row_bg)) if row_bg is not None else None
         if role == Qt.ItemDataRole.ToolTipRole:
-            return entry.raw if column == 4 else None
+            return self._tooltip(entry)
         if role == LOG_LEVEL_ROLE:
             return entry.level
         if role == LOG_MODULE_ROLE:
             return entry.module or ""
         if role == LOG_MESSAGE_ROLE:
             return entry.message
+        if role == LOG_EXTRA_ROLE:
+            return self._format_extra(entry.extra)
         return None
 
     def headerData(
@@ -176,14 +228,39 @@ class LogTableModel(QAbstractTableModel):
         return None
 
     @staticmethod
-    def _display(entry: LogEntry, column: int) -> str:
+    def _format_time(moment: float) -> str:
+        return f"{time.strftime('%H:%M:%S', time.localtime(moment))}.{int(moment % 1 * 1000):03d}"
+
+    @staticmethod
+    def _format_extra(extra: dict[str, str], *, sep: str = " ") -> str:
+        if not extra:
+            return ""
+        return sep.join(f"{key}={value}" for key, value in extra.items())
+
+    @classmethod
+    def _display(cls, entry: LogEntry, column: int) -> str:
         if column == 0:
             return str(entry.sequence)
         if column == 1:
-            moment = entry.received_at
-            return f"{time.strftime('%H:%M:%S', time.localtime(moment))}.{int(moment % 1 * 1000):03d}"
+            return cls._format_time(entry.received_at)
         if column == 2:
             return LEVEL_LABELS.get(entry.level, entry.level.name)
         if column == 3:
             return entry.module or "-"
         return entry.message
+
+    @classmethod
+    def _tooltip(cls, entry: LogEntry) -> str:
+        lines = [
+            f"序号 #{entry.sequence} · {LEVEL_LABELS.get(entry.level, entry.level.name)}",
+            f"接收时间: {cls._format_time(entry.received_at)}",
+        ]
+        if entry.device_time:
+            lines.append(f"板上时间: {entry.device_time}")
+        if entry.module:
+            lines.append(f"模块: {entry.module}")
+        fields = cls._format_extra(entry.extra, sep="  ")
+        if fields:
+            lines.append(f"字段: {fields}")
+        lines.append(f"原始行:\n{entry.raw}")
+        return "\n".join(lines)

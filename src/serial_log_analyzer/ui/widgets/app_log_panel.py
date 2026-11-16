@@ -19,6 +19,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from serial_log_analyzer.ui.icons import render_icon
+from serial_log_analyzer.ui.theme import ThemeTokens, default_tokens, monospace_font
+
 __all__ = ["AppLogPanel"]
 
 _REFRESH_MS = 1000
@@ -84,13 +87,24 @@ class AppLogPanel(QWidget):
         read_lines: Callable[[], list[str]],
         log_path: str,
         parent: QWidget | None = None,
+        *,
+        tokens: ThemeTokens | None = None,
     ) -> None:
         super().__init__(parent)
         self._read_lines = read_lines
+        self._tokens = tokens if tokens is not None else default_tokens()
         self._build(log_path)
+        self.set_theme_tokens(self._tokens)
         self._timer = QTimer(self)
         self._timer.setInterval(_REFRESH_MS)
         self._timer.timeout.connect(self.reload)
+
+    def set_theme_tokens(self, tokens: ThemeTokens) -> None:
+        """按主题 Token 刷新按钮图标。"""
+
+        self._tokens = tokens
+        self.copy_path_btn.setIcon(render_icon("copy", tokens.text_secondary, size=14))
+        self.refresh_btn.setIcon(render_icon("refresh", tokens.text_secondary, size=14))
 
     def reload(self) -> None:
         """重新读取日志尾部；内容没变就不重绘。"""
@@ -119,16 +133,30 @@ class AppLogPanel(QWidget):
         layout.setSpacing(6)
 
         row = QHBoxLayout()
-        row.addWidget(QLabel("文件:"))
+        row.setSpacing(6)
+        file_lbl = QLabel("文件:")
+        file_lbl.setProperty("role", "muted-caption")
+        row.addWidget(file_lbl)
         self.path_label = _PathLabel(log_path)
         row.addWidget(self.path_label, stretch=1)
-        refresh = QPushButton("刷新")
-        refresh.clicked.connect(self.reload)
-        row.addWidget(refresh)
+        self.copy_path_btn = QPushButton("复制路径")
+        self.copy_path_btn.setObjectName("app-log-copy-path")
+        self.copy_path_btn.setProperty("variant", "ghost")
+        self.copy_path_btn.setIconSize(QSize(14, 14))
+        self.copy_path_btn.setToolTip("复制应用日志完整路径")
+        self.copy_path_btn.clicked.connect(
+            lambda: QGuiApplication.clipboard().setText(self.path_label.full_text())
+        )
+        row.addWidget(self.copy_path_btn)
+        self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn.setIconSize(QSize(14, 14))
+        self.refresh_btn.clicked.connect(self.reload)
+        row.addWidget(self.refresh_btn)
         layout.addLayout(row)
 
         self._view = QPlainTextEdit()
         self._view.setReadOnly(True)
+        self._view.setFont(monospace_font())
         self._view.setPlaceholderText("暂无日志输出")
         self._view.setMaximumBlockCount(_MAX_LINES)
         layout.addWidget(self._view, stretch=1)

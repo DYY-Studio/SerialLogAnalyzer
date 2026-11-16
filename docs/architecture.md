@@ -82,6 +82,7 @@ DiagnosticsReport.collect(loader, ...)  ← python -m serial_log_analyzer.diagno
 | 改诊断报告内容 | `diagnostics/report.py` | 保持纯 Python、不 import Qt |
 | 改请求编码逻辑 | `core/llm/request.py` | 保持与 Qt 无关 |
 | 改网络细节 | `io/llm/qt_http_transport.py` | Qt 类型只在此出现 |
+| 改邮件通知细节 | `io/notifications/qt_smtp_sender.py` | 标准库 `smtplib` 隔离在私有单线程 `QThreadPool` |
 | 改串口细节 | `io/serial/qt_serial_transport.py` | 同上 |
 | 改界面布局 | `ui/widgets/` 或 `ui/main_window.py` | 不写业务逻辑 |
 | 组件间协调 | `ui/controllers/` | 只转发与编排，不实现业务 |
@@ -89,9 +90,14 @@ DiagnosticsReport.collect(loader, ...)  ← python -m serial_log_analyzer.diagno
 
 ## 4. 线程模型
 
-v1 全部运行在 Qt 主线程：串口与网络均为异步事件驱动，解析为轻量 CPU 操作。
-若将来出现明确的 CPU 密集瓶颈（例如超大文件导入），先讨论再引入 `QThreadPool`，
-并保持 `core` 的纯函数特性以便跨线程复用。
+主链路运行在 Qt 主线程：串口（`QSerialPort`）与 LLM HTTP（`QNetworkAccessManager`）均为异步事件驱动，
+日志解析与异常聚合为轻量 CPU 操作。
+
+**例外说明（SMTP 邮件告警）**：由于 `PySide6` 不提供原生 SMTP 客户端而 Python 标准库 `smtplib`
+为同步阻塞 Socket I/O，允许 `io/notifications/qt_smtp_sender.py` 使用私有单线程
+`QThreadPool`（`maxThreadCount=1`）执行发信：凭据与设置读取严格留在 Qt 主线程完成后以不可变快照传入，
+工作线程不触碰串口、流水线或界面控件，结果经 `QueuedConnection` 信号回切主线程上报；退出时调用
+`shutdown()` 清空排队并等待进行中任务结束。
 
 ## 5. 扩展点
 

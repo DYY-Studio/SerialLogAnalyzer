@@ -87,7 +87,9 @@ def test_settings_keys_are_unique_and_prefixed() -> None:
     ]
 
     assert len(values) == len(set(values))
-    assert all(value.split("/", 1)[0] in {"window", "device", "llm", "logs"} for value in values)
+    assert all(
+        value.split("/", 1)[0] in {"window", "device", "llm", "logs", "alert"} for value in values
+    )
 
 
 def test_default_construction_uses_application_namespace() -> None:

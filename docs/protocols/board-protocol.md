@@ -67,7 +67,23 @@ PC 端发送文本命令（`\r\n` 结尾），固件同步或异步回复一行�
 | `PING` | `@OK PONG` | 连通性检查 |
 | `VERSION` | `@OK fw=1.0.0 chip=hi3861` | 固件与芯片版本 |
 | `HELP` | `@OK PING VERSION HELP TEST` | 命令列表 |
-| `TEST <name>` | `@OK TEST wifi started` | 触发自测；`name` ∈ {`wifi`, `uart`, `gpio`} |
+| `TEST <name>` | `@OK TEST wifi started` | 触发可控自测日志；`name` 见下表，未知或空参数回 `@ERR 2` |
+
+#### `TEST <name>` 自测场景表
+
+保留既有 `wifi`、`uart`、`gpio` 兼容，并扩展常见故障演示场景：
+
+| `name` | 受理响应 | 异步/随后输出的典型自测日志 |
+|---|---|---|
+| `wifi` | `@OK TEST wifi started` | Wi-Fi 扫描、重试及重连失败（含 `reconnect failed`） |
+| `uart` | `@OK TEST uart started` | 连续多条串口 RX 溢出日志（含 `uart rx overflow`，供窗口聚合/冷却测试） |
+| `gpio` | `@OK TEST gpio started` | LED2 / GPIO 自检正常流程日志 |
+| `memory` | `@OK TEST memory started` | 内存分配失败与多行栈回溯（`malloc failed` + 缩进续行） |
+| `sensor` | `@OK TEST sensor started` | I2C 与传感器读取异常（`i2c read failed`、`sensor` 读取失败） |
+| `watchdog` | `@OK TEST watchdog started` | 调度超期与看门狗超时堆栈（`watchdog timeout` + 缩进续行） |
+| `all` | `@OK TEST all started` | 依次输出上述全部正常与故障自测日志序列 |
+
+> 安全约束：所有 `TEST` 故障样例仅通过日志宏输出可控诊断序列，不执行真实内存泄漏或硬件复位。
 
 ### 2.3 错误码
 

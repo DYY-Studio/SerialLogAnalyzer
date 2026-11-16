@@ -217,3 +217,46 @@ def test_user_scroll_up_stops_following_until_back_at_bottom(qtbot) -> None:
     _settle(qtbot)
     assert bar.value() == bar.maximum()
 
+
+def test_render_clears_previous_cards_when_session_resets_or_shrinks(qtbot) -> None:
+    """新会话重置（conversation 长度变短或清空）时应清理旧卡片并完整绘制新首轮。"""
+
+    view = ChatView()
+    qtbot.addWidget(view)
+
+    first_assistant = AnalysisMessage(MessageRole.ASSISTANT, "首轮回答")
+    view.render(_result(AnalysisState.DONE, [_USER, first_assistant], content="首轮回答"))
+    assert [card.body_text() for card in view._cards] == ["定位错误 · 看看这条", "首轮回答"]
+
+    # 先推送重置空快照，旧卡片与 _message_cards 清零，展示空状态
+    view.render(_result(AnalysisState.IDLE, []))
+    assert view._cards == []
+    assert view._message_cards == []
+    assert view._empty_box.isHidden() is False
+
+    # 再以异常聚类首轮进入流式并定稿：User 与 Assistant 卡片均完整落地
+    cluster_user = AnalysisMessage(
+        MessageRole.USER, "目标：异常聚合\n\n<证据>", "异常聚合与根因报告 · malloc failed"
+    )
+    view.render(_result(AnalysisState.STREAMING, [cluster_user], content="新会话流式"))
+    assert [card.body_text() for card in view._cards] == [
+        "异常聚合与根因报告 · malloc failed",
+        "新会话流式",
+    ]
+    view.render(
+        _result(
+            AnalysisState.DONE,
+            [cluster_user, AnalysisMessage(MessageRole.ASSISTANT, "新会话定稿")],
+            content="新会话定稿",
+        )
+    )
+    assert [card.body_text() for card in view._cards] == [
+        "异常聚合与根因报告 · malloc failed",
+        "新会话定稿",
+    ]
+
+    # 即使未先经过空快照而直接渲染更短的新会话，也必须先清空旧卡片
+    shorter = AnalysisMessage(MessageRole.USER, "另一会话", "另一会话")
+    view.render(_result(AnalysisState.STREAMING, [shorter], content="直接切换"))
+    assert [card.body_text() for card in view._cards] == ["另一会话", "直接切换"]
+

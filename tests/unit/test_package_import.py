@@ -16,12 +16,16 @@ CORE_MODULES = [
     "serial_log_analyzer.core.models.device",
     "serial_log_analyzer.core.models.logs",
     "serial_log_analyzer.core.models.analysis",
+    "serial_log_analyzer.core.models.anomaly",
+    "serial_log_analyzer.core.models.notification",
     "serial_log_analyzer.core.models.provider",
+    "serial_log_analyzer.core.anomalies.rule_loader",
     "serial_log_analyzer.core.logs.line_framer",
     "serial_log_analyzer.core.logs.parser",
     "serial_log_analyzer.core.logs.preset",
     "serial_log_analyzer.core.logs.preset_loader",
     "serial_log_analyzer.core.logs.pipeline",
+    "serial_log_analyzer.core.logs.telemetry",
     "serial_log_analyzer.core.llm.pointer",
     "serial_log_analyzer.core.llm.adapter",
     "serial_log_analyzer.core.llm.adapter_loader",
@@ -33,7 +37,12 @@ CORE_MODULES = [
     "serial_log_analyzer.core.services.credential_resolver",
     "serial_log_analyzer.core.services.device_session",
     "serial_log_analyzer.core.services.analysis",
+    "serial_log_analyzer.core.services.anomaly",
+    "serial_log_analyzer.core.services.notification",
+    "serial_log_analyzer.core.services.report",
 ]
+
+_FORBIDDEN_MODULES = ("PySide6", "pyqtgraph", "numpy")
 
 _CHECK_SCRIPT = f"""
 import importlib
@@ -42,7 +51,12 @@ import sys
 for name in {CORE_MODULES!r}:
     importlib.import_module(name)
 
-loaded = sorted(name for name in sys.modules if name.startswith("PySide6"))
+forbidden = {_FORBIDDEN_MODULES!r}
+loaded = sorted(
+    name
+    for name in sys.modules
+    if any(name == prefix or name.startswith(prefix + ".") for prefix in forbidden)
+)
 if loaded:
     print("LOADED:" + ",".join(loaded))
     raise SystemExit(1)
@@ -57,7 +71,7 @@ def test_core_module_imports(module_name: str) -> None:
 
 
 def test_core_does_not_import_pyside() -> None:
-    """导入 core 不应把 PySide6 载入 ``sys.modules``（架构硬约束）。
+    """导入 core 不应把 PySide6 / pyqtgraph / numpy 载入 ``sys.modules``（架构硬约束）。
 
     ``pytest-qt`` 插件会在测试进程内预先载入 PySide6，因此该检查必须在
     独立子进程中进行。
@@ -71,4 +85,4 @@ def test_core_does_not_import_pyside() -> None:
         env={"PYTHONPATH": str(src), "PATH": "/usr/bin:/bin"},
         check=False,
     )
-    assert result.returncode == 0, f"core 不应依赖 PySide6：{result.stdout}{result.stderr}"
+    assert result.returncode == 0, f"core 不应依赖 Qt/图表/数值库：{result.stdout}{result.stderr}"

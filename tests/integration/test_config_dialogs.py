@@ -129,6 +129,184 @@ def test_settings_dialog_accept_persists_values(qtbot, store: QtSettingsStore) -
     assert store.get(SETTINGS_KEYS.EXPORT_DIR) == "D:/exports"
 
 
+def test_settings_dialog_smtp_validation_persistence_and_test_email(
+    qtbot, store: QtSettingsStore, monkeypatch
+) -> None:
+    """邮件告警 Tab 校验、密钥只进钥匙串、禁发不阻断常规页及测试发信内联反馈。"""
+
+    from PySide6.QtWidgets import QDoubleSpinBox, QTabWidget
+
+    from serial_log_analyzer.core.models.anomaly import AnomalySeverity
+    from serial_log_analyzer.core.models.notification import (
+        DeliveryReceipt,
+        SmtpSecurity,
+        load_smtp_config,
+    )
+
+    keyring = KeyringStoreAdapter(backend=FakeKeyringBackend())
+    tested_configs: list[object] = []
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _p, _t, text, *_a: warnings.append(text) or QMessageBox.StandardButton.Ok,
+    )
+
+    dialog = SettingsDialog(
+        store,
+        keyring=keyring,
+        on_test_smtp=tested_configs.append,
+        initial_tab=1,
+    )
+    qtbot.addWidget(dialog)
+    tabs = dialog.findChild(QTabWidget, "settings-tabs")
+    assert tabs.count() == 2
+    assert tabs.currentIndex() == 1
+
+    # 勾选启用但缺少必填字段时切至 SMTP 页拦截关闭
+    tabs.setCurrentIndex(0)
+    dialog.findChild(QCheckBox, "settings-smtp-enabled").setChecked(True)
+    dialog.accept()
+    assert dialog.result() == 0
+    assert tabs.currentIndex() == 1
+    assert warnings and "主机" in warnings[-1]
+
+    # 取消启用即使 SMTP 为空也不阻断常规设置保存
+    dialog.findChild(QCheckBox, "settings-smtp-enabled").setChecked(False)
+    dialog.findChild(QCheckBox, "settings-autoscroll").setChecked(False)
+    dialog.accept()
+    assert dialog.result() == int(QDialog.DialogCode.Accepted)
+    assert store.get_bool(SETTINGS_KEYS.AUTOSCROLL, True) is False
+
+    # 填写完整 SMTP + 钥匙串保存（不写入 SettingsStore）+ 测试发信回调
+    dialog2 = SettingsDialog(
+        store,
+        keyring=keyring,
+        on_test_smtp=tested_configs.append,
+        initial_tab=1,
+    )
+    qtbot.addWidget(dialog2)
+    dialog2.findChild(QCheckBox, "settings-smtp-enabled").setChecked(True)
+    dialog2.findChild(QLineEdit, "settings-smtp-host").setText("smtp.example.com")
+    dialog2.findChild(QSpinBox, "settings-smtp-port").setValue(465)
+    dialog2.findChild(QDoubleSpinBox, "settings-smtp-timeout").setValue(20.0)
+    sec_combo = dialog2.findChild(QComboBox, "settings-smtp-security")
+    sec_combo.setCurrentIndex(sec_combo.findData(SmtpSecurity.SSL))
+    dialog2.findChild(QLineEdit, "settings-smtp-username").setText("alerts@example.com")
+    dialog2.findChild(QLineEdit, "settings-smtp-sender").setText("alerts@example.com")
+    dialog2.findChild(QLineEdit, "settings-smtp-recipients").setText("a@x.com; b@x.com")
+    sev_combo = dialog2.findChild(QComboBox, "settings-smtp-min-severity")
+    sev_combo.setCurrentIndex(sev_combo.findData(AnomalySeverity.CRITICAL))
+    dialog2.findChild(QCheckBox, "settings-smtp-include-evidence").setChecked(True)
+
+    editor = dialog2.findChild(CredentialEditor, "settings-smtp-credential-editor")
+    editor.findChild(QLineEdit, "credential-secret").setText("smtp-app-secret")
+    editor.findChild(QPushButton, "credential-save").click()
+    assert keyring.read("smtp-alert") == "smtp-app-secret"
+
+    # 点「发送测试邮件」并验证内联成功/失败反馈
+    test_btn = dialog2.findChild(QPushButton, "settings-smtp-test")
+    status_lbl = dialog2.findChild(QLabel, "settings-smtp-test-status")
+    test_btn.click()
+    assert len(tested_configs) == 1
+    assert tested_configs[0].host == "smtp.example.com"
+    assert test_btn.isEnabled() is False
+
+    dialog2.show_smtp_test_result(
+        DeliveryReceipt(
+            receipt_id="R-0001",
+            alert_id="TEST",
+            cluster_id="-",
+            recipients=("a@x.com", "b@x.com"),
+            subject="测试",
+            created_at=100.0,
+            ok=True,
+        )
+    )
+    assert test_btn.isEnabled() is True
+    assert status_lbl.property("testState") == "ok"
+
+    dialog2.accept()
+    assert dialog2.result() == int(QDialog.DialogCode.Accepted)
+
+    loaded = load_smtp_config(store)
+    assert loaded.enabled is True
+    assert loaded.host == "smtp.example.com"
+    assert loaded.port == 465
+    assert loaded.security is SmtpSecurity.SSL
+    assert loaded.username == "alerts@example.com"
+    assert loaded.recipients == ("a@x.com", "b@x.com")
+    assert loaded.min_severity is AnomalySeverity.CRITICAL
+    assert loaded.include_evidence_lines is True
+    assert loaded.timeout_seconds == 20.0
+    assert store.get("alert/smtp_password") is None
+
+
+def test_settings_dialog_blank_env_target_respects_disabled_and_relay_modes(
+    qtbot, store: QtSettingsStore, monkeypatch
+) -> None:
+    """凭据选环境变量且目标留空时，停用保存与免密中继放行，启用且填用户名时拦截。"""
+
+    from PySide6.QtWidgets import QTabWidget
+
+    keyring = KeyringStoreAdapter(backend=FakeKeyringBackend())
+    tested_configs: list[object] = []
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _p, _t, text, *_a: warnings.append(text) or QMessageBox.StandardButton.Ok,
+    )
+
+    def _new_dialog(initial_tab: int = 1) -> SettingsDialog:
+        dlg = SettingsDialog(
+            store,
+            keyring=keyring,
+            on_test_smtp=tested_configs.append,
+            initial_tab=initial_tab,
+        )
+        qtbot.addWidget(dlg)
+        editor = dlg.findChild(CredentialEditor, "settings-smtp-credential-editor")
+        src_combo = editor.findChild(QComboBox, "credential-source")
+        src_combo.setCurrentIndex(src_combo.findData(CredentialKind.ENVIRONMENT))
+        editor.findChild(QLineEdit, "credential-target").clear()
+        return dlg
+
+    # 1) 停用 SMTP 时切到 Tab 0 保存常规设置，即使 SMTP 环境变量名为空也不阻断
+    dlg_disabled = _new_dialog(initial_tab=0)
+    dlg_disabled.findChild(QCheckBox, "settings-smtp-enabled").setChecked(False)
+    dlg_disabled.findChild(QCheckBox, "settings-autoscroll").setChecked(False)
+    dlg_disabled.accept()
+    assert dlg_disabled.result() == int(QDialog.DialogCode.Accepted)
+    assert store.get_bool(SETTINGS_KEYS.AUTOSCROLL, True) is False
+
+    # 2) 免密中继（username 留空）时，测试邮件与启用保存均不受空环境变量名阻断
+    dlg_relay = _new_dialog(initial_tab=1)
+    dlg_relay.findChild(QCheckBox, "settings-smtp-enabled").setChecked(True)
+    dlg_relay.findChild(QLineEdit, "settings-smtp-host").setText("relay.local")
+    dlg_relay.findChild(QLineEdit, "settings-smtp-sender").setText("noreply@local.test")
+    dlg_relay.findChild(QLineEdit, "settings-smtp-recipients").setText("ops@local.test")
+    dlg_relay.findChild(QLineEdit, "settings-smtp-username").clear()
+    dlg_relay.findChild(QPushButton, "settings-smtp-test").click()
+    assert len(tested_configs) == 1
+    assert tested_configs[0].username == ""
+    dlg_relay.accept()
+    assert dlg_relay.result() == int(QDialog.DialogCode.Accepted)
+
+    # 3) 启用 SMTP 且填写用户名时，环境变量名留空必须切至 Tab 1 提示错误并拦截关闭
+    dlg_auth = _new_dialog(initial_tab=0)
+    tabs = dlg_auth.findChild(QTabWidget, "settings-tabs")
+    dlg_auth.findChild(QCheckBox, "settings-smtp-enabled").setChecked(True)
+    dlg_auth.findChild(QLineEdit, "settings-smtp-host").setText("smtp.example.com")
+    dlg_auth.findChild(QLineEdit, "settings-smtp-sender").setText("alerts@example.com")
+    dlg_auth.findChild(QLineEdit, "settings-smtp-recipients").setText("ops@example.com")
+    dlg_auth.findChild(QLineEdit, "settings-smtp-username").setText("alerts@example.com")
+    dlg_auth.accept()
+    assert dlg_auth.result() == 0
+    assert tabs.currentIndex() == 1
+    assert warnings and "环境变量" in warnings[-1]
+
+
 # --------------------------------------------------------------------------- 模型服务对话框
 
 
@@ -424,3 +602,34 @@ def test_credential_editor_environment_kind_has_no_secret_input(qtbot) -> None:
     editor.findChild(QLineEdit, "credential-target").setText("  ")
     with pytest.raises(ConfigError):
         editor.credential()
+
+
+def test_credential_editor_supports_custom_hints(qtbot, monkeypatch) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: warnings.append(str(args[2])))
+    editor = CredentialEditor(
+        KeyringStoreAdapter(backend=FakeKeyringBackend()),
+        target_hint="钥匙串账号名（留空用 smtp-alert）",
+        secret_hint="SMTP 授权码",
+        empty_secret_msg="请先输入 SMTP 授权码。",
+    )
+    qtbot.addWidget(editor)
+    editor.load(CredentialRef(kind=CredentialKind.KEYRING, name="smtp-alert"), "smtp-alert")
+
+    assert editor.findChild(QLineEdit, "credential-target").placeholderText().endswith("smtp-alert）")
+    assert editor.findChild(QLineEdit, "credential-secret").placeholderText() == "SMTP 授权码"
+    qtbot.mouseClick(editor.findChild(QPushButton, "credential-save"), Qt.MouseButton.LeftButton)
+    assert warnings == ["请先输入 SMTP 授权码。"]
+
+
+def test_provider_dialog_toggles_advanced_section(qtbot, tmp_path) -> None:
+    from PySide6.QtWidgets import QToolButton, QWidget
+
+    dialog = _provider_dialog(tmp_path)
+    qtbot.addWidget(dialog)
+    toggle = dialog.findChild(QToolButton, "provider-advanced-toggle")
+    box = dialog.findChild(QWidget, "provider-advanced-box")
+
+    assert toggle.isChecked() is False and box.isHidden() is True
+    toggle.click()
+    assert toggle.isChecked() is True and box.isHidden() is False
