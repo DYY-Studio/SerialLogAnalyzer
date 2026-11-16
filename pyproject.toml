@@ -32,6 +32,7 @@ packages = ["src/serial_log_analyzer"]
 "presets" = "serial_log_analyzer/resources/presets"
 "providers" = "serial_log_analyzer/resources/providers"
 "prompts" = "serial_log_analyzer/resources/prompts"
+"rules" = "serial_log_analyzer/resources/rules"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

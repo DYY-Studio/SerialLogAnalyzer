@@ -16,7 +16,9 @@ CORE_MODULES = [
     "serial_log_analyzer.core.models.device",
     "serial_log_analyzer.core.models.logs",
     "serial_log_analyzer.core.models.analysis",
+    "serial_log_analyzer.core.models.anomaly",
     "serial_log_analyzer.core.models.provider",
+    "serial_log_analyzer.core.anomalies.rule_loader",
     "serial_log_analyzer.core.logs.line_framer",
     "serial_log_analyzer.core.logs.parser",
     "serial_log_analyzer.core.logs.preset",
@@ -33,6 +35,7 @@ CORE_MODULES = [
     "serial_log_analyzer.core.services.credential_resolver",
     "serial_log_analyzer.core.services.device_session",
     "serial_log_analyzer.core.services.analysis",
+    "serial_log_analyzer.core.services.anomaly",
 ]
 
 _CHECK_SCRIPT = f"""

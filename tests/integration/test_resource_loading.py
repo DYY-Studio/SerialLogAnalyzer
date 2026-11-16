@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from serial_log_analyzer.core.anomalies.rule_loader import load_rule_sets
 from serial_log_analyzer.core.llm.adapter_loader import load_adapters
 from serial_log_analyzer.core.llm.profile_loader import load_profiles
 from serial_log_analyzer.core.logs.preset_loader import load_presets
@@ -32,10 +33,12 @@ def loader() -> CompositeResourceLoader:
 
 def test_shipped_resources_are_loadable(loader):
     presets = load_presets(loader)
+    rule_sets = load_rule_sets(loader)
     adapters = load_adapters(loader)
     profiles = load_profiles(loader)
 
     assert {item.preset_id for item in presets} == {"hi3861-default", "hi3861-timestamped"}
+    assert {item.rule_set_id for item in rule_sets} == {"default"}
     assert {item.adapter_id for item in adapters} == {
         "openai-compatible",
         "openai-responses",
@@ -80,6 +83,7 @@ def test_diagnostics_report_has_no_config_errors(loader, tmp_path):
     assert report.config_errors == ()
     assert report.ok is True
     assert len(report.presets) == 2
+    assert len(report.rule_sets) == 1
     assert len(report.adapters) == 4
     assert len(report.profiles) == 5
 

@@ -1,0 +1,92 @@
+schema_version: 1
+rule_set_id: default
+display_name: "通用嵌入式异常规则"
+
+defaults:
+  window_seconds: 60
+  cooldown_seconds: 60
+  max_evidence: 20
+
+rules:
+  - rule_id: memory-alloc-failed
+    category: "内存分配失败"
+    severity: CRITICAL
+    min_level: WARN
+    keywords:
+      - "malloc failed"
+      - "out of memory"
+      - "allocation failed"
+      - "alloc failed"
+      - "oom"
+    immediate_alert: true
+    min_occurrences: 1
+    window_seconds: 60
+    cooldown_seconds: 60
+
+  - rule_id: watchdog-or-task-timeout
+    category: "任务/调度超时"
+    severity: HIGH
+    min_level: WARN
+    keywords:
+      - "watchdog timeout"
+      - "deadline exceeded"
+      - "task timeout"
+      - "wdt timeout"
+    immediate_alert: true
+    min_occurrences: 1
+    window_seconds: 60
+    cooldown_seconds: 60
+
+  - rule_id: uart-rx-overflow
+    category: "通信异常"
+    severity: HIGH
+    min_level: ERROR
+    pattern: 'uart.*overflow|rx overflow'
+    immediate_alert: false
+    min_occurrences: 3
+    window_seconds: 60
+    cooldown_seconds: 60
+
+  - rule_id: comm-link-failed
+    category: "通信异常"
+    severity: HIGH
+    min_level: ERROR
+    keywords:
+      - "reconnect failed"
+      - "link down"
+      - "disconnect"
+    immediate_alert: false
+    min_occurrences: 1
+    window_seconds: 60
+    cooldown_seconds: 60
+
+  - rule_id: comm-retry-burst
+    category: "通信异常"
+    severity: MEDIUM
+    min_level: WARN
+    keywords:
+      - "retry "
+    immediate_alert: false
+    min_occurrences: 3
+    window_seconds: 60
+    cooldown_seconds: 60
+
+  - rule_id: driver-peripheral-failed
+    category: "驱动/外设错误"
+    severity: HIGH
+    min_level: WARN
+    pattern: '(?:i2c|spi|gpio|sensor|flash).*failed|read failed|init failed'
+    immediate_alert: false
+    min_occurrences: 1
+    window_seconds: 60
+    cooldown_seconds: 60
+
+  - rule_id: unclassified-error
+    category: "其他/未知"
+    severity: MEDIUM
+    min_level: ERROR
+    pattern: '.+'
+    immediate_alert: false
+    min_occurrences: 3
+    window_seconds: 60
+    cooldown_seconds: 60

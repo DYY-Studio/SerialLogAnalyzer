@@ -26,6 +26,17 @@ endpoint: /v1/chat/completions
 response_content_pointer: /choices/0/message/content
 """
 
+_RULE_SET = """
+schema_version: 1
+rule_set_id: demo-rules
+display_name: 演示规则
+rules:
+  - rule_id: mem-fail
+    category: 内存分配失败
+    severity: CRITICAL
+    keywords: ["malloc failed"]
+"""
+
 _PROFILE = """
 schema_version: 1
 profile_id: demo
@@ -39,8 +50,17 @@ credential:
 """
 
 
-def _loader(make_loader, *, preset_yaml: str, adapter: bool = True, profile: bool = True):
+def _loader(
+    make_loader,
+    *,
+    preset_yaml: str,
+    rule_yaml: str | None = None,
+    adapter: bool = True,
+    profile: bool = True,
+):
     files = {"presets/logs/hi3861-default.yaml": preset_yaml}
+    if rule_yaml is not None:
+        files["rules/anomalies/demo-rules.yaml"] = rule_yaml
     if adapter:
         files["providers/adapters/demo-adapter.yaml"] = _ADAPTER
     if profile:
@@ -180,3 +200,26 @@ def test_export_failure_raises_app_error(make_loader, tmp_path):
 
     with pytest.raises(AppError):
         export(report, blocker / "report.txt")
+
+
+def test_collect_reports_rule_sets_and_records_rule_errors(make_loader, tmp_path):
+    ok_report = collect(
+        _loader(make_loader, preset_yaml=_MINIMAL_PRESET, rule_yaml=_RULE_SET),
+        config_dir=tmp_path,
+    )
+    assert ok_report.ok is True
+    assert ok_report.rule_sets == ("demo-rules（演示规则，1 条）",)
+    assert "异常规则（1）:" in ok_report.render()
+
+    bad_report = collect(
+        _loader(
+            make_loader,
+            preset_yaml=_MINIMAL_PRESET,
+            rule_yaml="schema_version: 1\nrule_set_id: demo-rules\n",
+        ),
+        config_dir=tmp_path,
+    )
+    assert bad_report.ok is False
+    assert bad_report.rule_sets == ()
+    assert any(item.startswith("异常规则：") for item in bad_report.config_errors)
+    assert bad_report.presets and bad_report.adapters and bad_report.profiles

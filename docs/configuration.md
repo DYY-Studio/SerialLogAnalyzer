@@ -1,17 +1,17 @@
 # 配置文件与本地数据
 
 本文说明 SerialLogAnalyzer 的**文件放在哪里、字段怎么填、API Key 与设置如何加载与保存、日志如何导入导出、诊断信息从哪里取**。
-完整的资源 schema 校验规则见 `docs/protocols/`（Preset / Provider / 凭据 / JSON Pointer），本文只做汇总与索引。
+完整的资源 schema 校验规则见 `docs/protocols/`（Preset / 异常规则 / Provider / 凭据 / JSON Pointer），本文只做汇总与索引。
 
 ## 1. 总原则
 
-- **声明式**：设备日志格式、模型服务、Prompt 全部由 YAML / Markdown 资源描述，代码里不硬编码具体芯片或厂商。
+- **声明式**：设备日志格式、异常检测规则、模型服务、Prompt 全部由 YAML / Markdown 资源描述，代码里不硬编码具体芯片或厂商。
   仓库中**没有**任何脚本式配置，也不允许通过 `eval` / `exec` 执行配置内容。
 - **用户资源覆盖内置资源**：同名资源以优先级更高的目录为准，内置文件本身永不被改写。
 - **未知字段即错误**：任何资源的未知字段、非法值都会抛出 `ConfigError` / `PresetError`（继承自 `AppError`），
   错误信息带中文说明与来源文件路径；不会静默忽略。
-- **`schema_version` 必填**：Preset = 1，Provider Profile = 1，LLM Adapter = 3。版本不符直接报错。
-- **标识符即文件名**：`preset_id` / `profile_id` / `adapter_id` 必须与所在 YAML 的文件名（去扩展名）一致，
+- **`schema_version` 必填**：Preset = 1，异常规则集 = 1，Provider Profile = 1，LLM Adapter = 3。版本不符直接报错。
+- **标识符即文件名**：`preset_id` / `rule_set_id` / `profile_id` / `adapter_id` 必须与所在 YAML 的文件名（去扩展名）一致，
   且匹配 `^[a-z][a-z0-9-]*$`。
 
 ## 2. 资源目录与查找顺序
@@ -30,6 +30,7 @@
 | 资源 | 相对路径 | 格式 |
 |---|---|---|
 | 日志解析 Preset | `presets/logs/*.yaml` | YAML |
+| 异常检测规则 | `rules/anomalies/*.yaml` | YAML |
 | LLM Adapter | `providers/adapters/*.yaml` | YAML |
 | LLM Profile | `providers/profiles/*.yaml` | YAML |
 | Prompt 模板 | `prompts/*.md` | Markdown + `string.Template` |
@@ -259,7 +260,7 @@ uv run python -m serial_log_analyzer.diagnostics --log-file app.log --no-log-tai
 
 - 应用版本、Python 版本、可执行文件、操作系统；
 - 用户配置目录、应用日志文件、**全部资源根目录（按优先级）**；
-- 已加载的 Preset / Adapter / Profile 清单；
+- 已加载的 Preset / 异常规则 / Adapter / Profile 清单；
 - 逐条**配置错误**（加载失败不会被隐藏，诊断本身也不会因此失败）；
 - 系统钥匙串可用性；
 - 应用日志末尾若干行。
@@ -294,6 +295,7 @@ uv run python -m serial_log_analyzer.diagnostics --log-file app.log --no-log-tai
 ## 11. 相关文档
 
 - [`docs/protocols/log-preset.md`](protocols/log-preset.md)：Preset schema 与校验规则
+- [`docs/protocols/anomaly-rules.md`](protocols/anomaly-rules.md)：异常检测规则 schema 与校验规则
 - [`docs/protocols/provider.md`](protocols/provider.md)：Adapter / Profile schema 与占位符
 - [`docs/protocols/credentials.md`](protocols/credentials.md)：凭据来源与优先级
 - [`docs/protocols/json-pointer.md`](protocols/json-pointer.md)：扩展 JSON Pointer（含负索引）
