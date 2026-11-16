@@ -467,3 +467,30 @@ def test_clean_eof_without_terminal_follows_adapter_policy(resources) -> None:
 
     assert recorder.states[-1] is AnalysisState.DONE
     assert not recorder.errors
+
+
+def test_latest_result_tracks_completed_snapshot_and_resets(resources) -> None:
+    recorder = Recorder()
+    service = recorder.service(resources)
+    transport = recorder.transport
+
+    assert service.latest_result is None
+
+    service.ask(AnalysisRequest(user_input="首轮问题"))
+    assert service.latest_result is None  # 流式进行中尚未定稿
+
+    transport.push(_sse('{"choices":[{"delta":{"content":"首轮结论"}}]}', "[DONE]"))
+    transport.done()
+    first = service.latest_result
+    assert first is not None
+    assert first.content == "首轮结论"
+    assert len(first.conversation) == 2
+
+    # 后续追问若被取消，不应破坏上一轮已完成的有效结论
+    service.follow_up("追问")
+    service.cancel()
+    assert service.latest_result is not None
+    assert service.latest_result.content == "首轮结论"
+
+    service.reset()
+    assert service.latest_result is None

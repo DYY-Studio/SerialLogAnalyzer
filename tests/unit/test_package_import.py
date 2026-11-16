@@ -36,6 +36,7 @@ CORE_MODULES = [
     "serial_log_analyzer.core.services.device_session",
     "serial_log_analyzer.core.services.analysis",
     "serial_log_analyzer.core.services.anomaly",
+    "serial_log_analyzer.core.services.report",
 ]
 
 _CHECK_SCRIPT = f"""

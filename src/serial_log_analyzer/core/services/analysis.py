@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import replace
 
 from serial_log_analyzer.core.errors import AppError, ConfigError, ResponseParseError
 from serial_log_analyzer.core.llm.adapter import JSONAdapter
@@ -170,6 +171,7 @@ class AnalysisService:
         self._active = False
         self._token: CancellationToken | None = None
         self._result = AnalysisResult()
+        self._latest_result: AnalysisResult | None = None
         self._cancelled = False
         self._sse: SSEParser | None = None
         self._processor: StreamProcessor | None = None
@@ -218,6 +220,16 @@ class AnalysisService:
 
         return list(self._conversation)
 
+    @property
+    def latest_result(self) -> AnalysisResult | None:
+        """最近一次完成的有效分析结果快照；尚无完成结果或已重置时为 ``None``。"""
+
+        if self._latest_result is None:
+            return None
+        return replace(
+            self._latest_result, conversation=list(self._latest_result.conversation)
+        )
+
     def ask(self, request: AnalysisRequest) -> None:
         """开始一轮新的分析，沿用当前会话历史（重开用 :meth:`reset`）。
 
@@ -263,6 +275,7 @@ class AnalysisService:
         self.cancel()
         self._conversation.clear()
         self._result = AnalysisResult()
+        self._latest_result = None
 
     def _ensure_idle(self) -> None:
         if self._handlers is None:
@@ -437,6 +450,10 @@ class AnalysisService:
         self._close()
         self._result.state = state
         self._emit_result()
+        if state is AnalysisState.DONE:
+            self._latest_result = replace(
+                self._result, conversation=list(self._result.conversation)
+            )
         self._handlers.on_state(state)
 
     def _close(self) -> None:
