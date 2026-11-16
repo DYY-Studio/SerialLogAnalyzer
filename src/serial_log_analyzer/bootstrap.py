@@ -51,7 +51,7 @@ from serial_log_analyzer.io.resources import CompositeResourceLoader
 from serial_log_analyzer.io.serial.qt_serial_transport import QtSerialTransport
 from serial_log_analyzer.io.settings.qt_settings_store import SETTINGS_KEYS, QtSettingsStore
 from serial_log_analyzer.ui.controllers.analysis_controller import AnalysisController
-from serial_log_analyzer.ui.controllers.device_controller import DeviceController
+from serial_log_analyzer.ui.controllers.device_controller import DeviceController, coalesce_updates
 from serial_log_analyzer.ui.controllers.main_controller import MainController
 from serial_log_analyzer.ui.main_window import MainWindow
 from serial_log_analyzer.ui.models.log_table_model import LogTableModel
@@ -209,7 +209,8 @@ def build_window(context: ApplicationContext) -> MainWindow:
     """
 
     settings = context.settings
-    log_view = LogView(LogTableModel())
+    table_model = LogTableModel()
+    log_view = LogView(table_model)
     panel = AnalysisPanel()
     panel.set_goals(context.prompts.goals())
     toolbar = SerialToolBar()
@@ -249,6 +250,13 @@ def build_window(context: ApplicationContext) -> MainWindow:
     device.error_occurred.connect(window.show_status)
     device.command_reply.connect(command_panel.append_reply)
 
+    def _on_command_timeout(command: str) -> None:
+        command_panel.append_timeout(command)
+        window.show_status(f"命令超时未响应：{command}")
+
+    device.command_timed_out.connect(_on_command_timeout)
+    table_model.row_count_changed.connect(window.set_log_count)
+
     log_view.selection_changed.connect(analysis.selected_sequences)
     log_view.autoscroll_toggled.connect(
         lambda enabled: settings.set(SETTINGS_KEYS.AUTOSCROLL, bool(enabled))
@@ -266,8 +274,10 @@ def build_window(context: ApplicationContext) -> MainWindow:
     panel.follow_up_requested.connect(analysis.follow_up)
     panel.cancel_requested.connect(analysis.cancel)
     panel.reset_requested.connect(analysis.reset)
+    panel.reset_requested.connect(window.clear_usage_summary)
     analysis.result_updated.connect(panel.set_result)
     analysis.state_changed.connect(panel.set_state)
+    analysis.usage_updated.connect(window.set_usage_summary)
     analysis.error_occurred.connect(window.show_status)
 
     window.settings_requested.connect(lambda: _open_settings(window, context, service))
@@ -412,11 +422,15 @@ def _import_logs(window: MainWindow, context: ApplicationContext) -> None:
     )
     if not path_text:
         return
+    updates: list[PipelineUpdate] = []
     try:
-        count = import_logs(context, Path(path_text), window.log_view.append_update)
+        count = import_logs(context, Path(path_text), updates.append)
     except AppError as exc:
         window.show_status(f"导入失败：{exc}")
         return
+    merged = coalesce_updates(updates)
+    if merged.added or merged.updated or merged.dropped_sequences:
+        window.log_view.append_update(merged)
     window.show_status(f"已导入 {count} 行到日志表格")
 
 

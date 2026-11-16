@@ -111,3 +111,47 @@ def test_build_window_wires_the_ui(qapp, fake_settings) -> None:
     assert window.command_dock.widget() is window.command_panel
     # 设备控制器已把回调安装到会话上
     assert context.session._handlers is not None
+
+
+def test_build_window_wires_status_bar_and_command_timeout(qapp, fake_settings, monkeypatch, qtbot) -> None:
+    from serial_log_analyzer.ui.controllers.device_controller import DeviceController
+
+    created_devices: list[DeviceController] = []
+    created_analyses: list[object] = []
+
+    def _fast_device(session):
+        ctrl = DeviceController(session, batch_interval_ms=20, command_timeout_ms=50)
+        created_devices.append(ctrl)
+        return ctrl
+
+    orig_analysis = bootstrap.AnalysisController
+
+    def _capture_analysis(service, builder):
+        ctrl = orig_analysis(service, builder)
+        created_analyses.append(ctrl)
+        return ctrl
+
+    monkeypatch.setattr(bootstrap, "DeviceController", _fast_device)
+    monkeypatch.setattr(bootstrap, "AnalysisController", _capture_analysis)
+
+    context = bootstrap.build_application(["-platform", "offscreen"])
+    window = bootstrap.build_window(context)
+
+    # 1) 日志条数变化通过 DeviceController 批处理驱动状态栏计数
+    context.session._on_bytes(b"[I] [wifi] ok\r\n")
+    qtbot.waitUntil(lambda: window.log_count_label.text() == "日志 1 条", timeout=1000)
+
+    # 2) 命令超时信号联动写入 CommandPanel 与状态栏
+    created_devices[0].command_timed_out.emit("PING")
+    assert "⏱ 超时未收到响应：PING" in window.command_panel.reply_view.toPlainText()
+    assert "PING" in window.status_bar.currentMessage()
+
+    # 3) 用量更新与新会话重置同步状态栏
+    created_analyses[0].usage_updated.emit(10, 5, 15)
+    assert window.usage_status_label.text() == "Token: 10 / 5 / 15"
+    assert window.usage_status_label.isHidden() is False
+    window.analysis_panel.new_session_btn.click()
+    assert window.usage_status_label.isHidden() is True
+
+    # 4) 窗口关闭清理无未停定时器异常
+    window.close()

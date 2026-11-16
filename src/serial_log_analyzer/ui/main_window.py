@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QDockWidget,
+    QLabel,
     QMainWindow,
     QMenu,
     QStatusBar,
@@ -99,11 +100,37 @@ class MainWindow(QMainWindow):
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
+        self.usage_status_label = QLabel("")
+        self.usage_status_label.setObjectName("status-usage")
+        self.usage_status_label.setVisible(False)
+        self.log_count_label = QLabel("日志 0 条")
+        self.log_count_label.setObjectName("status-log-count")
+        self.status_bar.addPermanentWidget(self.usage_status_label)
+        self.status_bar.addPermanentWidget(self.log_count_label)
 
     def show_status(self, message: str) -> None:
         """在状态栏显示一条消息。"""
 
         self.status_bar.showMessage(message)
+
+    def set_log_count(self, count: int) -> None:
+        """更新状态栏右侧的日志条数指示。"""
+
+        self.log_count_label.setText(f"日志 {count} 条")
+
+    def set_usage_summary(self, input_tokens: int, output_tokens: int, total_tokens: int) -> None:
+        """更新状态栏右侧的 LLM Token 用量摘要。"""
+
+        self.usage_status_label.setText(
+            f"Token: {input_tokens} / {output_tokens} / {total_tokens}"
+        )
+        self.usage_status_label.setVisible(True)
+
+    def clear_usage_summary(self) -> None:
+        """清空状态栏右侧的 LLM Token 用量摘要。"""
+
+        self.usage_status_label.clear()
+        self.usage_status_label.setVisible(False)
 
     def restore_layout(self, state: object) -> None:
         """恢复工具栏 / 停靠布局。

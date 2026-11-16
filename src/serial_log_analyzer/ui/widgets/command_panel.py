@@ -51,6 +51,11 @@ class CommandPanel(QWidget):
         code = f"[{reply.code}] " if reply.code is not None else ""
         self._append(f"← 失败 {code}{reply.text}")
 
+    def append_timeout(self, command: str) -> None:
+        """追加一条命令响应超时提示。"""
+
+        self._append(f"⏱ 超时未收到响应：{command}")
+
     # ------------------------------------------------------------------
     # 构建与槽函数
     # ------------------------------------------------------------------

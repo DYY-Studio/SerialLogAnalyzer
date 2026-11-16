@@ -86,6 +86,7 @@ class AnalysisController(QObject):
         """清空会话与结果面板。"""
 
         self._service.reset()
+        self._usage = None
         self.result_updated.emit(AnalysisResult())
         self.state_changed.emit(AnalysisState.IDLE)
 

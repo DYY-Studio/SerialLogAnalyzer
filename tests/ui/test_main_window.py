@@ -303,10 +303,12 @@ def test_command_panel_echoes_command_and_appends_reply(qtbot) -> None:
 
     panel.append_reply(CommandReply(text="PONG", ok=True))
     panel.append_reply(CommandReply(text="rx overflow", ok=False, code=7))
+    panel.append_timeout("VERSION")
     assert panel.reply_view.toPlainText().splitlines() == [
         "→ PING",
         "← PONG",
         "← 失败 [7] rx overflow",
+        "⏱ 超时未收到响应：VERSION",
     ]
 
     panel.send_btn.click()  # 空命令不发
@@ -390,3 +392,32 @@ def test_invalid_baudrate_reports_and_skips_connect(qtbot) -> None:
 
     assert configs == []
     assert len(errors) == 2 and all("波特率" in message for message in errors)
+
+
+def test_head_drop_uses_incremental_remove_and_preserves_selection(qtbot) -> None:
+    """连续头部淘汰应保持后续行选中状态，并支持 O(log N) 序号查行。"""
+
+    window = _build_window(qtbot)
+    view = window.log_view
+    model = view._model
+    view.append_update(PipelineUpdate(added=tuple(_entry(i) for i in range(5))))
+
+    view.table_view.selectRow(3)
+    assert [entry.sequence for entry in view.selected_log_entries()] == [3]
+
+    reset_seen: list[bool] = []
+    model.modelReset.connect(lambda: reset_seen.append(True))
+    removed = model.remove_sequences([0, 1])
+
+    assert removed == 2
+    assert reset_seen == []  # 命中连续头部增量移除，未触发整表 reset
+    assert [entry.sequence for entry in view.selected_log_entries()] == [3]
+    assert model.row_for_sequence(0) is None
+    assert model.row_for_sequence(2) == 0
+    assert model.row_for_sequence(3) == 1
+    assert model.row_for_sequence(99) is None
+
+    # 非连续删除退化为整表 reset，确保视图正确
+    assert model.remove_sequences([4]) == 1
+    assert reset_seen == [True]
+    assert [model.entry_at(row).sequence for row in range(model.rowCount())] == [2, 3]

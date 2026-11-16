@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import time
+from bisect import bisect_left
+from collections.abc import Sequence
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
 from PySide6.QtGui import QBrush, QColor
@@ -88,12 +90,26 @@ class LogTableModel(QAbstractTableModel):
             updated += 1
         return updated
 
-    def remove_sequences(self, sequences: list[int]) -> int:
-        """按 ``sequence`` 批量移除（容量截断），返回移除数量。"""
+    def remove_sequences(self, sequences: Sequence[int]) -> int:
+        """按 ``sequence`` 批量移除（容量截断），返回移除数量。
+
+        若待移除序列精确匹配表头连续前 K 条，使用 ``beginRemoveRows`` 保护
+        当前选区与滚动位置；否则退化为 ``beginResetModel`` 保证视图一致。
+        """
+
+        if not sequences or not self._entries:
+            return 0
+        count = len(sequences)
+        if count <= len(self._entries) and all(
+            self._entries[index].sequence == sequence for index, sequence in enumerate(sequences)
+        ):
+            self.beginRemoveRows(QModelIndex(), 0, count - 1)
+            del self._entries[:count]
+            self.endRemoveRows()
+            self.row_count_changed.emit(len(self._entries))
+            return count
 
         dropped = set(sequences)
-        if not dropped:
-            return 0
         keep = [entry for entry in self._entries if entry.sequence not in dropped]
         removed = len(self._entries) - len(keep)
         if removed:
@@ -133,6 +149,14 @@ class LogTableModel(QAbstractTableModel):
         """返回全部条目（只读副本）。"""
 
         return list(self._entries)
+
+    def row_for_sequence(self, sequence: int) -> int | None:
+        """按递增 ``sequence`` 查找所在行号；不存在时返回 ``None``。"""
+
+        index = bisect_left(self._entries, sequence, key=lambda entry: entry.sequence)
+        if index < len(self._entries) and self._entries[index].sequence == sequence:
+            return index
+        return None
 
     # ------------------------------------------------------------------
     # QAbstractTableModel

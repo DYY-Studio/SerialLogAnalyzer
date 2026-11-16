@@ -36,8 +36,9 @@ class MainController(QObject):
         self._settings = settings
 
     def shutdown(self) -> None:
-        """退出前清理：取消进行中的请求并断开串口。"""
+        """退出前清理：取消进行中的请求、断开串口并停止控制器定时器。"""
 
         self._analysis.cancel()
         if self._device.state is DeviceConnectionState.CONNECTED:
             self._device.disconnect()
+        self._device.shutdown()
