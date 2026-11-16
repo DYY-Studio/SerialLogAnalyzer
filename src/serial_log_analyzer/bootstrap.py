@@ -75,6 +75,7 @@ from serial_log_analyzer.ui.theme import ThemeManager
 from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
 from serial_log_analyzer.ui.widgets.anomaly_panel import AnomalyPanel
 from serial_log_analyzer.ui.widgets.app_log_panel import AppLogPanel
+from serial_log_analyzer.ui.widgets.chart_panel import ChartPanel
 from serial_log_analyzer.ui.widgets.command_panel import CommandPanel
 from serial_log_analyzer.ui.widgets.log_view import LogView
 from serial_log_analyzer.ui.widgets.serial_toolbar import SerialToolBar
@@ -278,6 +279,7 @@ def build_window(context: ApplicationContext) -> MainWindow:
         log_path=str(current_log_file() or log_file_path()),
     )
     anomaly_panel = AnomalyPanel()
+    chart_panel = ChartPanel(preset_fields=tuple(context.preset.line.fields))
 
     if context.anomaly_service is None:
         context.anomaly_service = AnomalyService(load_rule_set(context.resources, "default"))
@@ -317,6 +319,7 @@ def build_window(context: ApplicationContext) -> MainWindow:
         command_panel,
         app_log_panel,
         anomaly_panel,
+        chart_panel,
         on_close=lambda: _shutdown(main, window, settings),
     )
     panel.set_profiles(load_profiles(context.resources), context.profile.profile_id)
@@ -336,6 +339,7 @@ def build_window(context: ApplicationContext) -> MainWindow:
     device.connection_changed.connect(_on_connection)
     device.log_update.connect(log_view.append_update)
     device.log_update.connect(anomaly.ingest_update)
+    device.log_update.connect(chart_panel.append_update)
     device.error_occurred.connect(window.show_status)
     device.command_reply.connect(command_panel.append_reply)
 
@@ -409,6 +413,7 @@ def build_window(context: ApplicationContext) -> MainWindow:
     window.clear_requested.connect(log_view.clear)
     window.clear_requested.connect(anomaly.reset)
     window.clear_requested.connect(anomaly_panel.clear_alert_banner)
+    window.clear_requested.connect(chart_panel.clear)
     window.export_requested.connect(lambda: _export_logs(window, context))
     window.export_report_requested.connect(lambda: _export_report(window, context))
     panel.export_report_requested.connect(lambda: _export_report(window, context))
@@ -511,6 +516,7 @@ def _apply_settings(
     if dropped:
         drop_update = PipelineUpdate(dropped_sequences=dropped)
         window.log_view.append_update(drop_update)
+        window.chart_panel.append_update(drop_update)
         if context.anomaly_controller is not None:
             context.anomaly_controller.ingest_update(drop_update)
     configure_logging(
@@ -685,6 +691,7 @@ def _import_logs(window: MainWindow, context: ApplicationContext) -> None:
     merged = coalesce_updates(updates)
     if merged.added or merged.updated or merged.dropped_sequences:
         window.log_view.append_update(merged)
+        window.chart_panel.append_update(merged)
         if context.anomaly_controller is not None:
             context.anomaly_controller.ingest_update(merged)
     window.show_status(f"已导入 {count} 行到日志表格")
@@ -819,6 +826,7 @@ def _switch_preset(window: MainWindow, context: ApplicationContext, preset_id: s
         context.anomaly_controller.reset()
     window.anomaly_panel.clear_alert_banner()
     window.command_panel.set_commands(preset.commands)
+    window.chart_panel.set_preset_fields(tuple(preset.line.fields))
     window.set_preset_name(preset_id)
     context.settings.set(SETTINGS_KEYS.CURRENT_PRESET, preset_id)
     window.show_status(f"已切换到 Preset {preset_id}，日志已清空")

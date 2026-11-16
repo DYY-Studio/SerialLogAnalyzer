@@ -26,6 +26,7 @@ from serial_log_analyzer.ui.theme import ThemeTokens, default_tokens
 from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
 from serial_log_analyzer.ui.widgets.anomaly_panel import AnomalyPanel
 from serial_log_analyzer.ui.widgets.app_log_panel import AppLogPanel
+from serial_log_analyzer.ui.widgets.chart_panel import ChartPanel
 from serial_log_analyzer.ui.widgets.command_panel import CommandPanel
 from serial_log_analyzer.ui.widgets.log_view import LogView
 from serial_log_analyzer.ui.widgets.serial_toolbar import SerialToolBar
@@ -78,11 +79,12 @@ class MainWindow(QMainWindow):
         command_panel: 底部命令面板（输入 + 回复历史）。
         app_log_panel: 底部应用日志面板（与命令面板同区，切换标签页）。
         anomaly_panel: 底部异常与告警面板（可选，缺省按默认配置构造）。
+        chart_panel: 底部实时遥测图表面板（可选，缺省按默认配置构造）。
         parent: 可选父窗口。
         on_close: 关闭前的清理回调（由组合根注入，例如断开设备、取消请求）。
 
-    布局：中央是日志表格，「LLM 分析」停靠在右侧，「命令」「应用日志」与「异常与告警」
-    停靠在底部（同一区域的多个标签页），都可拖动 / 浮动 / 关闭，「视图」菜单控制显隐。
+    布局：中央是日志表格，「LLM 分析」停靠在右侧，「命令」「应用日志」「异常与告警」与
+    「数据图表」停靠在底部（同一区域的多个标签页），都可拖动 / 浮动 / 关闭，「视图」菜单控制显隐。
     布局通过 ``saveState`` / :meth:`restore_layout` 记忆，但只在面板集合没变时恢复
     （见 ``bootstrap._restore_layout``）。
 
@@ -112,6 +114,7 @@ class MainWindow(QMainWindow):
         command_panel: CommandPanel,
         app_log_panel: AppLogPanel,
         anomaly_panel: AnomalyPanel | None = None,
+        chart_panel: ChartPanel | None = None,
         parent: QMainWindow | None = None,
         *,
         on_close: Callable[[], None] | None = None,
@@ -128,6 +131,7 @@ class MainWindow(QMainWindow):
         self.command_panel = command_panel
         self.app_log_panel = app_log_panel
         self.anomaly_panel = anomaly_panel if anomaly_panel is not None else AnomalyPanel()
+        self.chart_panel = chart_panel if chart_panel is not None else ChartPanel()
         self.setWindowTitle("SerialLogAnalyzer - 串口日志分析工具")
         self.resize(1200, 800)
         self.addToolBar(serial_toolbar)
@@ -143,9 +147,13 @@ class MainWindow(QMainWindow):
         self.anomaly_dock = self._make_dock(
             "anomaly-dock", "异常与告警", self.anomaly_panel, Qt.DockWidgetArea.BottomDockWidgetArea
         )
-        # 与命令、应用日志共用底部区域，用标签页切换，避免挤压日志表格高度。
+        self.chart_dock = self._make_dock(
+            "chart-dock", "数据图表", self.chart_panel, Qt.DockWidgetArea.BottomDockWidgetArea
+        )
+        # 与命令、应用日志、异常面板共用底部区域，用标签页切换，避免挤压日志表格高度。
         self.tabifyDockWidget(self.command_dock, self.app_log_dock)
         self.tabifyDockWidget(self.app_log_dock, self.anomaly_dock)
+        self.tabifyDockWidget(self.anomaly_dock, self.chart_dock)
         self.command_dock.raise_()
         self._apply_dock_corners()
         self._build_menu()
@@ -196,6 +204,7 @@ class MainWindow(QMainWindow):
         self.command_panel.set_theme_tokens(tokens)
         self.app_log_panel.set_theme_tokens(tokens)
         self.anomaly_panel.set_theme_tokens(tokens)
+        self.chart_panel.set_theme_tokens(tokens)
         self._refresh_alert_badge()
 
     def set_alert_count(self, active_count: int, *, severe: bool = False) -> None:
@@ -227,6 +236,12 @@ class MainWindow(QMainWindow):
 
         self.analysis_dock.show()
         self.analysis_dock.raise_()
+
+    def focus_chart_dock(self) -> None:
+        """显示并切换到「数据图表」停靠面板。"""
+
+        self.chart_dock.show()
+        self.chart_dock.raise_()
 
     def _refresh_alert_badge(self) -> None:
         tokens = self._tokens
@@ -349,6 +364,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.command_dock.toggleViewAction())
         view_menu.addAction(self.app_log_dock.toggleViewAction())
         view_menu.addAction(self.anomaly_dock.toggleViewAction())
+        view_menu.addAction(self.chart_dock.toggleViewAction())
 
     def closeEvent(self, event: object) -> None:
         """窗口关闭：执行清理回调。"""

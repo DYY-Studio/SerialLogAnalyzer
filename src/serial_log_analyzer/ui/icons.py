@@ -110,6 +110,9 @@ _ICON_PATHS: dict[str, str] = {
         '<rect x="2" y="4" width="20" height="16" rx="2"/>'
         '<path d="m22 7-10 6L2 7"/>'
     ),
+    "chart": (
+        '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>'
+    ),
 }
 
 

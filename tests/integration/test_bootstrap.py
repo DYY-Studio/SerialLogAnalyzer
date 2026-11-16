@@ -111,6 +111,9 @@ def test_build_window_wires_the_ui(qapp, fake_settings) -> None:
     assert window.serial_toolbar.baud_combo.currentText() == "115200"
     assert window.analysis_dock.widget() is window.analysis_panel
     assert window.command_dock.widget() is window.command_panel
+    assert window.chart_dock.widget() is window.chart_panel
+    assert window.chart_panel.field_names() == tuple(context.preset.line.fields)
+    assert window.chart_dock in window.tabifiedDockWidgets(window.command_dock)
     for name in (
         "cmd-chip-ping",
         "cmd-chip-version",
@@ -536,3 +539,59 @@ def test_bootstrap_smtp_end_to_end_delivery_failure_and_shutdown(
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_bootstrap_chart_panel_wiring_capacity_import_clear_and_preset_switch(
+    qapp, fake_settings, monkeypatch, qtbot, tmp_path
+) -> None:
+    """图表面板全链路接线：实时串口采样、容量淘汰同步、导入、清空日志与 Preset 重置。"""
+
+    from PySide6.QtWidgets import QFileDialog
+
+    from serial_log_analyzer.ui.controllers.device_controller import DeviceController
+
+    monkeypatch.setattr(
+        bootstrap,
+        "DeviceController",
+        lambda session: DeviceController(session, batch_interval_ms=20, command_timeout_ms=50),
+    )
+
+    context = bootstrap.build_application(["-platform", "offscreen"])
+    window = bootstrap.build_window(context)
+
+    # 1) 实时串口到达含结构化数值字段的日志 -> ChartPanel 同步入队
+    context.session._on_bytes(
+        b"[I] [sensor] led=1 fan=0 temperature=26.5 humidity=44.0\r\n"
+        b"[I] [sensor] led=1 fan=1 temperature=27.8 humidity=45.2\r\n"
+    )
+    qtbot.waitUntil(lambda: window.chart_panel.sample_count("temperature") == 2, timeout=1000)
+    assert window.chart_panel.sample_count("humidity") == 2
+    assert window.chart_panel.sample_count("led") == 2
+
+    # 2) 容量淘汰同步移除最旧采样点
+    fake_settings.values[SETTINGS_KEYS.LOG_CAPACITY] = 1
+    bootstrap._apply_settings(window, context, context.analysis_service)
+    assert window.chart_panel.sample_count("temperature") == 1
+
+    # 3) 恢复容量后导入日志，增量驱动 ChartPanel 追加新采样点
+    fake_settings.values[SETTINGS_KEYS.LOG_CAPACITY] = 10
+    bootstrap._apply_settings(window, context, context.analysis_service)
+    sample_log = tmp_path / "sensor.log"
+    sample_log.write_text(
+        "[I] [sensor] led=0 fan=0 temperature=28.4 humidity=46.1\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args, **kwargs: (str(sample_log), ""))
+    bootstrap._import_logs(window, context)
+    assert window.chart_panel.sample_count("temperature") == 2
+    assert window.chart_panel._buffer.samples("temperature")[-1].value == 28.4
+
+    # 4) 清空日志清空曲线采样但保留 Preset 字段配置
+    window.clear_requested.emit()
+    assert window.chart_panel.sample_count("temperature") == 0
+    assert window.chart_panel.field_names() == tuple(context.preset.line.fields)
+
+    # 5) 切换 Preset 时重置图表面板预设字段
+    bootstrap._switch_preset(window, context, "hi3861-timestamped")
+    assert window.chart_panel.field_names() == ()
+
+    window.close()

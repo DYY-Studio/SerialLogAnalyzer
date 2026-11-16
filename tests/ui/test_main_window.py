@@ -278,21 +278,25 @@ def test_menu_actions_emit_intent_signals(qtbot) -> None:
         "命令",
         "应用日志",
         "异常与告警",
+        "数据图表",
     ]
     assert window.analysis_dock.widget() is window.analysis_panel
     assert window.command_dock.widget() is window.command_panel
     assert window.app_log_dock.widget() is window.app_log_panel
     assert window.anomaly_dock.widget() is window.anomaly_panel
-    # 命令、应用日志与异常面板共用底部区域，按标签页切换
+    assert window.chart_dock.widget() is window.chart_panel
+    # 命令、应用日志、异常与图表面板共用底部区域，按标签页切换
     assert set(window.tabifiedDockWidgets(window.command_dock)) == {
         window.app_log_dock,
         window.anomaly_dock,
+        window.chart_dock,
     }
     for dock in (
         window.analysis_dock,
         window.command_dock,
         window.app_log_dock,
         window.anomaly_dock,
+        window.chart_dock,
     ):
         assert dock.features() & QDockWidget.DockWidgetFeature.DockWidgetFloatable
         assert dock.features() & QDockWidget.DockWidgetFeature.DockWidgetMovable
@@ -567,6 +571,7 @@ def test_main_window_segmented_status_and_dock_title_bars(qtbot) -> None:
     assert window.command_dock.titleBarWidget() is not None
     assert window.app_log_dock.titleBarWidget() is not None
     assert window.anomaly_dock.titleBarWidget() is not None
+    assert window.chart_dock.titleBarWidget() is not None
 
     window.set_connection_status(True, "COM3 · 115200")
     window.set_preset_name("hi3861-timestamped")
