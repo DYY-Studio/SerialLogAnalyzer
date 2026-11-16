@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import QObject
 
 from serial_log_analyzer.core.models.device import DeviceConnectionState
@@ -22,6 +24,7 @@ class MainController(QObject):
         device_controller: 设备控制器。
         analysis_controller: 分析控制器。
         settings: 设置存储（供关闭时同步界面偏好）。
+        on_shutdown: 可选附加停机清理回调（例如停止邮件通知线程池）。
     """
 
     def __init__(
@@ -29,16 +32,21 @@ class MainController(QObject):
         device_controller: DeviceController,
         analysis_controller: AnalysisController,
         settings: object,
+        *,
+        on_shutdown: Callable[[], None] | None = None,
     ) -> None:
         super().__init__()
         self._device = device_controller
         self._analysis = analysis_controller
         self._settings = settings
+        self._on_shutdown = on_shutdown
 
     def shutdown(self) -> None:
-        """退出前清理：取消进行中的请求、断开串口并停止控制器定时器。"""
+        """退出前清理：取消进行中的请求、断开串口、停止控制器定时器并释放通知线程。"""
 
         self._analysis.cancel()
         if self._device.state is DeviceConnectionState.CONNECTED:
             self._device.disconnect()
         self._device.shutdown()
+        if self._on_shutdown is not None:
+            self._on_shutdown()

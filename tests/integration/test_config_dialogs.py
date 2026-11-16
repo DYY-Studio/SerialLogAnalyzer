@@ -129,6 +129,119 @@ def test_settings_dialog_accept_persists_values(qtbot, store: QtSettingsStore) -
     assert store.get(SETTINGS_KEYS.EXPORT_DIR) == "D:/exports"
 
 
+def test_settings_dialog_smtp_validation_persistence_and_test_email(
+    qtbot, store: QtSettingsStore, monkeypatch
+) -> None:
+    """邮件告警 Tab 校验、密钥只进钥匙串、禁发不阻断常规页及测试发信内联反馈。"""
+
+    from PySide6.QtWidgets import QDoubleSpinBox, QTabWidget
+
+    from serial_log_analyzer.core.models.anomaly import AnomalySeverity
+    from serial_log_analyzer.core.models.notification import (
+        DeliveryReceipt,
+        SmtpSecurity,
+        load_smtp_config,
+    )
+
+    keyring = KeyringStoreAdapter(backend=FakeKeyringBackend())
+    tested_configs: list[object] = []
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _p, _t, text, *_a: warnings.append(text) or QMessageBox.StandardButton.Ok,
+    )
+
+    dialog = SettingsDialog(
+        store,
+        keyring=keyring,
+        on_test_smtp=tested_configs.append,
+        initial_tab=1,
+    )
+    qtbot.addWidget(dialog)
+    tabs = dialog.findChild(QTabWidget, "settings-tabs")
+    assert tabs.count() == 2
+    assert tabs.currentIndex() == 1
+
+    # 勾选启用但缺少必填字段时切至 SMTP 页拦截关闭
+    tabs.setCurrentIndex(0)
+    dialog.findChild(QCheckBox, "settings-smtp-enabled").setChecked(True)
+    dialog.accept()
+    assert dialog.result() == 0
+    assert tabs.currentIndex() == 1
+    assert warnings and "主机" in warnings[-1]
+
+    # 取消启用即使 SMTP 为空也不阻断常规设置保存
+    dialog.findChild(QCheckBox, "settings-smtp-enabled").setChecked(False)
+    dialog.findChild(QCheckBox, "settings-autoscroll").setChecked(False)
+    dialog.accept()
+    assert dialog.result() == int(QDialog.DialogCode.Accepted)
+    assert store.get_bool(SETTINGS_KEYS.AUTOSCROLL, True) is False
+
+    # 填写完整 SMTP + 钥匙串保存（不写入 SettingsStore）+ 测试发信回调
+    dialog2 = SettingsDialog(
+        store,
+        keyring=keyring,
+        on_test_smtp=tested_configs.append,
+        initial_tab=1,
+    )
+    qtbot.addWidget(dialog2)
+    dialog2.findChild(QCheckBox, "settings-smtp-enabled").setChecked(True)
+    dialog2.findChild(QLineEdit, "settings-smtp-host").setText("smtp.example.com")
+    dialog2.findChild(QSpinBox, "settings-smtp-port").setValue(465)
+    dialog2.findChild(QDoubleSpinBox, "settings-smtp-timeout").setValue(20.0)
+    sec_combo = dialog2.findChild(QComboBox, "settings-smtp-security")
+    sec_combo.setCurrentIndex(sec_combo.findData(SmtpSecurity.SSL))
+    dialog2.findChild(QLineEdit, "settings-smtp-username").setText("alerts@example.com")
+    dialog2.findChild(QLineEdit, "settings-smtp-sender").setText("alerts@example.com")
+    dialog2.findChild(QLineEdit, "settings-smtp-recipients").setText("a@x.com; b@x.com")
+    sev_combo = dialog2.findChild(QComboBox, "settings-smtp-min-severity")
+    sev_combo.setCurrentIndex(sev_combo.findData(AnomalySeverity.CRITICAL))
+    dialog2.findChild(QCheckBox, "settings-smtp-include-evidence").setChecked(True)
+
+    editor = dialog2.findChild(CredentialEditor, "settings-smtp-credential-editor")
+    editor.findChild(QLineEdit, "credential-secret").setText("smtp-app-secret")
+    editor.findChild(QPushButton, "credential-save").click()
+    assert keyring.read("smtp-alert") == "smtp-app-secret"
+
+    # 点「发送测试邮件」并验证内联成功/失败反馈
+    test_btn = dialog2.findChild(QPushButton, "settings-smtp-test")
+    status_lbl = dialog2.findChild(QLabel, "settings-smtp-test-status")
+    test_btn.click()
+    assert len(tested_configs) == 1
+    assert tested_configs[0].host == "smtp.example.com"
+    assert test_btn.isEnabled() is False
+
+    dialog2.show_smtp_test_result(
+        DeliveryReceipt(
+            receipt_id="R-0001",
+            alert_id="TEST",
+            cluster_id="-",
+            recipients=("a@x.com", "b@x.com"),
+            subject="测试",
+            created_at=100.0,
+            ok=True,
+        )
+    )
+    assert test_btn.isEnabled() is True
+    assert status_lbl.property("testState") == "ok"
+
+    dialog2.accept()
+    assert dialog2.result() == int(QDialog.DialogCode.Accepted)
+
+    loaded = load_smtp_config(store)
+    assert loaded.enabled is True
+    assert loaded.host == "smtp.example.com"
+    assert loaded.port == 465
+    assert loaded.security is SmtpSecurity.SSL
+    assert loaded.username == "alerts@example.com"
+    assert loaded.recipients == ("a@x.com", "b@x.com")
+    assert loaded.min_severity is AnomalySeverity.CRITICAL
+    assert loaded.include_evidence_lines is True
+    assert loaded.timeout_seconds == 20.0
+    assert store.get("alert/smtp_password") is None
+
+
 # --------------------------------------------------------------------------- 模型服务对话框
 
 

@@ -321,3 +321,146 @@ def test_bootstrap_analyze_cluster_resets_existing_chat_and_usage(
     assert cards[1] == "聚类根因结论"
 
     window.close()
+
+
+def test_bootstrap_smtp_end_to_end_delivery_failure_and_shutdown(
+    qapp, fake_settings, monkeypatch, qtbot
+) -> None:
+    """端到端闭环：本地 TCP SMTP 投递成功、TC-25 失败不阻塞日志采集、Preset 同步与停机清理。"""
+
+    import socketserver
+    import threading
+
+    from PySide6.QtWidgets import QDialog
+
+    from serial_log_analyzer.core.models.notification import SMTP_SETTINGS_KEYS
+    from serial_log_analyzer.ui.dialogs.settings_dialog import SettingsDialog
+
+    class _MiniSmtpHandler(socketserver.StreamRequestHandler):
+        def handle(self) -> None:
+            server = self.server
+            self.wfile.write(b"220 localhost ESMTP stub\r\n")
+            self.wfile.flush()
+            while True:
+                raw = self.rfile.readline()
+                if not raw:
+                    break
+                cmd = raw.decode("utf-8", errors="replace").strip().upper()
+                if cmd.startswith(("EHLO", "HELO")):
+                    self.wfile.write(b"250-localhost\r\n250 OK\r\n")
+                elif cmd.startswith(("MAIL FROM", "RCPT TO")):
+                    if server.reject_recipient:
+                        self.wfile.write(b"550 5.1.1 User unknown\r\n")
+                    else:
+                        self.wfile.write(b"250 2.1.0 OK\r\n")
+                elif cmd == "DATA":
+                    self.wfile.write(b"354 End data\r\n")
+                    self.wfile.flush()
+                    chunks: list[bytes] = []
+                    while True:
+                        line = self.rfile.readline()
+                        if not line or line.rstrip(b"\r\n") == b".":
+                            break
+                        chunks.append(line)
+                    server.messages.append(b"".join(chunks))
+                    self.wfile.write(b"250 2.0.0 queued\r\n")
+                elif cmd == "QUIT":
+                    self.wfile.write(b"221 Bye\r\n")
+                    self.wfile.flush()
+                    break
+                else:
+                    self.wfile.write(b"500 Unknown\r\n")
+                self.wfile.flush()
+
+    class _MiniSmtpServer(socketserver.ThreadingTCPServer):
+        allow_reuse_address = True
+        daemon_threads = True
+
+        def __init__(self) -> None:
+            self.reject_recipient = False
+            self.messages: list[bytes] = []
+            super().__init__(("127.0.0.1", 0), _MiniSmtpHandler)
+
+    server = _MiniSmtpServer()
+    srv_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    srv_thread.start()
+    try:
+        port = server.server_address[1]
+        fake_settings.values.update(
+            {
+                SMTP_SETTINGS_KEYS.ENABLED: True,
+                SMTP_SETTINGS_KEYS.HOST: "127.0.0.1",
+                SMTP_SETTINGS_KEYS.PORT: port,
+                SMTP_SETTINGS_KEYS.SECURITY: "none",
+                SMTP_SETTINGS_KEYS.USERNAME: "",
+                SMTP_SETTINGS_KEYS.SENDER: "alerts@local.test",
+                SMTP_SETTINGS_KEYS.RECIPIENTS: "ops@local.test",
+                SMTP_SETTINGS_KEYS.MIN_SEVERITY: "HIGH",
+                SMTP_SETTINGS_KEYS.INCLUDE_EVIDENCE: False,
+            }
+        )
+
+        from serial_log_analyzer.ui.controllers.device_controller import DeviceController
+
+        monkeypatch.setattr(
+            bootstrap,
+            "DeviceController",
+            lambda s: DeviceController(s, batch_interval_ms=20, command_timeout_ms=50),
+        )
+        context = bootstrap.build_application(["-platform", "offscreen"])
+        context.notification_service._cooldown_seconds = 0.0
+        window = bootstrap.build_window(context)
+
+        # 1) 验证 _open_settings 临时连接 test_email_finished 且关闭后在 finally 中解绑
+        seen_results: list[object] = []
+        orig_show = SettingsDialog.show_smtp_test_result
+
+        def _spy_show(self, receipt) -> None:
+            seen_results.append(receipt)
+            orig_show(self, receipt)
+
+        monkeypatch.setattr(SettingsDialog, "show_smtp_test_result", _spy_show)
+
+        def _fake_exec(self) -> int:
+            self.findChild(type(self._smtp_test_btn), "settings-smtp-test").click()
+            qtbot.waitUntil(lambda: len(seen_results) == 1, timeout=2000)
+            return int(QDialog.DialogCode.Accepted)
+
+        monkeypatch.setattr(SettingsDialog, "exec", _fake_exec)
+        bootstrap._open_settings(window, context, context.analysis_service, initial_tab=1)
+        assert len(seen_results) == 1 and seen_results[0].ok is True
+
+        # 验证关闭对话框后再次发测试事件不会回调到已销毁对话框的 show_smtp_test_result
+        context.notification_controller.test_email_finished.emit(seen_results[0])
+        assert len(seen_results) == 1
+
+        # 2) 实时触发严重异常 -> 异步投递到本地 TCP SMTP 服务器并记录成功回执
+        context.session._on_bytes(b"[E] [mem] malloc failed size=128\r\n")
+        qtbot.waitUntil(lambda: len(server.messages) == 2, timeout=2000)
+        assert window.anomaly_panel.receipts()[0].ok is True
+
+        # 3) 服务端拒绝投递（TC-25）：面板展示失败角标/横幅，同时日志采集仍保持通畅不阻塞
+        server.reject_recipient = True
+        context.session._on_bytes(
+            b"[E] [drv] i2c bus transfer failed addr=0x3c err=-5\r\n"
+            b"[I] [boot] still alive after smtp error\r\n"
+        )
+        qtbot.waitUntil(
+            lambda: window.log_count_label.text() == "日志 3 条"
+            and "(1)" in window.anomaly_panel.receipts_tab_btn.text(),
+            timeout=2000,
+        )
+        assert "1 失败" in window.anomaly_panel.receipt_summary_label.text()
+        assert window.anomaly_panel.receipt_alert_banner.isHidden() is False
+        assert "投递失败" in window.status_bar.currentMessage()
+
+        # 4) 切换 Preset 时通知服务关联的 pipeline 同步更新
+        bootstrap._switch_preset(window, context, "hi3861-timestamped")
+        assert context.notification_service._pipeline is context.pipeline
+
+        # 5) 关窗停机路径必须调用 smtp_notifier.shutdown()
+        window.close()
+        assert context.smtp_notifier._shutting_down is True
+    finally:
+        server.shutdown()
+        server.server_close()

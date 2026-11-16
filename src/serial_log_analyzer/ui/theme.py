@@ -416,12 +416,12 @@ QToolButton#status-alerts[alertState="danger"] {{
     font-weight: 600;
     font-size: 11px;
 }}
-#log-empty-title, #chat-empty-title, #anomaly-empty-title {{
+#log-empty-title, #chat-empty-title, #anomaly-empty-title, #receipt-empty-title {{
     color: {t.text_secondary};
     font-weight: 600;
     font-size: 13px;
 }}
-#log-empty-hint, #chat-empty-hint, #anomaly-empty-hint {{
+#log-empty-hint, #chat-empty-hint, #anomaly-empty-hint, #receipt-empty-hint {{
     color: {t.text_muted};
     font-size: 12px;
 }}
@@ -431,9 +431,22 @@ QFrame#anomaly-alert-banner {{
     border-radius: 4px;
 }}
 QFrame#anomaly-alert-banner[severity="critical"],
-QFrame#anomaly-alert-banner[severity="high"] {{
+QFrame#anomaly-alert-banner[severity="high"],
+QFrame#receipt-alert-banner {{
     background-color: {t.danger_bg};
-    border-color: {t.danger};
+    border: 1px solid {t.danger};
+    border-radius: 4px;
+}}
+QLabel#settings-smtp-test-status[testState="ok"] {{
+    color: {t.success};
+    font-weight: 600;
+}}
+QLabel#settings-smtp-test-status[testState="error"] {{
+    color: {t.danger};
+    font-weight: 600;
+}}
+QLabel#settings-smtp-test-status[testState="pending"] {{
+    color: {t.text_secondary};
 }}
 QFrame[role="section-divider"] {{
     background-color: {t.border_subtle};

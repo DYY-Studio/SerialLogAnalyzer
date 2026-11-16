@@ -108,7 +108,7 @@ def test_anomaly_controller_and_panel_lifecycle(qtbot) -> None:
     controller.error_occurred.connect(errors.append)
 
     assert panel.table.isVisible() is False
-    assert panel.view_stack.count() == 1
+    assert panel.view_stack.count() == 2
 
     u1 = pipeline.feed("[E] [mem] malloc failed size=64", 100.0)
     u2 = pipeline.feed("[W] [uart] rx overflow cnt=3", 101.0)
@@ -223,3 +223,105 @@ def test_analysis_controller_analyze_cluster_uses_aggregate_goal_and_fails_loudl
     )
     assert controller.analyze_cluster(empty_cluster) is False
     assert errors and "没有可用于分析的日志证据" in errors[-1]
+
+
+def test_anomaly_panel_receipts_page_failure_banner_and_sanitization(qtbot) -> None:
+    """邮件回执分页、失败红点角标、TC-25 非阻塞横幅脱敏与跳转查看。"""
+
+    from PySide6.QtCore import QSettings
+
+    from serial_log_analyzer.core.errors import NotificationError
+    from serial_log_analyzer.core.models.anomaly import AlertEvent
+    from serial_log_analyzer.core.models.notification import SmtpConfig, SmtpSecurity
+    from serial_log_analyzer.core.services.notification import SmtpNotificationService
+    from serial_log_analyzer.io.settings.qt_settings_store import QtSettingsStore
+    from serial_log_analyzer.ui.controllers.notification_controller import NotificationController
+
+    class _ModeNotifier:
+        def __init__(self) -> None:
+            self.fail_next = True
+
+        def send(self, config, password, subject, body, on_done, on_error):
+            if self.fail_next:
+                on_error(NotificationError(f"SMTP AUTH 失败: {password} invalid"))
+                return
+            on_done()
+
+    class _SecretCredentials:
+        def resolve(self, _ref) -> str:
+            return "TOP_SECRET_PASSWORD"
+
+    notifier = _ModeNotifier()
+    cfg = SmtpConfig(
+        enabled=True,
+        host="smtp.example.com",
+        port=587,
+        security=SmtpSecurity.STARTTLS,
+        username="ops@example.com",
+        sender="ops@example.com",
+        recipients=("oncall@example.com",),
+        min_severity=AnomalySeverity.HIGH,
+    )
+    service = SmtpNotificationService(
+        notifier,
+        _SecretCredentials(),
+        config=cfg,
+        cooldown_seconds=0.0,
+    )
+    store = QtSettingsStore(settings=QSettings())
+    notif_ctrl = NotificationController(service, store)
+
+    panel = AnomalyPanel()
+    qtbot.addWidget(panel)
+    notif_ctrl.receipts_changed.connect(panel.set_receipts)
+    notif_ctrl.delivery_failed.connect(panel.push_failed_receipt)
+
+    settings_opened: list[bool] = []
+    panel.smtp_settings_requested.connect(lambda: settings_opened.append(True))
+    panel.smtp_settings_btn.click()
+    assert settings_opened == [True]
+
+    # 触发一次失败告警通知（TC-25）：顶部横幅显示脱敏原因，且绝不含明文密码
+    alert1 = AlertEvent(
+        alert_id="A-0001",
+        cluster_id="C-0001",
+        rule_id="mem-oom",
+        severity=AnomalySeverity.CRITICAL,
+        category="内存故障",
+        title="malloc failed",
+        reason="60 秒内命中 1 次",
+        occurrence_count=1,
+        triggered_at=1700000000.0,
+        evidence_sequences=(1,),
+    )
+    notif_ctrl.notify_alert(alert1)
+    assert panel.receipts_tab_btn.text() == "邮件回执 (1)"
+    assert panel.receipt_alert_banner.isHidden() is False
+    banner_text = panel._receipt_banner_text.text()
+    assert "SMTP AUTH 失败" in banner_text
+    assert "TOP_SECRET_PASSWORD" not in banner_text
+
+    # 再发送一次成功通知
+    notifier.fail_next = False
+    alert2 = AlertEvent(
+        alert_id="A-0002",
+        cluster_id="C-0002",
+        rule_id="comm-link-failed",
+        severity=AnomalySeverity.HIGH,
+        category="通信异常",
+        title="link down",
+        reason="60 秒内命中 1 次",
+        occurrence_count=1,
+        triggered_at=1700000005.0,
+        evidence_sequences=(2,),
+    )
+    notif_ctrl.notify_alert(alert2)
+
+    # 一键查看回执：切到 Page 1，收起横幅，表格包含最新在前的 2 条记录且无明文密码
+    panel.banner_view_receipts_btn.click()
+    assert panel.view_stack.currentIndex() == 1
+    assert panel.receipt_alert_banner.isHidden() is True
+    assert panel.receipts_table.rowCount() == 2
+    assert panel.receipts_table.item(1, 4).text().find("TOP_SECRET_PASSWORD") == -1
+    assert "邮件告警投递失败" not in panel.receipts_table.item(0, 4).text()
+    assert panel.receipts_table.item(0, 4).text() == "投递成功"

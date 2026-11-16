@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -39,11 +40,13 @@ from serial_log_analyzer.core.models.anomaly import (
     ClusterStatus,
 )
 from serial_log_analyzer.core.models.device import DeviceConnectionState
+from serial_log_analyzer.core.models.notification import DeliveryReceipt, load_smtp_config
 from serial_log_analyzer.core.prompts.loader import PromptLibrary
 from serial_log_analyzer.core.services.analysis import AnalysisContextBuilder, AnalysisService
 from serial_log_analyzer.core.services.anomaly import AnomalyService
 from serial_log_analyzer.core.services.credential_resolver import CredentialResolver
 from serial_log_analyzer.core.services.device_session import DeviceSession
+from serial_log_analyzer.core.services.notification import SmtpNotificationService
 from serial_log_analyzer.core.services.report import build_diagnostic_report
 from serial_log_analyzer.diagnostics.app_logging import (
     configure_logging,
@@ -55,6 +58,7 @@ from serial_log_analyzer.diagnostics.app_logging import (
 from serial_log_analyzer.io.credentials.keyring_store import KeyringStoreAdapter
 from serial_log_analyzer.io.environment import DotEnvEnvironmentReader
 from serial_log_analyzer.io.llm.qt_http_transport import QtHttpTransport
+from serial_log_analyzer.io.notifications.qt_smtp_sender import QtSmtpNotifier
 from serial_log_analyzer.io.paths import default_export_dir, repo_root, user_config_dir
 from serial_log_analyzer.io.resources import CompositeResourceLoader
 from serial_log_analyzer.io.serial.qt_serial_transport import QtSerialTransport
@@ -64,6 +68,7 @@ from serial_log_analyzer.ui.controllers.analysis_controller import AnalysisContr
 from serial_log_analyzer.ui.controllers.anomaly_controller import AnomalyController
 from serial_log_analyzer.ui.controllers.device_controller import DeviceController, coalesce_updates
 from serial_log_analyzer.ui.controllers.main_controller import MainController
+from serial_log_analyzer.ui.controllers.notification_controller import NotificationController
 from serial_log_analyzer.ui.main_window import MainWindow
 from serial_log_analyzer.ui.models.log_table_model import LogTableModel
 from serial_log_analyzer.ui.theme import ThemeManager
@@ -114,6 +119,9 @@ class ApplicationContext:
         report_file_store: 诊断报告默认文件写出器。
         analysis_service: 当前窗口绑定的 LLM 分析服务（用于报告快照）。
         anomaly_controller: 当前窗口绑定的异常控制器。
+        smtp_notifier: 异步 SMTP 邮件发送器。
+        notification_service: SMTP 告警通知编排服务。
+        notification_controller: 当前窗口绑定的邮件通知控制器。
     """
 
     app: Any
@@ -137,6 +145,9 @@ class ApplicationContext:
     report_file_store: Any = None
     analysis_service: Any = None
     anomaly_controller: Any = None
+    smtp_notifier: Any = None
+    notification_service: Any = None
+    notification_controller: Any = None
 
 
 def build_application(argv: list[str] | None = None) -> ApplicationContext:
@@ -183,6 +194,13 @@ def build_application(argv: list[str] | None = None) -> ApplicationContext:
     profile = _current_profile(resources, settings)
     anomaly_service = AnomalyService(load_rule_set(resources, "default"))
     report_file_store = ReportFileStore(default_export_dir())
+    smtp_notifier = QtSmtpNotifier()
+    notification_service = SmtpNotificationService(
+        smtp_notifier,
+        credentials,
+        config=load_smtp_config(settings),
+        pipeline=pipeline,
+    )
     manager = QNetworkAccessManager()
     context = ApplicationContext(
         app=app,
@@ -203,6 +221,8 @@ def build_application(argv: list[str] | None = None) -> ApplicationContext:
         theme_manager=theme_manager,
         anomaly_service=anomaly_service,
         report_file_store=report_file_store,
+        smtp_notifier=smtp_notifier,
+        notification_service=notification_service,
     )
     # 让「视图 → 应用日志」一开始就有内容，也便于 issue 报告看清本次运行的配置。
     get_logger("bootstrap").info(
@@ -262,15 +282,33 @@ def build_window(context: ApplicationContext) -> MainWindow:
         context.anomaly_service = AnomalyService(load_rule_set(context.resources, "default"))
     if context.report_file_store is None:
         context.report_file_store = ReportFileStore(default_export_dir())
+    if context.smtp_notifier is None:
+        context.smtp_notifier = QtSmtpNotifier()
+    if context.notification_service is None:
+        context.notification_service = SmtpNotificationService(
+            context.smtp_notifier,
+            context.credentials,
+            config=load_smtp_config(settings),
+            pipeline=context.pipeline,
+        )
+    else:
+        context.notification_service.set_pipeline(context.pipeline)
 
     device = DeviceController(context.session)
     anomaly = AnomalyController(context.anomaly_service)
     context.anomaly_controller = anomaly
+    notification = NotificationController(context.notification_service, settings)
+    context.notification_controller = notification
     service = _analysis_service(context)
     context.analysis_service = service
     analysis = AnalysisController(service, context.context_builder)
     service.set_history_rounds(_history_rounds(settings))
-    main = MainController(device, analysis, settings)
+    main = MainController(
+        device,
+        analysis,
+        settings,
+        on_shutdown=lambda: context.smtp_notifier.shutdown(wait_ms=1000),
+    )
     window = MainWindow(
         log_view,
         panel,
@@ -325,14 +363,26 @@ def build_window(context: ApplicationContext) -> MainWindow:
         if analysis.analyze_cluster(cluster):
             window.focus_analysis_dock()
 
+    def _on_delivery_failed(receipt: DeliveryReceipt) -> None:
+        anomaly_panel.push_failed_receipt(receipt)
+        window.show_status(f"邮件告警投递失败：{receipt.error or '未知错误'}")
+
     anomaly.clusters_changed.connect(_on_clusters_changed)
     anomaly.alert_triggered.connect(_on_alert_triggered)
+    anomaly.alert_triggered.connect(notification.notify_alert)
     anomaly.error_occurred.connect(window.show_status)
+    notification.receipts_changed.connect(anomaly_panel.set_receipts)
+    notification.delivery_failed.connect(_on_delivery_failed)
+    notification.error_occurred.connect(window.show_status)
     anomaly_panel.locate_requested.connect(_locate_sequence)
     anomaly_panel.analyze_requested.connect(_analyze_cluster)
     anomaly_panel.acknowledge_requested.connect(anomaly.acknowledge)
     anomaly_panel.resolve_requested.connect(anomaly.resolve)
+    anomaly_panel.smtp_settings_requested.connect(
+        lambda: _open_settings(window, context, service, initial_tab=1)
+    )
     _on_clusters_changed(anomaly.clusters())
+    anomaly_panel.set_receipts(notification.receipts())
 
     def _on_command_timeout(command: str) -> None:
         command_panel.append_timeout(command)
@@ -399,13 +449,39 @@ def _analysis_service(context: ApplicationContext) -> AnalysisService:
     )
 
 
-def _open_settings(window: MainWindow, context: ApplicationContext, service: AnalysisService) -> None:
-    """打开设置对话框；关闭后把可即时生效的项立即应用到界面与流水线。"""
+def _open_settings(
+    window: MainWindow,
+    context: ApplicationContext,
+    service: AnalysisService,
+    *,
+    initial_tab: int = 0,
+) -> None:
+    """打开设置对话框；临时接线 SMTP 测试回调并在保存后刷新配置与流水线。"""
+
+    from PySide6.QtWidgets import QDialog
 
     from serial_log_analyzer.ui.dialogs.settings_dialog import SettingsDialog
 
-    SettingsDialog(context.settings, window).exec()
-    _apply_settings(window, context, service)
+    notif = context.notification_controller
+    dialog = SettingsDialog(
+        context.settings,
+        window,
+        keyring=context.keyring,
+        on_test_smtp=(notif.send_test_email if notif is not None else None),
+        initial_tab=initial_tab,
+    )
+    if notif is not None:
+        notif.test_email_finished.connect(dialog.show_smtp_test_result)
+    try:
+        accepted = dialog.exec() == int(QDialog.DialogCode.Accepted)
+    finally:
+        if notif is not None:
+            with suppress(RuntimeError, TypeError):
+                notif.test_email_finished.disconnect(dialog.show_smtp_test_result)
+    if accepted:
+        _apply_settings(window, context, service)
+        if notif is not None:
+            notif.reload_config()
 
 
 def _open_serial_settings(window: MainWindow, toolbar: SerialToolBar) -> None:
@@ -733,6 +809,10 @@ def _switch_preset(window: MainWindow, context: ApplicationContext, preset_id: s
     context.preset = preset
     context.pipeline = pipeline
     context.context_builder.set_pipeline(pipeline)
+    if context.notification_controller is not None:
+        context.notification_controller.set_pipeline(pipeline)
+    elif context.notification_service is not None:
+        context.notification_service.set_pipeline(pipeline)
     window.log_view.clear()
     if context.anomaly_controller is not None:
         context.anomaly_controller.reset()
