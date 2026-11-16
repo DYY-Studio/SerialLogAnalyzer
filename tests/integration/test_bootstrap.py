@@ -100,6 +100,8 @@ def test_switch_profile_and_preset_stay_in_sync(qapp, fake_settings) -> None:
 
 
 def test_build_window_wires_the_ui(qapp, fake_settings) -> None:
+    from PySide6.QtWidgets import QToolButton
+
     context = bootstrap.build_application(["-platform", "offscreen"])
 
     window = bootstrap.build_window(context)
@@ -109,8 +111,78 @@ def test_build_window_wires_the_ui(qapp, fake_settings) -> None:
     assert window.serial_toolbar.baud_combo.currentText() == "115200"
     assert window.analysis_dock.widget() is window.analysis_panel
     assert window.command_dock.widget() is window.command_panel
+    for name in (
+        "cmd-chip-ping",
+        "cmd-chip-version",
+        "cmd-chip-help",
+        "cmd-chip-test",
+        "cmd-chip-test-wifi",
+        "cmd-chip-test-all",
+    ):
+        assert window.command_panel.findChild(QToolButton, name) is not None
     # 设备控制器已把回调安装到会话上
     assert context.session._handlers is not None
+
+
+def test_switch_preset_updates_command_panel_and_hides_empty(
+    qapp, fake_settings, tmp_path
+) -> None:
+    """切换 Preset 时 CommandPanel 同步更新快捷按钮，无 commands 时隐藏快捷栏。"""
+
+    from PySide6.QtWidgets import QToolButton
+
+    from serial_log_analyzer.io.resources import CompositeResourceLoader
+
+    presets_dir = tmp_path / "presets" / "logs"
+    presets_dir.mkdir(parents=True)
+    (presets_dir / "custom-at.yaml").write_text(
+        "schema_version: 1\n"
+        "preset_id: custom-at\n"
+        "display_name: Custom AT\n"
+        "line:\n"
+        r"  pattern: '^\[(?P<level>[A-Za-z]+)\]\s*\[(?P<module>[^\]]+)\]\s*(?P<message>.*)$'"
+        "\n"
+        "  level_map:\n"
+        "    I: INFO\n"
+        "commands:\n"
+        "  - label: AT\n"
+        "    command: AT\n"
+        "  - label: SET\n"
+        "    command: 'AT+SET '\n"
+        "    mode: prefill\n",
+        encoding="utf-8",
+    )
+    (presets_dir / "custom-empty.yaml").write_text(
+        "schema_version: 1\n"
+        "preset_id: custom-empty\n"
+        "display_name: Custom Empty\n"
+        "line:\n"
+        r"  pattern: '^\[(?P<level>[A-Za-z]+)\]\s*\[(?P<module>[^\]]+)\]\s*(?P<message>.*)$'"
+        "\n"
+        "  level_map:\n"
+        "    I: INFO\n",
+        encoding="utf-8",
+    )
+
+    context = bootstrap.build_application(["-platform", "offscreen"])
+    context.resources = CompositeResourceLoader([tmp_path, *context.resources.roots])
+    window = bootstrap.build_window(context)
+
+    bootstrap._switch_preset(window, context, "custom-at")
+    assert window.command_panel.findChild(QToolButton, "cmd-chip-ping") is None
+    assert window.command_panel.findChild(QToolButton, "cmd-chip-at") is not None
+    assert window.command_panel.findChild(QToolButton, "cmd-chip-set") is not None
+    assert window.command_panel._quick_label.isHidden() is False
+
+    bootstrap._switch_preset(window, context, "custom-empty")
+    assert window.command_panel.findChild(QToolButton, "cmd-chip-at") is None
+    assert window.command_panel._quick_label.isHidden() is True
+    assert window.command_panel._chips_container.isHidden() is True
+
+    bootstrap._switch_preset(window, context, "hi3861-timestamped")
+    assert window.command_panel.findChild(QToolButton, "cmd-chip-test-all") is not None
+    assert window.command_panel._quick_label.isHidden() is False
+    window.close()
 
 
 def test_build_window_wires_status_bar_and_command_timeout(qapp, fake_settings, monkeypatch, qtbot) -> None:

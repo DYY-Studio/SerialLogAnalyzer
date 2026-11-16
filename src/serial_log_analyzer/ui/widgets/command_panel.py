@@ -7,6 +7,9 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
+
 from PySide6.QtCore import QSize, Signal
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
@@ -21,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from serial_log_analyzer.core.device.command import CommandReply
+from serial_log_analyzer.core.logs.preset import PresetCommand, PresetCommandMode
 from serial_log_analyzer.ui.icons import render_icon
 from serial_log_analyzer.ui.theme import ThemeTokens, default_tokens, monospace_font
 
@@ -28,7 +32,46 @@ __all__ = ["CommandPanel"]
 
 # 回复历史保留的行数上限，超过后由 Qt 丢弃最旧的行，避免长时间运行一直涨内存。
 _MAX_LINES = 1000
-_QUICK_COMMANDS = ("PING", "VERSION", "HELP")
+_MAX_PLACEHOLDER_ITEMS = 6
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+_DEFAULT_COMMANDS: tuple[PresetCommand, ...] = (
+    PresetCommand(label="PING", command="PING"),
+    PresetCommand(label="VERSION", command="VERSION"),
+    PresetCommand(label="HELP", command="HELP"),
+    PresetCommand(
+        label="TEST …",
+        command="TEST ",
+        mode=PresetCommandMode.PREFILL,
+        tooltip="预填 TEST 前缀（需补充场景名，如 wifi / uart / gpio / memory）",
+    ),
+)
+
+
+def _unique_chip_object_name(command: PresetCommand, used: set[str]) -> str:
+    """为快捷命令按钮生成稳定且不重名的 ``objectName``。"""
+
+    slug = _SLUG_RE.sub("-", command.label.lower()).strip("-")
+    if not slug:
+        slug = _SLUG_RE.sub("-", command.command.lower()).strip("-") or "item"
+    base = f"cmd-chip-{slug}"
+    name = base
+    index = 2
+    while name in used:
+        name = f"{base}-{index}"
+        index += 1
+    used.add(name)
+    return name
+
+
+def _format_placeholder(commands: tuple[PresetCommand, ...]) -> str:
+    """按当前快捷命令集合生成输入框提示文案。"""
+
+    if not commands:
+        return "输入板端命令"
+    labels = [item.label for item in commands[:_MAX_PLACEHOLDER_ITEMS]]
+    if len(commands) > _MAX_PLACEHOLDER_ITEMS:
+        labels.append("…")
+    return "输入板端命令：" + " / ".join(labels)
 
 
 class CommandPanel(QWidget):
@@ -36,6 +79,7 @@ class CommandPanel(QWidget):
 
     参数:
         parent: 可选父对象。
+        commands: 可选 Preset 快捷命令列表；``None`` 时使用内置默认列表，传空序列时隐藏快捷栏。
         tokens: 可选主题 Token；缺省按当前应用探测。
 
     信号:
@@ -48,12 +92,53 @@ class CommandPanel(QWidget):
         self,
         parent: QWidget | None = None,
         *,
+        commands: Sequence[PresetCommand] | None = None,
         tokens: ThemeTokens | None = None,
     ) -> None:
         super().__init__(parent)
         self._tokens = tokens if tokens is not None else default_tokens()
+        self._chip_buttons: list[QToolButton] = []
         self._build()
+        self.set_commands(_DEFAULT_COMMANDS if commands is None else commands)
         self.set_theme_tokens(self._tokens)
+
+    def set_commands(self, commands: Sequence[PresetCommand]) -> None:
+        """替换快捷命令按钮列表与输入提示（传入空序列时隐藏快捷栏）。
+
+        参数:
+            commands: 目标快捷命令序列。
+        """
+
+        for button in self._chip_buttons:
+            self._chips_layout.removeWidget(button)
+            button.setParent(None)
+            button.deleteLater()
+        self._chip_buttons.clear()
+
+        items = tuple(commands)
+        has_commands = bool(items)
+        self._quick_label.setVisible(has_commands)
+        self._chips_container.setVisible(has_commands)
+
+        used_names: set[str] = set()
+        for cmd in items:
+            chip = QToolButton(self._chips_container)
+            chip.setObjectName(_unique_chip_object_name(cmd, used_names))
+            chip.setText(cmd.label)
+            chip.setProperty("chip", "cmd")
+            if cmd.tooltip:
+                chip.setToolTip(cmd.tooltip)
+            if cmd.mode is PresetCommandMode.PREFILL:
+                chip.clicked.connect(
+                    lambda _checked=False, text=cmd.command: self._prefill_command(text)
+                )
+            else:
+                chip.clicked.connect(
+                    lambda _checked=False, text=cmd.command: self._submit_command(text)
+                )
+            self._chips_layout.addWidget(chip)
+            self._chip_buttons.append(chip)
+        self.command_edit.setPlaceholderText(_format_placeholder(items))
 
     def set_theme_tokens(self, tokens: ThemeTokens) -> None:
         """按主题 Token 刷新按钮图标与命令输出区的历史语义着色。"""
@@ -88,23 +173,16 @@ class CommandPanel(QWidget):
 
         chip_row = QHBoxLayout()
         chip_row.setSpacing(4)
-        quick_label = QLabel("快捷:")
-        quick_label.setProperty("role", "muted-caption")
-        chip_row.addWidget(quick_label)
-        for cmd in _QUICK_COMMANDS:
-            chip = QToolButton()
-            chip.setObjectName(f"cmd-chip-{cmd.lower()}")
-            chip.setText(cmd)
-            chip.setProperty("chip", "cmd")
-            chip.clicked.connect(lambda _checked=False, c=cmd: self._submit_command(c))
-            chip_row.addWidget(chip)
-        test_chip = QToolButton()
-        test_chip.setObjectName("cmd-chip-test")
-        test_chip.setText("TEST …")
-        test_chip.setToolTip("预填 TEST 前缀（需补充场景名，如 wifi / uart / gpio / memory）")
-        test_chip.setProperty("chip", "cmd")
-        test_chip.clicked.connect(self._prefill_test)
-        chip_row.addWidget(test_chip)
+        self._quick_label = QLabel("快捷:")
+        self._quick_label.setObjectName("cmd-quick-label")
+        self._quick_label.setProperty("role", "muted-caption")
+        chip_row.addWidget(self._quick_label)
+        self._chips_container = QWidget()
+        self._chips_container.setObjectName("cmd-chips-container")
+        self._chips_layout = QHBoxLayout(self._chips_container)
+        self._chips_layout.setContentsMargins(0, 0, 0, 0)
+        self._chips_layout.setSpacing(4)
+        chip_row.addWidget(self._chips_container)
         chip_row.addStretch()
         self.clear_btn = QToolButton()
         self.clear_btn.setObjectName("cmd-clear")
@@ -118,7 +196,6 @@ class CommandPanel(QWidget):
         row.setSpacing(6)
         self.command_edit = QLineEdit()
         self.command_edit.setFont(monospace_font())
-        self.command_edit.setPlaceholderText("输入板端命令：PING / VERSION / HELP / TEST <name>")
         self.command_edit.returnPressed.connect(self._on_send)
         row.addWidget(self.command_edit, stretch=1)
         self.send_btn = QPushButton("发送")
@@ -140,10 +217,10 @@ class CommandPanel(QWidget):
 
         self.reply_view.clear()
 
-    def _prefill_test(self) -> None:
-        self.command_edit.setText("TEST ")
+    def _prefill_command(self, text: str) -> None:
+        self.command_edit.setText(text)
         self.command_edit.setFocus()
-        self.command_edit.setCursorPosition(len("TEST "))
+        self.command_edit.setCursorPosition(len(text))
 
     def _on_send(self) -> None:
         command = self.command_edit.text().strip()

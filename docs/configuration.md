@@ -51,6 +51,7 @@
 | `line.continuation_pattern` | 否 | 命中则并入上一条日志（多行栈堆） |
 | `line.fields` | 否 | 从 `message` 抽取结构化字段（`name: 正则`，需含命名组 `value`） |
 | `fallback.enabled` / `fallback.level` | 否 | 未匹配行是否保留，默认 `true` / `UNKNOWN` |
+| `commands` | 否 | 命令面板快捷命令列表（每项 `{label, command, mode?, tooltip?}`，`mode` 为 `send` 或 `prefill`） |
 
 级别标识未在 `level_map` 中命中时**不报错**，运行期记为 `UNKNOWN`。
 
@@ -70,6 +71,15 @@ line:
 fallback:
   enabled: true
   level: UNKNOWN
+commands:
+  - label: "PING"
+    command: "PING"
+    mode: send
+    tooltip: "检查设备命令通道连通性"
+  - label: "TEST …"
+    command: "TEST "
+    mode: prefill
+    tooltip: "预填 TEST 前缀"
 ```
 
 ## 4. LLM Adapter 与 Profile

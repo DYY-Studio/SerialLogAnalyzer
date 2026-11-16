@@ -272,6 +272,7 @@ def build_window(context: ApplicationContext) -> MainWindow:
     panel.set_goals(context.prompts.goals())
     toolbar = SerialToolBar()
     command_panel = CommandPanel()
+    command_panel.set_commands(context.preset.commands)
     app_log_panel = AppLogPanel(
         read_lines=lambda: read_tail(200),
         log_path=str(current_log_file() or log_file_path()),
@@ -817,6 +818,7 @@ def _switch_preset(window: MainWindow, context: ApplicationContext, preset_id: s
     if context.anomaly_controller is not None:
         context.anomaly_controller.reset()
     window.anomaly_panel.clear_alert_banner()
+    window.command_panel.set_commands(preset.commands)
     window.set_preset_name(preset_id)
     context.settings.set(SETTINGS_KEYS.CURRENT_PRESET, preset_id)
     window.show_status(f"已切换到 Preset {preset_id}，日志已清空")

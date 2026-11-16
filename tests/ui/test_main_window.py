@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QDockWidget
 
 from serial_log_analyzer.core.device.command import CommandReply
 from serial_log_analyzer.core.logs.pipeline import PipelineUpdate
+from serial_log_analyzer.core.logs.preset import PresetCommand, PresetCommandMode
 from serial_log_analyzer.core.models.analysis import (
     AnalysisMessage,
     AnalysisRequest,
@@ -352,6 +353,50 @@ def test_command_panel_echoes_command_and_appends_reply(qtbot) -> None:
 
     panel.findChild(QToolButton, "cmd-clear").click()
     assert panel.reply_view.toPlainText() == ""
+
+
+def test_command_panel_set_commands_replaces_chips_and_hides_when_empty(qtbot) -> None:
+    """运行期替换快捷命令即时更新按钮、重名 slug、提示文案，空列表时隐藏快捷栏。"""
+
+    from PySide6.QtWidgets import QToolButton
+
+    panel = CommandPanel()
+    qtbot.addWidget(panel)
+    sent: list[str] = []
+    panel.command_submitted.connect(sent.append)
+
+    assert panel.findChild(QToolButton, "cmd-chip-ping") is not None
+
+    panel.set_commands(
+        [
+            PresetCommand(label="AT", command="AT", tooltip="检查模组响应"),
+            PresetCommand(label="TEST …", command="TEST ", mode=PresetCommandMode.PREFILL),
+            PresetCommand(label="TEST!", command="TEST all"),
+        ]
+    )
+
+    assert panel.findChild(QToolButton, "cmd-chip-ping") is None
+    at_btn = panel.findChild(QToolButton, "cmd-chip-at")
+    test_prefill_btn = panel.findChild(QToolButton, "cmd-chip-test")
+    test_dup_btn = panel.findChild(QToolButton, "cmd-chip-test-2")
+    assert at_btn is not None and at_btn.toolTip() == "检查模组响应"
+    assert test_prefill_btn is not None and test_dup_btn is not None
+    assert "AT" in panel.command_edit.placeholderText()
+    assert panel._quick_label.isHidden() is False
+    assert panel._chips_container.isHidden() is False
+
+    at_btn.click()
+    test_prefill_btn.click()
+    assert panel.command_edit.text() == "TEST "
+    test_dup_btn.click()
+    assert sent == ["AT", "TEST all"]
+
+    panel.set_commands([])
+    assert panel.findChild(QToolButton, "cmd-chip-at") is None
+    assert panel._quick_label.isHidden() is True
+    assert panel._chips_container.isHidden() is True
+    assert panel.clear_btn.isHidden() is False
+    assert panel.command_edit.placeholderText() == "输入板端命令"
 
 
 def test_panel_profile_combo_emits_change(qtbot) -> None:

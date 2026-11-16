@@ -39,3 +39,29 @@ line:
 fallback:
   enabled: true
   level: UNKNOWN
+
+commands:
+  - label: "PING"
+    command: "PING"
+    mode: send
+    tooltip: "发送 PING 检查设备命令通道连通性"
+  - label: "VERSION"
+    command: "VERSION"
+    mode: send
+    tooltip: "查询固件版本号与芯片型号"
+  - label: "HELP"
+    command: "HELP"
+    mode: send
+    tooltip: "列出设备支持的全部命令"
+  - label: "TEST …"
+    command: "TEST "
+    mode: prefill
+    tooltip: "预填 TEST 前缀（可补充 wifi / uart / gpio / memory / sensor / watchdog / all）"
+  - label: "TEST wifi"
+    command: "TEST wifi"
+    mode: send
+    tooltip: "触发 Wi-Fi 扫描与重连失败自测日志"
+  - label: "TEST all"
+    command: "TEST all"
+    mode: send
+    tooltip: "依次触发全部模块自测日志序列"
