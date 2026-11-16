@@ -9,9 +9,10 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from serial_log_analyzer.core.errors import ConfigError
@@ -24,6 +25,8 @@ from serial_log_analyzer.core.models.anomaly import (
     AnomalySeverity,
     AnomalyUpdate,
     ClusterStatus,
+    FieldThreshold,
+    ThresholdOp,
 )
 from serial_log_analyzer.core.models.logs import LogEntry, LogLevel
 
@@ -33,6 +36,20 @@ _HEX_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
 _NUM_RE = re.compile(r"(?<![A-Za-z0-9_])-?\d+(?:\.\d+)?(?![A-Za-z0-9_])")
 _SPACE_RE = re.compile(r"\s+")
 _MAX_NORMALIZED_LEN = 160
+_THRESHOLD_ABS_TOL = 1e-9
+
+_THRESHOLD_COMPARATORS: dict[ThresholdOp, Callable[[float, float], bool]] = {
+    ThresholdOp.GT: lambda actual, target: actual > target,
+    ThresholdOp.GTE: lambda actual, target: actual >= target,
+    ThresholdOp.LT: lambda actual, target: actual < target,
+    ThresholdOp.LTE: lambda actual, target: actual <= target,
+    ThresholdOp.EQ: lambda actual, target: math.isclose(
+        actual, target, rel_tol=0.0, abs_tol=_THRESHOLD_ABS_TOL
+    ),
+    ThresholdOp.NE: lambda actual, target: not math.isclose(
+        actual, target, rel_tol=0.0, abs_tol=_THRESHOLD_ABS_TOL
+    ),
+}
 
 # 显式严重度序：UNKNOWN 不得被当作 >= ERROR，仅在 min_level=VERBOSE 或 UNKNOWN 时参与匹配。
 _KNOWN_LEVEL_RANK: dict[LogLevel, int] = {
@@ -74,6 +91,42 @@ def _level_passes(entry_level: LogLevel, min_level: LogLevel) -> bool:
     if entry_rank is None:
         return False
     return entry_rank >= _KNOWN_LEVEL_RANK[min_level]
+
+
+def _parse_extra_float(raw: object) -> float | None:
+    """将 ``LogEntry.extra`` 字段值安全解析为有限实数；拒绝布尔、缺失及 NaN/Inf。"""
+
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        num = float(raw)
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        try:
+            num = float(text)
+        except ValueError:
+            return None
+    else:
+        return None
+    return num if math.isfinite(num) else None
+
+
+def _thresholds_pass(extra: Mapping[str, object], thresholds: tuple[FieldThreshold, ...]) -> bool:
+    """校验 ``LogEntry.extra`` 是否同时满足规则声明的全部数值阈值条件。"""
+
+    if not extra:
+        return False
+    for threshold in thresholds:
+        if isinstance(threshold.value, bool) or not math.isfinite(threshold.value):
+            return False
+        actual = _parse_extra_float(extra.get(threshold.field))
+        if actual is None:
+            return False
+        if not _THRESHOLD_COMPARATORS[threshold.op](actual, threshold.value):
+            return False
+    return True
 
 
 @dataclass
@@ -228,10 +281,20 @@ class AnomalyService:
                 continue
             if rule.modules and (not entry.module or module_lower not in rule.modules):
                 continue
-            keyword_hit = any(kw in msg_lower for kw in rule.keywords)
-            pattern_hit = rule.pattern is not None and rule.pattern.search(entry.message) is not None
-            if keyword_hit or pattern_hit:
-                return rule
+            has_text = bool(rule.keywords or rule.pattern is not None)
+            has_thresholds = bool(rule.thresholds)
+            if not has_text and not has_thresholds:
+                continue
+            if has_text:
+                keyword_hit = any(kw in msg_lower for kw in rule.keywords)
+                pattern_hit = (
+                    rule.pattern is not None and rule.pattern.search(entry.message) is not None
+                )
+                if not (keyword_hit or pattern_hit):
+                    continue
+            if has_thresholds and not _thresholds_pass(entry.extra, rule.thresholds):
+                continue
+            return rule
         return None
 
     def _ingest_hit(self, entry: LogEntry, rule: AnomalyRule) -> AlertEvent | None:

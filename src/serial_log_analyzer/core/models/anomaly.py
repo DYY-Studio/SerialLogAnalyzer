@@ -16,6 +16,8 @@ __all__ = [
     "AnomalySeverity",
     "AnomalyUpdate",
     "ClusterStatus",
+    "FieldThreshold",
+    "ThresholdOp",
 ]
 
 
@@ -56,6 +58,32 @@ class ClusterStatus(Enum):
     RESOLVED = "resolved"
 
 
+class ThresholdOp(Enum):
+    """结构化字段数值阈值比较操作符。"""
+
+    GT = "gt"
+    GTE = "gte"
+    LT = "lt"
+    LTE = "lte"
+    EQ = "eq"
+    NE = "ne"
+
+
+@dataclass(frozen=True)
+class FieldThreshold:
+    """单条 ``LogEntry.extra`` 数值字段阈值条件。
+
+    参数:
+        field: ``LogEntry.extra`` 中的结构化字段名。
+        op: 比较操作符（``gt`` / ``gte`` / ``lt`` / ``lte`` / ``eq`` / ``ne``）。
+        value: 有限实数比较阈值。
+    """
+
+    field: str
+    op: ThresholdOp
+    value: float
+
+
 @dataclass(frozen=True)
 class AnomalyRule:
     """单条声明式异常筛选与触发规则。
@@ -73,6 +101,7 @@ class AnomalyRule:
         window_seconds: 聚合与计数滑动时间窗口（秒）。
         cooldown_seconds: 同一簇两次告警之间的最小冷却间隔（秒）。
         enabled: 是否启用。
+        thresholds: ``LogEntry.extra`` 数值阈值列表（全部条件均须满足）。
     """
 
     rule_id: str
@@ -87,6 +116,7 @@ class AnomalyRule:
     window_seconds: float = 60.0
     cooldown_seconds: float = 60.0
     enabled: bool = True
+    thresholds: tuple[FieldThreshold, ...] = ()
 
 
 @dataclass(frozen=True)

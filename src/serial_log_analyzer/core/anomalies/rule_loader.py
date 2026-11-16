@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,8 @@ from serial_log_analyzer.core.models.anomaly import (
     AnomalyRule,
     AnomalyRuleSet,
     AnomalySeverity,
+    FieldThreshold,
+    ThresholdOp,
 )
 from serial_log_analyzer.core.models.logs import LogLevel
 from serial_log_analyzer.core.ports import ResourceLoader
@@ -40,11 +43,13 @@ _RULE_FIELDS = {
     "min_level",
     "keywords",
     "pattern",
+    "thresholds",
     "immediate_alert",
     "min_occurrences",
     "window_seconds",
     "cooldown_seconds",
 }
+_THRESHOLD_FIELDS = {"field", "op", "value"}
 
 _DEFAULT_WINDOW_SECONDS = 60.0
 _DEFAULT_COOLDOWN_SECONDS = 60.0
@@ -202,9 +207,12 @@ def _parse_rule(
     min_level = _parse_log_level(raw.get("min_level", "WARN"), f"{loc}.min_level")
     keywords = _parse_str_tuple(raw.get("keywords"), f"{loc}.keywords", lower=True)
     pattern = _parse_pattern(raw.get("pattern"), f"{loc}.pattern")
+    thresholds = _parse_thresholds(raw.get("thresholds"), f"{loc}.thresholds")
 
-    if not keywords and pattern is None:
-        raise ConfigError(f"规则 {rule_id} 必须至少声明非空 keywords 或 pattern（{source_path}）")
+    if not keywords and pattern is None and not thresholds:
+        raise ConfigError(
+            f"规则 {rule_id} 必须至少声明非空 keywords、pattern 或 thresholds 之一（{source_path}）"
+        )
 
     immediate_alert = _parse_bool(raw.get("immediate_alert", False), f"{loc}.immediate_alert")
     min_occurrences = _parse_positive_int(
@@ -230,6 +238,7 @@ def _parse_rule(
         window_seconds=window,
         cooldown_seconds=cooldown,
         enabled=enabled,
+        thresholds=thresholds,
     )
 
 
@@ -307,3 +316,45 @@ def _parse_pattern(raw: Any, field: str) -> re.Pattern[str] | None:
         return re.compile(raw, re.IGNORECASE)
     except re.error as exc:
         raise ConfigError(f"{field} 正则非法：{exc}") from exc
+
+
+def _parse_finite_number(value: Any, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ConfigError(f"{field} 必须是有限实数（禁止 bool/NaN/Inf）")
+    return float(value)
+
+
+def _parse_thresholds(raw: Any, field: str) -> tuple[FieldThreshold, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ConfigError(f"{field} 必须是阈值对象列表")
+    items: list[FieldThreshold] = []
+    for index, item in enumerate(raw):
+        item_loc = f"{field}[{index}]"
+        if not isinstance(item, dict):
+            raise ConfigError(f"{item_loc} 必须是对象")
+        unknown = set(item) - _THRESHOLD_FIELDS
+        if unknown:
+            raise ConfigError(f"{item_loc} 出现未知字段：{sorted(unknown)}")
+        missing = _THRESHOLD_FIELDS - set(item)
+        if missing:
+            raise ConfigError(f"{item_loc} 缺少必填字段：{sorted(missing)}")
+
+        raw_name = item["field"]
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            raise ConfigError(f"{item_loc}.field 必须是非空字符串")
+
+        raw_op = item["op"]
+        if not isinstance(raw_op, str):
+            raise ConfigError(f"{item_loc}.op 必须是字符串")
+        try:
+            op = ThresholdOp(raw_op)
+        except ValueError as exc:
+            raise ConfigError(
+                f"{item_loc}.op 未知（支持 gt/gte/lt/lte/eq/ne）：{raw_op}"
+            ) from exc
+
+        value = _parse_finite_number(item["value"], f"{item_loc}.value")
+        items.append(FieldThreshold(field=raw_name.strip(), op=op, value=value))
+    return tuple(items)

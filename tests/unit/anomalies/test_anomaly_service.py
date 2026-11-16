@@ -11,11 +11,15 @@ from serial_log_analyzer.core.anomalies.rule_loader import load_rule_set
 from serial_log_analyzer.core.device import command as device_command
 from serial_log_analyzer.core.errors import ConfigError
 from serial_log_analyzer.core.logs.line_framer import LineFramer
+from serial_log_analyzer.core.logs.parser import LogParser
 from serial_log_analyzer.core.logs.pipeline import LogPipeline, PipelineUpdate
+from serial_log_analyzer.core.logs.preset_loader import load_preset
 from serial_log_analyzer.core.models.anomaly import (
     AnomalyRule,
     AnomalySeverity,
     ClusterStatus,
+    FieldThreshold,
+    ThresholdOp,
 )
 from serial_log_analyzer.core.models.logs import LogEntry, LogLevel
 from serial_log_analyzer.core.services.anomaly import AnomalyService, normalize_message
@@ -30,6 +34,7 @@ def _entry(
     message: str,
     *,
     module: str | None = "app",
+    extra: dict[str, str] | None = None,
 ) -> LogEntry:
     return LogEntry(
         sequence=seq,
@@ -38,6 +43,7 @@ def _entry(
         message=message,
         raw=f"[{level.name}] [{module or '-'}] {message}",
         module=module,
+        extra=dict(extra) if extra is not None else {},
     )
 
 
@@ -290,3 +296,210 @@ def test_long_run_eviction_and_pipeline_capacity_sync(parser) -> None:
 
     service.reset()
     assert service.clusters() == []
+
+
+@pytest.mark.parametrize(
+    ("op", "threshold", "matching_raw", "non_matching_raw"),
+    [
+        (ThresholdOp.GT, 80.0, "80.01", "80.0"),
+        (ThresholdOp.GTE, 80.0, "80.0", "79.99"),
+        (ThresholdOp.LT, -10.0, "-10.5", "-10.0"),
+        (ThresholdOp.LTE, -10.0, "-10.0", "-9.99"),
+        (ThresholdOp.EQ, 0.3, "0.30000000000000004", "0.3001"),
+        (ThresholdOp.NE, 0.3, "0.31", "0.30000000000000004"),
+    ],
+)
+def test_threshold_operators_and_float_tolerance(
+    op: ThresholdOp,
+    threshold: float,
+    matching_raw: str,
+    non_matching_raw: str,
+) -> None:
+    rule = AnomalyRule(
+        rule_id=f"op-{op.value}",
+        category="阈值告警",
+        severity=AnomalySeverity.HIGH,
+        min_level=LogLevel.INFO,
+        thresholds=(FieldThreshold("val", op, threshold),),
+    )
+    service = AnomalyService([rule])
+
+    res = service.apply_update(
+        PipelineUpdate(
+            added=(
+                _entry(0, 1.0, LogLevel.INFO, "sample a", extra={"val": non_matching_raw}),
+                _entry(1, 2.0, LogLevel.INFO, "sample b", extra={"val": matching_raw}),
+            )
+        )
+    )
+
+    assert len(res.clusters) == 1
+    assert res.clusters[0].evidence_sequences == (1,)
+
+
+def test_threshold_skips_missing_non_numeric_and_non_finite_extra() -> None:
+    rule = AnomalyRule(
+        rule_id="temp-check",
+        category="传感器过温",
+        severity=AnomalySeverity.HIGH,
+        min_level=LogLevel.INFO,
+        thresholds=(FieldThreshold("temp", ThresholdOp.NE, 0.0),),
+    )
+    service = AnomalyService([rule])
+
+    entries = (
+        _entry(0, 1.0, LogLevel.INFO, "missing", extra={}),
+        _entry(1, 2.0, LogLevel.INFO, "blank", extra={"temp": "   "}),
+        _entry(2, 3.0, LogLevel.INFO, "text", extra={"temp": "N/A"}),
+        _entry(3, 4.0, LogLevel.INFO, "nan", extra={"temp": "nan"}),
+        _entry(4, 5.0, LogLevel.INFO, "inf", extra={"temp": "inf"}),
+        _entry(5, 6.0, LogLevel.INFO, "ninf", extra={"temp": "-inf"}),
+        LogEntry(
+            sequence=6,
+            received_at=7.0,
+            level=LogLevel.INFO,
+            message="bool value",
+            raw="[I] [app] bool value",
+            module="app",
+            extra={"temp": True},  # type: ignore[dict-item]
+        ),
+        _entry(7, 8.0, LogLevel.INFO, "valid", extra={"temp": " 85.5 "}),
+    )
+    res = service.apply_update(PipelineUpdate(added=entries))
+
+    assert len(res.clusters) == 1
+    assert res.clusters[0].evidence_sequences == (7,)
+
+
+def test_threshold_and_logic_and_text_combination() -> None:
+    rules = [
+        # 防御性边界：无任何条件的规则不得误匹配全部日志
+        AnomalyRule(
+            rule_id="empty-rule",
+            category="空规则",
+            severity=AnomalySeverity.LOW,
+            min_level=LogLevel.VERBOSE,
+        ),
+        AnomalyRule(
+            rule_id="text-and-range",
+            category="传感器复合告警",
+            severity=AnomalySeverity.CRITICAL,
+            keywords=("overheat",),
+            modules=("sensor",),
+            min_level=LogLevel.WARN,
+            thresholds=(
+                FieldThreshold("temp", ThresholdOp.GTE, 80.0),
+                FieldThreshold("voltage", ThresholdOp.LT, 3.3),
+            ),
+            immediate_alert=True,
+        ),
+    ]
+    service = AnomalyService(rules)
+
+    res = service.apply_update(
+        PipelineUpdate(
+            added=(
+                _entry(0, 1.0, LogLevel.WARN, "overheat", module="sensor", extra={"temp": "85"}),
+                _entry(
+                    1,
+                    2.0,
+                    LogLevel.WARN,
+                    "overheat",
+                    module="sensor",
+                    extra={"temp": "85", "voltage": "3.3"},
+                ),
+                _entry(
+                    2,
+                    3.0,
+                    LogLevel.WARN,
+                    "normal reading",
+                    module="sensor",
+                    extra={"temp": "85", "voltage": "3.1"},
+                ),
+                _entry(
+                    3,
+                    4.0,
+                    LogLevel.WARN,
+                    "overheat",
+                    module="other",
+                    extra={"temp": "85", "voltage": "3.1"},
+                ),
+                _entry(
+                    4,
+                    5.0,
+                    LogLevel.WARN,
+                    "OVERHEAT alarm",
+                    module="sensor",
+                    extra={"temp": "85.2", "voltage": "3.15"},
+                ),
+            )
+        )
+    )
+
+    assert len(res.clusters) == 1
+    assert res.clusters[0].rule_id == "text-and-range"
+    assert res.clusters[0].evidence_sequences == (4,)
+    assert len(res.new_alerts) == 1
+
+
+def test_threshold_entries_cluster_via_normalize_message(make_loader) -> None:
+    preset_yaml = """
+schema_version: 1
+preset_id: sensor-test
+display_name: Sensor Test
+line:
+  pattern: '^\\[(?P<level>[A-Z]+)\\] \\[(?P<module>[^\\]]+)\\] (?P<message>.*)$'
+  level_map:
+    I: INFO
+    W: WARN
+    E: ERROR
+  fields:
+    temp: 'temp=([\\d.-]+)'
+"""
+    rules_yaml = """
+schema_version: 1
+rule_set_id: sensor-rules
+display_name: 传感器规则
+rules:
+  - rule_id: temp-high
+    category: 传感器过温
+    severity: HIGH
+    min_level: INFO
+    modules: ["sensor"]
+    thresholds:
+      - field: temp
+        op: gt
+        value: 80.0
+    min_occurrences: 3
+    window_seconds: 60
+    cooldown_seconds: 60
+"""
+    loader = make_loader(
+        {
+            "presets/logs/sensor-test.yaml": preset_yaml,
+            "rules/anomalies/sensor-rules.yaml": rules_yaml,
+        }
+    )
+    preset = load_preset(loader, "sensor-test")
+    rule_set = load_rule_set(loader, "sensor-rules")
+    pipeline = LogPipeline(LogParser(preset))
+    service = AnomalyService(rule_set)
+
+    lines = [
+        ("[I] [sensor] temp=25.0 state=hot", 1.0),
+        ("[W] [sensor] temp=81.2 state=hot", 2.0),
+        ("[W] [sensor] temp=85.6 state=hot", 3.0),
+        ("[W] [sensor] temp=90.0 state=hot", 4.0),
+    ]
+    alerts = []
+    for text, ts in lines:
+        res = service.apply_update(pipeline.feed(text, ts))
+        alerts.extend(res.new_alerts)
+
+    clusters = service.clusters()
+    assert len(clusters) == 1
+    assert clusters[0].rule_id == "temp-high"
+    assert clusters[0].normalized_message == "temp=<NUM> state=hot"
+    assert clusters[0].occurrence_count == 3
+    assert clusters[0].evidence_sequences == (1, 2, 3)
+    assert len(alerts) == 1
