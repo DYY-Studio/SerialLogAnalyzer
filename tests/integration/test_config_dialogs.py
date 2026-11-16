@@ -242,6 +242,71 @@ def test_settings_dialog_smtp_validation_persistence_and_test_email(
     assert store.get("alert/smtp_password") is None
 
 
+def test_settings_dialog_blank_env_target_respects_disabled_and_relay_modes(
+    qtbot, store: QtSettingsStore, monkeypatch
+) -> None:
+    """凭据选环境变量且目标留空时，停用保存与免密中继放行，启用且填用户名时拦截。"""
+
+    from PySide6.QtWidgets import QTabWidget
+
+    keyring = KeyringStoreAdapter(backend=FakeKeyringBackend())
+    tested_configs: list[object] = []
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _p, _t, text, *_a: warnings.append(text) or QMessageBox.StandardButton.Ok,
+    )
+
+    def _new_dialog(initial_tab: int = 1) -> SettingsDialog:
+        dlg = SettingsDialog(
+            store,
+            keyring=keyring,
+            on_test_smtp=tested_configs.append,
+            initial_tab=initial_tab,
+        )
+        qtbot.addWidget(dlg)
+        editor = dlg.findChild(CredentialEditor, "settings-smtp-credential-editor")
+        src_combo = editor.findChild(QComboBox, "credential-source")
+        src_combo.setCurrentIndex(src_combo.findData(CredentialKind.ENVIRONMENT))
+        editor.findChild(QLineEdit, "credential-target").clear()
+        return dlg
+
+    # 1) 停用 SMTP 时切到 Tab 0 保存常规设置，即使 SMTP 环境变量名为空也不阻断
+    dlg_disabled = _new_dialog(initial_tab=0)
+    dlg_disabled.findChild(QCheckBox, "settings-smtp-enabled").setChecked(False)
+    dlg_disabled.findChild(QCheckBox, "settings-autoscroll").setChecked(False)
+    dlg_disabled.accept()
+    assert dlg_disabled.result() == int(QDialog.DialogCode.Accepted)
+    assert store.get_bool(SETTINGS_KEYS.AUTOSCROLL, True) is False
+
+    # 2) 免密中继（username 留空）时，测试邮件与启用保存均不受空环境变量名阻断
+    dlg_relay = _new_dialog(initial_tab=1)
+    dlg_relay.findChild(QCheckBox, "settings-smtp-enabled").setChecked(True)
+    dlg_relay.findChild(QLineEdit, "settings-smtp-host").setText("relay.local")
+    dlg_relay.findChild(QLineEdit, "settings-smtp-sender").setText("noreply@local.test")
+    dlg_relay.findChild(QLineEdit, "settings-smtp-recipients").setText("ops@local.test")
+    dlg_relay.findChild(QLineEdit, "settings-smtp-username").clear()
+    dlg_relay.findChild(QPushButton, "settings-smtp-test").click()
+    assert len(tested_configs) == 1
+    assert tested_configs[0].username == ""
+    dlg_relay.accept()
+    assert dlg_relay.result() == int(QDialog.DialogCode.Accepted)
+
+    # 3) 启用 SMTP 且填写用户名时，环境变量名留空必须切至 Tab 1 提示错误并拦截关闭
+    dlg_auth = _new_dialog(initial_tab=0)
+    tabs = dlg_auth.findChild(QTabWidget, "settings-tabs")
+    dlg_auth.findChild(QCheckBox, "settings-smtp-enabled").setChecked(True)
+    dlg_auth.findChild(QLineEdit, "settings-smtp-host").setText("smtp.example.com")
+    dlg_auth.findChild(QLineEdit, "settings-smtp-sender").setText("alerts@example.com")
+    dlg_auth.findChild(QLineEdit, "settings-smtp-recipients").setText("ops@example.com")
+    dlg_auth.findChild(QLineEdit, "settings-smtp-username").setText("alerts@example.com")
+    dlg_auth.accept()
+    assert dlg_auth.result() == 0
+    assert tabs.currentIndex() == 1
+    assert warnings and "环境变量" in warnings[-1]
+
+
 # --------------------------------------------------------------------------- 模型服务对话框
 
 

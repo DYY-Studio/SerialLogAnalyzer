@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from serial_log_analyzer.core.errors import AppError
+from serial_log_analyzer.core.errors import AppError, ConfigError
 from serial_log_analyzer.core.models.anomaly import AnomalySeverity
 from serial_log_analyzer.core.models.notification import (
     DEFAULT_SMTP_KEYRING_NAME,
@@ -427,18 +427,27 @@ class SettingsDialog(QDialog):
         if self._smtp_credential_editor is not None:
             self._smtp_credential_editor.load(smtp_cfg.credential, DEFAULT_SMTP_KEYRING_NAME)
 
-    def _build_smtp_config(self) -> SmtpConfig:
-        credential = (
-            self._smtp_credential_editor.credential()
-            if self._smtp_credential_editor is not None
-            else self._loaded_credential
+    def _build_smtp_config(self, *, require_credentials: bool | None = None) -> SmtpConfig:
+        enabled = self._smtp_enabled.isChecked()
+        username = self._smtp_username.text().strip()
+        need_credentials = (
+            (enabled and bool(username)) if require_credentials is None else require_credentials
         )
+        if self._smtp_credential_editor is not None:
+            try:
+                credential = self._smtp_credential_editor.credential()
+            except ConfigError:
+                if need_credentials:
+                    raise
+                credential = self._loaded_credential
+        else:
+            credential = self._loaded_credential
         return SmtpConfig(
-            enabled=self._smtp_enabled.isChecked(),
+            enabled=enabled,
             host=self._smtp_host.text().strip(),
             port=self._smtp_port.value(),
             security=self._smtp_security.currentData() or SmtpSecurity.STARTTLS,
-            username=self._smtp_username.text().strip(),
+            username=username,
             sender=self._smtp_sender.text().strip(),
             recipients=parse_recipients(self._smtp_recipients.text()),
             credential=credential,
@@ -451,7 +460,9 @@ class SettingsDialog(QDialog):
         if self._on_test_smtp is None:
             return
         try:
-            cfg = self._build_smtp_config()
+            cfg = self._build_smtp_config(
+                require_credentials=bool(self._smtp_username.text().strip())
+            )
             validate_smtp_config(cfg, require_enabled_fields=True)
         except AppError as exc:
             self._set_test_status("error", str(exc))
