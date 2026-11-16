@@ -381,6 +381,31 @@ QLabel[role="status-pill"] {{
     padding: 1px 8px;
     font-size: 11px;
 }}
+QToolButton#status-alerts {{
+    background-color: {t.bg_elevated};
+    color: {t.text_secondary};
+    border: 1px solid {t.border_subtle};
+    border-radius: 4px;
+    padding: 1px 8px;
+    font-size: 11px;
+}}
+QToolButton#status-alerts:hover {{
+    background-color: {t.bg_subtle};
+    color: {t.text_primary};
+    border-color: {t.border_strong};
+}}
+QToolButton#status-alerts[alertState="warning"] {{
+    background-color: {t.warning_bg};
+    color: {t.warning};
+    border-color: {t.warning};
+    font-weight: 600;
+}}
+QToolButton#status-alerts[alertState="danger"] {{
+    background-color: {t.danger_bg};
+    color: {t.danger};
+    border-color: {t.danger};
+    font-weight: 600;
+}}
 #dock-title-bar {{
     background-color: {t.bg_elevated};
     border-top: 1px solid {t.border_subtle};
@@ -391,14 +416,24 @@ QLabel[role="status-pill"] {{
     font-weight: 600;
     font-size: 11px;
 }}
-#log-empty-title, #chat-empty-title {{
+#log-empty-title, #chat-empty-title, #anomaly-empty-title {{
     color: {t.text_secondary};
     font-weight: 600;
     font-size: 13px;
 }}
-#log-empty-hint, #chat-empty-hint {{
+#log-empty-hint, #chat-empty-hint, #anomaly-empty-hint {{
     color: {t.text_muted};
     font-size: 12px;
+}}
+QFrame#anomaly-alert-banner {{
+    background-color: {t.warning_bg};
+    border: 1px solid {t.warning};
+    border-radius: 4px;
+}}
+QFrame#anomaly-alert-banner[severity="critical"],
+QFrame#anomaly-alert-banner[severity="high"] {{
+    background-color: {t.danger_bg};
+    border-color: {t.danger};
 }}
 QFrame[role="section-divider"] {{
     background-color: {t.border_subtle};
@@ -550,6 +585,11 @@ QPushButton[variant="ghost"] {{
 QPushButton[variant="ghost"]:hover {{
     background-color: {t.bg_subtle};
     color: {t.text_primary};
+}}
+QPushButton[compact="row"] {{
+    padding: 1px 6px;
+    min-height: 18px;
+    font-size: 11px;
 }}
 QToolButton {{
     background-color: transparent;

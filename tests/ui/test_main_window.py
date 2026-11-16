@@ -250,6 +250,7 @@ def test_menu_actions_emit_intent_signals(qtbot) -> None:
     window = _build_window(qtbot)
     seen: list[str] = []
     window.export_requested.connect(lambda: seen.append("export"))
+    window.export_report_requested.connect(lambda: seen.append("export_report"))
     window.import_requested.connect(lambda: seen.append("import"))
     window.clear_requested.connect(lambda: seen.append("clear"))
     window.settings_requested.connect(lambda: seen.append("settings"))
@@ -259,27 +260,46 @@ def test_menu_actions_emit_intent_signals(qtbot) -> None:
     assert [menu.text() for menu in menus] == ["文件", "配置", "视图"]
     file_actions = [item for item in menus[0].menu().actions() if not item.isSeparator()]
     config_actions = menus[1].menu().actions()
-    assert [action.text() for action in file_actions] == ["导出日志…", "导入日志…", "清空日志"]
+    assert [action.text() for action in file_actions] == [
+        "导出日志…",
+        "导出诊断报告…",
+        "导入日志…",
+        "清空日志",
+    ]
     assert [action.text() for action in config_actions] == [
         "设置…",
         "模型服务…",
         "切换日志 Preset…",
     ]
     # 「视图」里必须能开关停靠面板，否则关掉就找不回来
-    assert [action.text() for action in menus[2].menu().actions()] == ["LLM 分析", "命令", "应用日志"]
+    assert [action.text() for action in menus[2].menu().actions()] == [
+        "LLM 分析",
+        "命令",
+        "应用日志",
+        "异常与告警",
+    ]
     assert window.analysis_dock.widget() is window.analysis_panel
     assert window.command_dock.widget() is window.command_panel
     assert window.app_log_dock.widget() is window.app_log_panel
-    # 命令与应用日志共用底部区域，按标签页切换
-    assert window.tabifiedDockWidgets(window.command_dock) == [window.app_log_dock]
-    for dock in (window.analysis_dock, window.command_dock, window.app_log_dock):
+    assert window.anomaly_dock.widget() is window.anomaly_panel
+    # 命令、应用日志与异常面板共用底部区域，按标签页切换
+    assert set(window.tabifiedDockWidgets(window.command_dock)) == {
+        window.app_log_dock,
+        window.anomaly_dock,
+    }
+    for dock in (
+        window.analysis_dock,
+        window.command_dock,
+        window.app_log_dock,
+        window.anomaly_dock,
+    ):
         assert dock.features() & QDockWidget.DockWidgetFeature.DockWidgetFloatable
         assert dock.features() & QDockWidget.DockWidgetFeature.DockWidgetMovable
 
     for action in (*file_actions, *config_actions[:2]):
         action.trigger()
 
-    assert seen == ["export", "import", "clear", "settings", "provider"]
+    assert seen == ["export", "export_report", "import", "clear", "settings", "provider"]
 
 
 def test_toolbar_emits_config(qtbot) -> None:
@@ -495,12 +515,13 @@ def test_log_view_empty_state_clear_filters_and_delegate_render(qtbot) -> None:
 
 
 def test_main_window_segmented_status_and_dock_title_bars(qtbot) -> None:
-    """主窗口 Dock 紧凑标题栏、状态栏分段胶囊与连接/Preset 状态同步。"""
+    """主窗口 Dock 紧凑标题栏、状态栏分段胶囊与连接/Preset/告警状态同步。"""
 
     window = _build_window(qtbot)
     assert window.analysis_dock.titleBarWidget() is not None
     assert window.command_dock.titleBarWidget() is not None
     assert window.app_log_dock.titleBarWidget() is not None
+    assert window.anomaly_dock.titleBarWidget() is not None
 
     window.set_connection_status(True, "COM3 · 115200")
     window.set_preset_name("hi3861-timestamped")
@@ -509,5 +530,55 @@ def test_main_window_segmented_status_and_dock_title_bars(qtbot) -> None:
     assert "hi3861-timestamped" in window.preset_status_label.text()
     assert window.log_count_label.text() == "日志 42 条"
 
+    assert window.alert_badge_btn.text() == "告警 0"
+    assert window.alert_badge_btn.property("alertState") == "idle"
+    window.set_alert_count(2, severe=True)
+    assert window.alert_badge_btn.text() == "告警 2"
+    assert window.alert_badge_btn.property("alertState") == "danger"
+    window.anomaly_dock.hide()
+    window.alert_badge_btn.click()
+    assert window.anomaly_dock.isHidden() is False
+
     window.set_connection_status(False)
     assert "未连接" in window.connection_status_label.text()
+
+
+def test_log_view_scroll_to_sequence_handles_visible_filtered_and_missing(qtbot) -> None:
+    """证据跳转精确选中目标序号；被过滤隐藏或不存在时返回 False 且不误选。"""
+
+    view = LogView(LogTableModel())
+    qtbot.addWidget(view)
+    view.append_update(
+        PipelineUpdate(
+            added=(
+                _entry(0, LogLevel.INFO, message="boot ok"),
+                _entry(1, LogLevel.ERROR, message="malloc failed"),
+                _entry(2, LogLevel.INFO, message="heartbeat"),
+            )
+        )
+    )
+
+    assert view.scroll_to_sequence(1) is True
+    assert [entry.sequence for entry in view.selected_log_entries()] == [1]
+
+    # 隐藏 ERROR 级别后再次跳转到序号 1，必须明确返回 False 并保持无法定位语义
+    view._level_boxes[LogLevel.ERROR].setChecked(False)
+    assert view.scroll_to_sequence(1) is False
+    assert view.scroll_to_sequence(99) is False
+
+    # 恢复显示后再次跳转正常选中
+    view._level_boxes[LogLevel.ERROR].setChecked(True)
+    assert view.scroll_to_sequence(1) is True
+    assert [entry.sequence for entry in view.selected_log_entries()] == [1]
+
+
+def test_analysis_panel_export_report_button_emits_signal(qtbot) -> None:
+    """分析面板头部「报告」按钮发出 export_report_requested 信号。"""
+
+    panel = AnalysisPanel()
+    qtbot.addWidget(panel)
+    fired: list[bool] = []
+    panel.export_report_requested.connect(lambda: fired.append(True))
+
+    panel.export_report_btn.click()
+    assert fired == [True]

@@ -10,13 +10,14 @@ from dataclasses import replace
 
 from PySide6.QtCore import QObject, Signal
 
-from serial_log_analyzer.core.errors import AppError
+from serial_log_analyzer.core.errors import AppError, ConfigError
 from serial_log_analyzer.core.models.analysis import (
     AnalysisRequest,
     AnalysisResult,
     AnalysisState,
     ContextSelector,
 )
+from serial_log_analyzer.core.models.anomaly import AnomalyCluster
 from serial_log_analyzer.core.services.analysis import (
     AnalysisContextBuilder,
     AnalysisService,
@@ -47,10 +48,11 @@ class AnalysisController(QObject):
         self._builder = context_builder
         self._selected: list[int] = []
         self._usage: object = None
+        self._streaming = False
         service.set_handlers(
             AnalysisServiceHandlers(
                 on_result=self._on_result,
-                on_state=self.state_changed.emit,
+                on_state=self._on_state,
                 on_error=self._on_error,
             )
         )
@@ -68,6 +70,44 @@ class AnalysisController(QObject):
             self._service.ask(replace(request, context=context))
         except AppError as exc:
             self.error_occurred.emit(str(exc))
+
+    def analyze_cluster(self, cluster: AnomalyCluster) -> bool:
+        """围绕指定异常簇的证据序号构造上下文并发起聚合根因分析。
+
+        参数:
+            cluster: 待诊断的只读异常簇快照。
+
+        返回:
+            分析成功发起时返回 ``True``；因正忙、证据缺失或凭据错误失败时发出
+            :attr:`error_occurred` 并返回 ``False``。
+        """
+
+        try:
+            if self._streaming:
+                raise ConfigError("已有进行中的分析，请先取消或等待完成")
+            sequences = list(cluster.evidence_sequences)
+            if not sequences:
+                raise ConfigError("该异常簇没有可用于分析的日志证据")
+            context = self._builder.build(
+                ContextSelector.SELECTED_WITH_NEIGHBORS,
+                selected_sequences=sequences,
+            )
+            if self._service.conversation:
+                self.reset()
+            request = AnalysisRequest(
+                goal_id="aggregate-anomalies",
+                user_input=(
+                    f"请重点分析异常簇 {cluster.cluster_id}（规则 {cluster.rule_id}，"
+                    f"类别 {cluster.category}，严重度 {cluster.severity.name}，"
+                    f"累计 {cluster.occurrence_count} 次）：{cluster.normalized_message}"
+                ),
+                context=context,
+            )
+            self._service.ask(request)
+        except AppError as exc:
+            self.error_occurred.emit(str(exc))
+            return False
+        return True
 
     def follow_up(self, text: str) -> None:
         """在当前会话中追问。"""
@@ -89,6 +129,10 @@ class AnalysisController(QObject):
         self._usage = None
         self.result_updated.emit(AnalysisResult())
         self.state_changed.emit(AnalysisState.IDLE)
+
+    def _on_state(self, state: AnalysisState) -> None:
+        self._streaming = state is AnalysisState.STREAMING
+        self.state_changed.emit(state)
 
     def _on_error(self, error: Exception) -> None:
         self.error_occurred.emit(str(error))

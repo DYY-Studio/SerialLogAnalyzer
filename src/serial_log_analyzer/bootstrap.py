@@ -24,6 +24,7 @@ from typing import Any
 from PySide6.QtNetwork import QNetworkAccessManager
 from PySide6.QtWidgets import QApplication
 
+from serial_log_analyzer.core.anomalies.rule_loader import load_rule_set
 from serial_log_analyzer.core.errors import AppError, ConfigError
 from serial_log_analyzer.core.llm.adapter_loader import load_adapter
 from serial_log_analyzer.core.llm.profile_loader import load_profile, load_profiles
@@ -31,11 +32,19 @@ from serial_log_analyzer.core.logs.parser import LogParser
 from serial_log_analyzer.core.logs.pipeline import LogPipeline, PipelineUpdate
 from serial_log_analyzer.core.logs.preset_loader import load_preset, load_presets
 from serial_log_analyzer.core.models.analysis import AnalysisState
+from serial_log_analyzer.core.models.anomaly import (
+    AlertEvent,
+    AnomalyCluster,
+    AnomalySeverity,
+    ClusterStatus,
+)
 from serial_log_analyzer.core.models.device import DeviceConnectionState
 from serial_log_analyzer.core.prompts.loader import PromptLibrary
 from serial_log_analyzer.core.services.analysis import AnalysisContextBuilder, AnalysisService
+from serial_log_analyzer.core.services.anomaly import AnomalyService
 from serial_log_analyzer.core.services.credential_resolver import CredentialResolver
 from serial_log_analyzer.core.services.device_session import DeviceSession
+from serial_log_analyzer.core.services.report import build_diagnostic_report
 from serial_log_analyzer.diagnostics.app_logging import (
     configure_logging,
     current_log_file,
@@ -50,19 +59,29 @@ from serial_log_analyzer.io.paths import default_export_dir, repo_root, user_con
 from serial_log_analyzer.io.resources import CompositeResourceLoader
 from serial_log_analyzer.io.serial.qt_serial_transport import QtSerialTransport
 from serial_log_analyzer.io.settings.qt_settings_store import SETTINGS_KEYS, QtSettingsStore
+from serial_log_analyzer.io.storage.report_file_store import ReportFileStore, ReportFormat
 from serial_log_analyzer.ui.controllers.analysis_controller import AnalysisController
+from serial_log_analyzer.ui.controllers.anomaly_controller import AnomalyController
 from serial_log_analyzer.ui.controllers.device_controller import DeviceController, coalesce_updates
 from serial_log_analyzer.ui.controllers.main_controller import MainController
 from serial_log_analyzer.ui.main_window import MainWindow
 from serial_log_analyzer.ui.models.log_table_model import LogTableModel
 from serial_log_analyzer.ui.theme import ThemeManager
 from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
+from serial_log_analyzer.ui.widgets.anomaly_panel import AnomalyPanel
 from serial_log_analyzer.ui.widgets.app_log_panel import AppLogPanel
 from serial_log_analyzer.ui.widgets.command_panel import CommandPanel
 from serial_log_analyzer.ui.widgets.log_view import LogView
 from serial_log_analyzer.ui.widgets.serial_toolbar import SerialToolBar
 
-__all__ = ["ApplicationContext", "build_application", "export_logs", "import_logs", "main"]
+__all__ = [
+    "ApplicationContext",
+    "build_application",
+    "export_logs",
+    "export_report",
+    "import_logs",
+    "main",
+]
 
 _APP_NAME = "SerialLogAnalyzer"
 _APP_VERSION = "0.1.0"
@@ -91,6 +110,10 @@ class ApplicationContext:
         context_builder: 分析上下文构造器。
         theme_manager: 界面主题管理器。
         window: 主窗口，由 :func:`build_window` 填充。
+        anomaly_service: 异常规则检测与聚合服务。
+        report_file_store: 诊断报告默认文件写出器。
+        analysis_service: 当前窗口绑定的 LLM 分析服务（用于报告快照）。
+        anomaly_controller: 当前窗口绑定的异常控制器。
     """
 
     app: Any
@@ -110,6 +133,10 @@ class ApplicationContext:
     context_builder: Any
     theme_manager: Any = None
     window: Any = None
+    anomaly_service: Any = None
+    report_file_store: Any = None
+    analysis_service: Any = None
+    anomaly_controller: Any = None
 
 
 def build_application(argv: list[str] | None = None) -> ApplicationContext:
@@ -154,6 +181,8 @@ def build_application(argv: list[str] | None = None) -> ApplicationContext:
     session = DeviceSession(serial_transport, pipeline)
 
     profile = _current_profile(resources, settings)
+    anomaly_service = AnomalyService(load_rule_set(resources, "default"))
+    report_file_store = ReportFileStore(default_export_dir())
     manager = QNetworkAccessManager()
     context = ApplicationContext(
         app=app,
@@ -172,6 +201,8 @@ def build_application(argv: list[str] | None = None) -> ApplicationContext:
         prompts=PromptLibrary(resources),
         context_builder=AnalysisContextBuilder(pipeline),
         theme_manager=theme_manager,
+        anomaly_service=anomaly_service,
+        report_file_store=report_file_store,
     )
     # 让「视图 → 应用日志」一开始就有内容，也便于 issue 报告看清本次运行的配置。
     get_logger("bootstrap").info(
@@ -225,9 +256,18 @@ def build_window(context: ApplicationContext) -> MainWindow:
         read_lines=lambda: read_tail(200),
         log_path=str(current_log_file() or log_file_path()),
     )
+    anomaly_panel = AnomalyPanel()
+
+    if context.anomaly_service is None:
+        context.anomaly_service = AnomalyService(load_rule_set(context.resources, "default"))
+    if context.report_file_store is None:
+        context.report_file_store = ReportFileStore(default_export_dir())
 
     device = DeviceController(context.session)
+    anomaly = AnomalyController(context.anomaly_service)
+    context.anomaly_controller = anomaly
     service = _analysis_service(context)
+    context.analysis_service = service
     analysis = AnalysisController(service, context.context_builder)
     service.set_history_rounds(_history_rounds(settings))
     main = MainController(device, analysis, settings)
@@ -237,6 +277,7 @@ def build_window(context: ApplicationContext) -> MainWindow:
         toolbar,
         command_panel,
         app_log_panel,
+        anomaly_panel,
         on_close=lambda: _shutdown(main, window, settings),
     )
     panel.set_profiles(load_profiles(context.resources), context.profile.profile_id)
@@ -255,8 +296,43 @@ def build_window(context: ApplicationContext) -> MainWindow:
 
     device.connection_changed.connect(_on_connection)
     device.log_update.connect(log_view.append_update)
+    device.log_update.connect(anomaly.ingest_update)
     device.error_occurred.connect(window.show_status)
     device.command_reply.connect(command_panel.append_reply)
+
+    def _on_clusters_changed(clusters: list[AnomalyCluster]) -> None:
+        anomaly_panel.set_clusters(clusters)
+        active = [item for item in clusters if item.status is ClusterStatus.ACTIVE]
+        severe = any(item.severity >= AnomalySeverity.HIGH for item in active)
+        window.set_alert_count(len(active), severe=severe)
+
+    def _on_alert_triggered(alert: AlertEvent) -> None:
+        anomaly_panel.push_alert(alert)
+        window.show_status(f"新告警 [{alert.severity.name}] {alert.title}：{alert.reason}")
+
+    def _locate_sequence(sequence: int) -> None:
+        if window.log_view.scroll_to_sequence(sequence):
+            window.show_status(f"已定位到日志序号 #{sequence}")
+            return
+        if table_model.row_for_sequence(sequence) is not None:
+            window.show_status(
+                f"日志序号 #{sequence} 当前被过滤条件隐藏，请调整过滤条件后重试"
+            )
+            return
+        window.show_status(f"日志序号 #{sequence} 已超出日志缓冲容量并被淘汰，无法定位")
+
+    def _analyze_cluster(cluster: AnomalyCluster) -> None:
+        if analysis.analyze_cluster(cluster):
+            window.focus_analysis_dock()
+
+    anomaly.clusters_changed.connect(_on_clusters_changed)
+    anomaly.alert_triggered.connect(_on_alert_triggered)
+    anomaly.error_occurred.connect(window.show_status)
+    anomaly_panel.locate_requested.connect(_locate_sequence)
+    anomaly_panel.analyze_requested.connect(_analyze_cluster)
+    anomaly_panel.acknowledge_requested.connect(anomaly.acknowledge)
+    anomaly_panel.resolve_requested.connect(anomaly.resolve)
+    _on_clusters_changed(anomaly.clusters())
 
     def _on_command_timeout(command: str) -> None:
         command_panel.append_timeout(command)
@@ -280,7 +356,11 @@ def build_window(context: ApplicationContext) -> MainWindow:
 
     window.clear_requested.connect(device.clear_logs)
     window.clear_requested.connect(log_view.clear)
+    window.clear_requested.connect(anomaly.reset)
+    window.clear_requested.connect(anomaly_panel.clear_alert_banner)
     window.export_requested.connect(lambda: _export_logs(window, context))
+    window.export_report_requested.connect(lambda: _export_report(window, context))
+    panel.export_report_requested.connect(lambda: _export_report(window, context))
     window.import_requested.connect(lambda: _import_logs(window, context))
     toolbar.serial_settings_requested.connect(lambda: _open_serial_settings(window, toolbar))
     toolbar.error_occurred.connect(window.show_status)
@@ -351,7 +431,10 @@ def _apply_settings(
     context.pipeline.capacity = _capacity(settings)
     dropped = context.pipeline.enforce_capacity()
     if dropped:
-        window.log_view.append_update(PipelineUpdate(dropped_sequences=dropped))
+        drop_update = PipelineUpdate(dropped_sequences=dropped)
+        window.log_view.append_update(drop_update)
+        if context.anomaly_controller is not None:
+            context.anomaly_controller.ingest_update(drop_update)
     configure_logging(
         level=str(settings.get(SETTINGS_KEYS.LOG_LEVEL, "INFO")), log_file=log_file_path()
     )
@@ -426,6 +509,83 @@ def _export_logs(window: MainWindow, context: ApplicationContext) -> None:
     window.show_status(f"已导出 {len(context.pipeline.entries())} 条到 {target}（{lines} 行）")
 
 
+def _report_store(context: ApplicationContext) -> ReportFileStore:
+    """按设置构造诊断报告存储。"""
+
+    chosen = str(context.settings.get(SETTINGS_KEYS.EXPORT_DIR, "") or "").strip()
+    if chosen:
+        return ReportFileStore(Path(chosen))
+    if context.report_file_store is not None:
+        return context.report_file_store
+    return ReportFileStore(default_export_dir())
+
+
+def export_report(
+    context: ApplicationContext,
+    path: Path,
+    fmt: object = None,
+    *,
+    generated_at: float | None = None,
+) -> Path:
+    """生成当前会话的结构化诊断报告并写入 ``path``，返回实际文件路径。
+
+    参数:
+        context: 组装结果（提供流水线、异常服务与当前分析结果）。
+        path: 目标文件路径。
+        fmt: :class:`ReportFormat`；``None`` 时按路径后缀推断。
+        generated_at: 可选生成时间戳。
+    """
+
+    if context.anomaly_service is None:
+        raise ConfigError("异常检测服务尚未初始化，无法生成诊断报告")
+    analysis_result = (
+        context.analysis_service.latest_result
+        if context.analysis_service is not None
+        else None
+    )
+    profile = context.profile
+    profile_label = f"{profile.profile_id} · {profile.model}" if profile is not None else None
+    report = build_diagnostic_report(
+        context.pipeline,
+        context.anomaly_service,
+        preset_id=context.preset.preset_id,
+        analysis_result=analysis_result,
+        profile_label=profile_label,
+        generated_at=generated_at,
+    )
+    return _report_store(context).export_report(report, path, fmt=fmt)
+
+
+def _export_report(window: MainWindow, context: ApplicationContext) -> None:
+    """诊断报告导出对话框：按后缀选择 Markdown (.md) / JSON (.json)。"""
+
+    from PySide6.QtWidgets import QFileDialog
+
+    store = _report_store(context)
+    formats = ";;".join(f"{fmt.display_name} (*{fmt.suffix})" for fmt in ReportFormat)
+    path_text, selected = QFileDialog.getSaveFileName(
+        window,
+        "导出诊断报告",
+        str(store.suggested_path(fmt=ReportFormat.MARKDOWN)),
+        formats,
+    )
+    if not path_text:
+        return
+    target = Path(path_text)
+    if not target.suffix:
+        target = target.with_suffix(_suffix_of(selected) or ReportFormat.MARKDOWN.suffix)
+    fmt = next(
+        (item for item in ReportFormat if item.suffix == target.suffix.lower()),
+        None,
+    )
+    try:
+        written = export_report(context, target, fmt=fmt)
+    except AppError as exc:
+        window.show_status(f"导出诊断报告失败：{exc}")
+        return
+    window.show_status(f"已导出诊断报告到 {written}")
+
+
 def _import_logs(window: MainWindow, context: ApplicationContext) -> None:
     """导入对话框：逐行喂进流水线并刷新表格。"""
 
@@ -447,6 +607,8 @@ def _import_logs(window: MainWindow, context: ApplicationContext) -> None:
     merged = coalesce_updates(updates)
     if merged.added or merged.updated or merged.dropped_sequences:
         window.log_view.append_update(merged)
+        if context.anomaly_controller is not None:
+            context.anomaly_controller.ingest_update(merged)
     window.show_status(f"已导入 {count} 行到日志表格")
 
 
@@ -571,6 +733,9 @@ def _switch_preset(window: MainWindow, context: ApplicationContext, preset_id: s
     context.pipeline = pipeline
     context.context_builder.set_pipeline(pipeline)
     window.log_view.clear()
+    if context.anomaly_controller is not None:
+        context.anomaly_controller.reset()
+    window.anomaly_panel.clear_alert_banner()
     window.set_preset_name(preset_id)
     context.settings.set(SETTINGS_KEYS.CURRENT_PRESET, preset_id)
     window.show_status(f"已切换到 Preset {preset_id}，日志已清空")

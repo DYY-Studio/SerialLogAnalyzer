@@ -155,3 +155,83 @@ def test_build_window_wires_status_bar_and_command_timeout(qapp, fake_settings, 
 
     # 4) 窗口关闭清理无未停定时器异常
     window.close()
+
+
+def test_bootstrap_anomaly_wiring_capacity_import_and_report_export(
+    qapp, fake_settings, monkeypatch, qtbot, tmp_path
+) -> None:
+    """全链路接线：异常入池、过滤跳转提示、容量淘汰同步、导入与诊断报告导出。"""
+
+    import json
+
+    from serial_log_analyzer.core.models.analysis import AnalysisResult, AnalysisState
+    from serial_log_analyzer.core.models.logs import LogLevel
+    from serial_log_analyzer.io.storage.report_file_store import ReportFormat
+    from serial_log_analyzer.ui.controllers.device_controller import DeviceController
+
+    def _fast_device(session):
+        return DeviceController(session, batch_interval_ms=20, command_timeout_ms=50)
+
+    monkeypatch.setattr(bootstrap, "DeviceController", _fast_device)
+    fake_settings.values[SETTINGS_KEYS.EXPORT_DIR] = str(tmp_path)
+
+    context = bootstrap.build_application(["-platform", "offscreen"])
+    window = bootstrap.build_window(context)
+
+    # 1) 实时串口到达告警级别日志 -> 异常面板与状态栏告警角标联动
+    context.session._on_bytes(b"[I] [boot] system ready\r\n[E] [mem] malloc failed size=128\r\n")
+    qtbot.waitUntil(lambda: window.log_count_label.text() == "日志 2 条", timeout=1000)
+    assert window.alert_badge_btn.text() == "告警 1"
+    assert len(window.anomaly_panel.clusters()) == 1
+    cluster = window.anomaly_panel.clusters()[0]
+    assert "新告警" in window.status_bar.currentMessage()
+
+    # 2) 被过滤隐藏时定位不误跳并明确提示原因；解除过滤后正常选中目标行
+    window.log_view._level_boxes[LogLevel.ERROR].setChecked(False)
+    window.anomaly_panel.locate_requested.emit(cluster.evidence_sequences[-1])
+    assert "被过滤条件隐藏" in window.status_bar.currentMessage()
+
+    window.log_view._level_boxes[LogLevel.ERROR].setChecked(True)
+    window.anomaly_panel.locate_requested.emit(cluster.evidence_sequences[-1])
+    assert [entry.sequence for entry in window.log_view.selected_log_entries()] == [
+        cluster.evidence_sequences[-1]
+    ]
+
+    # 3) _apply_settings 触发容量淘汰时，dropped_sequences 必须同步剔除异常簇证据
+    fake_settings.values[SETTINGS_KEYS.LOG_CAPACITY] = 1
+    context.session._on_bytes(b"[I] [boot] heartbeat ok\r\n")
+    qtbot.waitUntil(lambda: window.log_count_label.text() == "日志 3 条", timeout=1000)
+    bootstrap._apply_settings(window, context, context.analysis_service)
+    assert context.anomaly_service.clusters()[0].evidence_sequences == ()
+
+    # 4) 切换 Preset 时异常控制器与面板锁定联动清零
+    bootstrap._switch_preset(window, context, "hi3861-timestamped")
+    assert window.alert_badge_btn.text() == "告警 0"
+    assert window.anomaly_panel.clusters() == []
+
+    # 5) 导入日志必须将 coalesced 增量同步送入 AnomalyController
+    sample_log = tmp_path / "import.log"
+    sample_log.write_text("[1.000] [E] [uart] rx overflow cnt=4\n", encoding="utf-8")
+    from PySide6.QtWidgets import QFileDialog
+
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args, **kwargs: (str(sample_log), ""))
+    bootstrap._import_logs(window, context)
+    assert len(window.anomaly_panel.clusters()) == 1
+    assert window.alert_badge_btn.text() == "告警 1"
+
+    # 6) 导出 Markdown 与 JSON 诊断报告（含最近一次完成的分析结果摘要）
+    context.analysis_service._latest_result = AnalysisResult(
+        state=AnalysisState.DONE,
+        content="确认为 UART RX FIFO 溢出导致丢包。",
+    )
+    md_path = bootstrap.export_report(context, tmp_path / "diag.md", fmt=ReportFormat.MARKDOWN)
+    json_path = bootstrap.export_report(context, tmp_path / "diag.json", fmt=ReportFormat.JSON)
+    md_text = md_path.read_text(encoding="utf-8")
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert "hi3861-timestamped" in md_text
+    assert "确认为 UART RX FIFO 溢出导致丢包。" in md_text
+    assert payload["preset_id"] == "hi3861-timestamped"
+    assert len(payload["rule_facts"]["clusters"]) == 1
+    assert payload["llm_inference"]["content"] == "确认为 UART RX FIFO 溢出导致丢包。"
+
+    window.close()

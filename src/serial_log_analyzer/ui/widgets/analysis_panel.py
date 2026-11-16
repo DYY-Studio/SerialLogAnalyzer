@@ -75,6 +75,7 @@ class AnalysisPanel(QWidget):
         cancel_requested(): 请求取消。
         reset_requested(): 请求清空会话。
         profile_changed(str): 用户切换了 LLM Profile（携带 profile_id）。
+        export_report_requested(): 请求导出结构化诊断报告。
     """
 
     analyze_requested = Signal(object)
@@ -82,6 +83,7 @@ class AnalysisPanel(QWidget):
     cancel_requested = Signal()
     reset_requested = Signal()
     profile_changed = Signal(str)
+    export_report_requested = Signal()
 
     def __init__(
         self,
@@ -107,6 +109,7 @@ class AnalysisPanel(QWidget):
         self._tokens = tokens
         self.new_session_btn.setIcon(render_icon("new-session", tokens.text_secondary, size=14))
         self.copy_btn.setIcon(render_icon("copy", tokens.text_secondary, size=14))
+        self.export_report_btn.setIcon(render_icon("export", tokens.text_secondary, size=14))
         self.send_btn.setIcon(render_icon("send", tokens.text_on_accent, size=14))
         self.stop_btn.setIcon(render_icon("stop", tokens.danger, size=14))
         self.chat.set_theme_tokens(tokens)
@@ -213,6 +216,7 @@ class AnalysisPanel(QWidget):
         header_row.setSpacing(6)
         self.profile_combo = QComboBox()
         self.profile_combo.setObjectName("panel-profile")
+        self.profile_combo.setMinimumWidth(120)
         self.profile_combo.setToolTip("切换当前 LLM Profile")
         self.profile_combo.currentIndexChanged.connect(
             lambda _index: self.profile_changed.emit(self.current_profile())
@@ -232,6 +236,14 @@ class AnalysisPanel(QWidget):
         self.copy_btn.setIconSize(QSize(14, 14))
         self.copy_btn.clicked.connect(self._on_copy)
         header_row.addWidget(self.copy_btn)
+
+        self.export_report_btn = QPushButton("报告")
+        self.export_report_btn.setObjectName("panel-export-report")
+        self.export_report_btn.setProperty("variant", "ghost")
+        self.export_report_btn.setToolTip("导出诊断报告（Markdown / JSON）")
+        self.export_report_btn.setIconSize(QSize(14, 14))
+        self.export_report_btn.clicked.connect(self.export_report_requested.emit)
+        header_row.addWidget(self.export_report_btn)
         layout.addLayout(header_row)
 
         self._scope_widget = QWidget()

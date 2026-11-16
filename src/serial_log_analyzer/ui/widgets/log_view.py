@@ -9,6 +9,7 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, QSize, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -158,6 +159,27 @@ class LogView(QWidget):
         """清空表格。"""
 
         self._model.clear()
+
+    def scroll_to_sequence(self, sequence: int) -> bool:
+        """定位并选中指定流水线序号对应的日志行。
+
+        参数:
+            sequence: 目标日志条目序号。
+
+        返回:
+            找到并在当前过滤视图中可见时滚动选中并返回 ``True``；已被淘汰或被当前过滤条件隐藏时返回 ``False``。
+        """
+
+        source_row = self._model.row_for_sequence(sequence)
+        if source_row is None:
+            return False
+        proxy_index = self._filter.mapFromSource(self._model.index(source_row, 0))
+        if not proxy_index.isValid():
+            return False
+        self.table_view.selectRow(proxy_index.row())
+        self.table_view.scrollTo(proxy_index, QAbstractItemView.ScrollHint.PositionAtCenter)
+        self.table_view.setFocus()
+        return True
 
     def eventFilter(self, watched: object, event: QEvent) -> bool:
         if watched is self.table_view.viewport() and event.type() in (
