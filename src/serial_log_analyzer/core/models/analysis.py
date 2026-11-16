@@ -94,6 +94,7 @@ class AnalysisRequest:
         context: 日志上下文。
         temperature: 采样温度。
         max_output_tokens: 最大输出 token 数；``0`` 表示使用 Adapter 默认（不出现在请求体）。
+        include_board_prompt: 是否在新建会话时注入当前设备 Preset 的板卡系统提示。
     """
 
     goal_id: str | None = None
@@ -101,6 +102,7 @@ class AnalysisRequest:
     context: AnalysisContext | None = None
     temperature: float = 0.2
     max_output_tokens: int = 0
+    include_board_prompt: bool = True
 
 
 @dataclass(frozen=True)

@@ -102,6 +102,7 @@ class Recorder:
         *,
         stream: bool = True,
         credentials: object | None = None,
+        board_prompt: str = "",
     ) -> AnalysisService:
         profile = load_profile(resources, "openai-default")
         adapter = load_adapter(resources, profile.adapter_id)
@@ -114,6 +115,7 @@ class Recorder:
                 self.results.append, self.states.append, self.errors.append
             ),
             profile=replace(profile, stream=stream),
+            board_prompt=board_prompt,
         )
 
 
@@ -494,3 +496,151 @@ def test_latest_result_tracks_completed_snapshot_and_resets(resources) -> None:
 
     service.reset()
     assert service.latest_result is None
+
+
+def test_board_prompt_injected_and_preserved_across_follow_up_and_trimming(resources) -> None:
+    recorder = Recorder()
+    service = recorder.service(resources, board_prompt="  你是 Hi3861 板卡日志分析助手。  \n")
+    transport = recorder.transport
+
+    def _finish_turn(reply: str) -> None:
+        transport.push(_sse(f'{{"choices":[{{"delta":{{"content":"{reply}"}}}}]}}', "[DONE]"))
+        transport.done()
+
+    service.ask(AnalysisRequest(user_input="第0问"))
+    assert transport.requests[-1].body["messages"] == [
+        {"role": "system", "content": "你是 Hi3861 板卡日志分析助手。"},
+        {"role": "user", "content": "第0问"},
+    ]
+    _finish_turn("答0")
+
+    service.follow_up("追问1")
+    assert transport.requests[-1].body["messages"] == [
+        {"role": "system", "content": "你是 Hi3861 板卡日志分析助手。"},
+        {"role": "user", "content": "第0问"},
+        {"role": "assistant", "content": "答0"},
+        {"role": "user", "content": "追问1"},
+    ]
+    _finish_turn("答1")
+
+    service.follow_up("追问2")
+    _finish_turn("答2")
+
+    service.set_history_rounds(1)
+    service.follow_up("追问3")
+    assert transport.requests[-1].body["messages"] == [
+        {"role": "system", "content": "你是 Hi3861 板卡日志分析助手。"},
+        {"role": "user", "content": "第0问"},
+        {"role": "user", "content": "追问2"},
+        {"role": "assistant", "content": "答2"},
+        {"role": "user", "content": "追问3"},
+    ]
+    _finish_turn("答3")
+
+    assert [message.role.value for message in service.conversation] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+
+
+def test_board_prompt_omitted_when_disabled_or_empty(resources) -> None:
+    empty_recorder = Recorder()
+    empty_service = empty_recorder.service(resources, board_prompt="   \n\t ")
+    empty_service.ask(AnalysisRequest(user_input="无板卡提示"))
+    assert [
+        m["role"] for m in empty_recorder.transport.requests[-1].body["messages"]
+    ] == ["user"]
+
+    recorder = Recorder()
+    service = recorder.service(resources, board_prompt="Hi3861 串口规范")
+    transport = recorder.transport
+
+    service.ask(AnalysisRequest(user_input="关闭注入", include_board_prompt=False))
+    assert [m["role"] for m in transport.requests[-1].body["messages"]] == ["user"]
+    transport.push(_sse('{"choices":[{"delta":{"content":"答"}}]}', "[DONE]"))
+    transport.done()
+
+    # 同一会话内追问或再次 ask 仍保持首轮决策，不中途突然注入 system
+    service.follow_up("追问")
+    assert [m["role"] for m in transport.requests[-1].body["messages"]] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+    transport.push(_sse('{"choices":[{"delta":{"content":"答2"}}]}', "[DONE]"))
+    transport.done()
+
+    service.ask(AnalysisRequest(user_input="同会话再问", include_board_prompt=True))
+    assert all(
+        m["role"] != "system" for m in transport.requests[-1].body["messages"]
+    )
+
+
+def test_set_board_prompt_applies_only_after_reset(resources) -> None:
+    recorder = Recorder()
+    service = recorder.service(resources, board_prompt="旧板卡提示")
+    transport = recorder.transport
+
+    service.ask(AnalysisRequest(user_input="首问"))
+    assert transport.requests[-1].body["messages"][0] == {
+        "role": "system",
+        "content": "旧板卡提示",
+    }
+    transport.push(_sse('{"choices":[{"delta":{"content":"答1"}}]}', "[DONE]"))
+    transport.done()
+
+    service.set_board_prompt("  新板卡提示  ")
+    service.follow_up("追问")
+    assert transport.requests[-1].body["messages"][0] == {
+        "role": "system",
+        "content": "旧板卡提示",
+    }
+    transport.push(_sse('{"choices":[{"delta":{"content":"答2"}}]}', "[DONE]"))
+    transport.done()
+
+    service.ask(AnalysisRequest(user_input="同会话再问"))
+    assert transport.requests[-1].body["messages"][0] == {
+        "role": "system",
+        "content": "旧板卡提示",
+    }
+    transport.push(_sse('{"choices":[{"delta":{"content":"答3"}}]}', "[DONE]"))
+    transport.done()
+
+    service.reset()
+    service.ask(AnalysisRequest(user_input="新会话首问"))
+    assert transport.requests[-1].body["messages"][0] == {
+        "role": "system",
+        "content": "新板卡提示",
+    }
+    transport.push(_sse('{"choices":[{"delta":{"content":"答4"}}]}', "[DONE]"))
+    transport.done()
+
+    service.set_board_prompt("   ")
+    service.reset()
+    service.ask(AnalysisRequest(user_input="清空后首问"))
+    assert [m["role"] for m in transport.requests[-1].body["messages"]] == ["user"]
+
+
+def test_sync_ask_failure_leaves_session_prompt_clean(resources) -> None:
+    recorder = Recorder()
+    service = recorder.service(resources, board_prompt="板卡A")
+
+    # _compose 阶段同步失败（如未知目标）不得污染会话状态
+    with pytest.raises(ConfigError):
+        service.ask(AnalysisRequest(goal_id="absent", include_board_prompt=False))
+    # RequestBuilder.build 阶段同步失败（如非法温度）同样不得锁死旧板卡提示
+    with pytest.raises(ConfigError):
+        service.ask(AnalysisRequest(user_input="非法温度", temperature=-1.0))
+
+    service.set_board_prompt("板卡B")
+    service.ask(AnalysisRequest(user_input="恢复首问"))
+    assert recorder.transport.requests[-1].body["messages"] == [
+        {"role": "system", "content": "板卡B"},
+        {"role": "user", "content": "恢复首问"},
+    ]

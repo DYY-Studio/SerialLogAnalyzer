@@ -145,6 +145,7 @@ class AnalysisService:
         credentials: 凭据解析器。
         handlers: 对外回调；省略时需在发起分析前用 :meth:`set_handlers` 安装。
         profile: 目标 Profile；``stream`` 决定走 SSE 还是缓冲整包解析。
+        board_prompt: 当前设备 Preset 声明的板卡系统提示（可选，会去除首尾空白）。
 
     请求前的配置与凭据错误（``ConfigError`` / ``CredentialError``）由 :meth:`ask`
     同步抛出；网络与响应解析错误通过 ``handlers.on_error`` 上报，终态回调只触发一次。
@@ -159,6 +160,7 @@ class AnalysisService:
         handlers: AnalysisServiceHandlers | None = None,
         *,
         profile: ProviderProfile,
+        board_prompt: str = "",
     ) -> None:
         self._adapter = adapter
         self._profile = profile
@@ -177,6 +179,8 @@ class AnalysisService:
         self._processor: StreamProcessor | None = None
         self._buffer = bytearray()
         self._history_rounds = 0
+        self._board_prompt = board_prompt.strip()
+        self._active_system_prompt = ""
 
     def set_handlers(self, handlers: AnalysisServiceHandlers) -> None:
         """安装对外回调；由 ``ui`` 控制器在构造后注入。
@@ -214,6 +218,15 @@ class AnalysisService:
 
         self._history_rounds = max(0, int(rounds))
 
+    def set_board_prompt(self, prompt: str) -> None:
+        """更新设备 Preset 声明的板卡系统提示；仅对后续新建会话生效。
+
+        参数:
+            prompt: 新的板卡系统提示文本（会去除首尾空白）。
+        """
+
+        self._board_prompt = prompt.strip()
+
     @property
     def conversation(self) -> list[AnalysisMessage]:
         """当前会话的消息历史（只读副本）。"""
@@ -239,7 +252,14 @@ class AnalysisService:
         """
 
         self._ensure_idle()
-        self._start(self._compose(request), request, self._summary(request))
+        text = self._compose(request)
+        summary = self._summary(request)
+        system_prompt = (
+            self._active_system_prompt
+            if self._conversation
+            else (self._board_prompt if request.include_board_prompt else "")
+        )
+        self._start(text, request, summary, system_prompt=system_prompt)
 
     def follow_up(self, text: str) -> None:
         """在当前会话中追加一轮追问。
@@ -255,6 +275,7 @@ class AnalysisService:
             self._prompts.render_freeform(text),
             AnalysisRequest(user_input=text),
             text.strip(),
+            system_prompt=self._active_system_prompt,
         )
 
     def cancel(self) -> None:
@@ -274,6 +295,7 @@ class AnalysisService:
 
         self.cancel()
         self._conversation.clear()
+        self._active_system_prompt = ""
         self._result = AnalysisResult()
         self._latest_result = None
 
@@ -325,11 +347,23 @@ class AnalysisService:
             parts.append(text)
         return " · ".join(parts) or "（仅日志上下文）"
 
-    def _start(self, text: str, request: AnalysisRequest, summary: str) -> None:
+    def _start(
+        self,
+        text: str,
+        request: AnalysisRequest,
+        summary: str,
+        *,
+        system_prompt: str,
+    ) -> None:
         """发送一轮请求并进入流式状态机。"""
 
         message = AnalysisMessage(MessageRole.USER, text, summary)
-        http = self._builder.build([*self._history(), message], request)
+        messages = [*self._history(), message]
+        if system_prompt:
+            messages = [AnalysisMessage(MessageRole.SYSTEM, system_prompt), *messages]
+        http = self._builder.build(messages, request)
+        if not self._conversation:
+            self._active_system_prompt = system_prompt
         self._conversation.append(message)
         self._cancelled = False
         self._buffer.clear()
