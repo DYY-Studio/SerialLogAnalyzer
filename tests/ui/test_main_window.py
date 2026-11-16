@@ -214,7 +214,7 @@ def test_docks_start_in_the_designed_layout(qtbot) -> None:
 def test_layout_is_restored_only_when_the_dock_set_matches(qtbot) -> None:
     """面板集合一致才恢复存档；变过就丢弃，免得新面板被 Qt 藏起来。"""
 
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import Qt, qInstallMessageHandler
 
     from serial_log_analyzer import bootstrap
     from serial_log_analyzer.io.settings.qt_settings_store import SETTINGS_KEYS
@@ -223,9 +223,16 @@ def test_layout_is_restored_only_when_the_dock_set_matches(qtbot) -> None:
     window.resize(1200, 800)
     window.show()
 
-    # 存档：分析面板停靠在左侧
+    # 存档：分析面板停靠在左侧；工具栏必须带 objectName，否则 saveState 会触发 Qt 警告
+    assert window.serial_toolbar.objectName() == "serial-toolbar"
     window.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, window.analysis_dock)
-    state = window.saveState()
+    warnings: list[str] = []
+    prev_handler = qInstallMessageHandler(lambda _mode, _ctx, msg: warnings.append(msg))
+    try:
+        state = window.saveState()
+    finally:
+        qInstallMessageHandler(prev_handler)
+    assert not any("objectName" in msg for msg in warnings)
     window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, window.analysis_dock)
 
     bootstrap._restore_layout(

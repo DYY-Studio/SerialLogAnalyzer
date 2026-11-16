@@ -16,6 +16,7 @@ from collections.abc import Callable
 
 import yaml
 from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QToolButton,
     QVBoxLayout,
@@ -50,6 +52,8 @@ __all__ = ["ProviderDialog"]
 
 _MIN_TIMEOUT = 1
 _MAX_TIMEOUT = 3_600
+_MIN_DIALOG_WIDTH = 520
+_MIN_DIALOG_HEIGHT = 360
 _PROFILE_ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
 
@@ -86,7 +90,7 @@ class ProviderDialog(QDialog):
         self._saved_path = ""
         self._tokens = default_tokens()
         self.setWindowTitle("模型服务")
-        self.setMinimumWidth(520)
+        self.setMinimumSize(_MIN_DIALOG_WIDTH, _MIN_DIALOG_HEIGHT)
 
         self._combo = QComboBox()
         self._combo.setObjectName("provider-combo")
@@ -137,11 +141,11 @@ class ProviderDialog(QDialog):
 
         self._credential = CredentialEditor(keyring)
 
-        profile_row = QHBoxLayout()
-        profile_row.setSpacing(6)
-        profile_row.addWidget(self._combo, 1)
-        profile_row.addWidget(self._new_button)
-        profile_row.addWidget(self._delete_button)
+        self._profile_row = QHBoxLayout()
+        self._profile_row.setSpacing(6)
+        self._profile_row.addWidget(self._combo, 1)
+        self._profile_row.addWidget(self._new_button)
+        self._profile_row.addWidget(self._delete_button)
 
         model_row = QHBoxLayout()
         model_row.setSpacing(6)
@@ -197,36 +201,86 @@ class ProviderDialog(QDialog):
         self._save_button.setProperty("variant", "primary")
         self._save_button.clicked.connect(self._save_current)
 
-        buttons = QDialogButtonBox(
+        self._buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        buttons.addButton(self._save_button, QDialogButtonBox.ButtonRole.ActionRole)
+        self._buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
+        self._buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        self._buttons.accepted.connect(self.accept)
+        self._buttons.rejected.connect(self.reject)
+        self._buttons.addButton(self._save_button, QDialogButtonBox.ButtonRole.ActionRole)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(10)
-        layout.addLayout(profile_row)
-        layout.addWidget(basic_title)
-        layout.addWidget(basic_divider)
-        layout.addLayout(basic_form)
-        layout.addWidget(self._advanced_toggle)
-        layout.addWidget(self._advanced_box)
-        layout.addWidget(self._status)
-        layout.addWidget(hint)
-        layout.addWidget(buttons)
+        self._scroll_content = QWidget()
+        self._scroll_content.setObjectName("provider-scroll-content")
+        self._scroll_content.setStyleSheet(
+            "QWidget#provider-scroll-content { background: transparent; }"
+        )
+        self._content_layout = QVBoxLayout(self._scroll_content)
+        self._content_layout.setContentsMargins(0, 0, 4, 0)
+        self._content_layout.setSpacing(10)
+        self._content_layout.addWidget(basic_title)
+        self._content_layout.addWidget(basic_divider)
+        self._content_layout.addLayout(basic_form)
+        self._content_layout.addWidget(self._advanced_toggle)
+        self._content_layout.addWidget(self._advanced_box)
+        self._content_layout.addWidget(self._status)
+        self._content_layout.addWidget(hint)
+        self._content_layout.addStretch()
+
+        self._scroll = QScrollArea()
+        self._scroll.setObjectName("provider-scroll")
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._scroll.setStyleSheet(
+            "QScrollArea#provider-scroll { background: transparent; border: none; }"
+        )
+        self._scroll.viewport().setAutoFillBackground(False)
+        self._scroll.setWidget(self._scroll_content)
+
+        self._outer_layout = QVBoxLayout(self)
+        self._outer_layout.setContentsMargins(16, 14, 16, 14)
+        self._outer_layout.setSpacing(10)
+        self._outer_layout.addLayout(self._profile_row)
+        self._outer_layout.addWidget(self._scroll, 1)
+        self._outer_layout.addWidget(self._buttons)
 
         self._set_profiles(profiles)
+        self._fit_height()
 
     def _toggle_advanced(self, expanded: bool) -> None:
         self._advanced_box.setVisible(expanded)
         icon_name = "chevron-down" if expanded else "chevron-right"
         self._advanced_toggle.setIcon(render_icon(icon_name, self._tokens.text_secondary, size=12))
         if self.isVisible():
-            self.adjustSize()
+            self._fit_height()
+
+    def _fit_height(self) -> None:
+        """按当前内容量与屏幕可用高度调整窗口高度，避免固定最小高顶出屏幕或触发布局冲突。"""
+
+        self._content_layout.activate()
+        self._outer_layout.activate()
+        target_w = max(self.width() if self.isVisible() else _MIN_DIALOG_WIDTH, _MIN_DIALOG_WIDTH)
+        margins = self._outer_layout.contentsMargins()
+        content_w = max(240, target_w - margins.left() - margins.right() - 4)
+        content_h = (
+            self._content_layout.heightForWidth(content_w)
+            if self._content_layout.hasHeightForWidth()
+            else self._content_layout.sizeHint().height()
+        )
+        overhead_h = (
+            margins.top()
+            + margins.bottom()
+            + self._profile_row.sizeHint().height()
+            + self._buttons.sizeHint().height()
+            + self._outer_layout.spacing() * 2
+            + 2
+        )
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        max_h = int(screen.availableGeometry().height() * 0.85) if screen is not None else 720
+        target_h = max(_MIN_DIALOG_HEIGHT, min(max_h, overhead_h + max(0, content_h)))
+        self.resize(target_w, target_h)
 
     # ------------------------------------------------------------------
     # 对外接口

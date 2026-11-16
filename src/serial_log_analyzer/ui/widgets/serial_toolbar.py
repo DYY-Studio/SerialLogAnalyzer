@@ -54,6 +54,7 @@ class SerialToolBar(QToolBar):
         tokens: ThemeTokens | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setObjectName("serial-toolbar")
         self._tokens = tokens if tokens is not None else default_tokens()
         self._connected = False
         self._advanced: dict[str, object] = {

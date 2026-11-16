@@ -623,13 +623,25 @@ def test_credential_editor_supports_custom_hints(qtbot, monkeypatch) -> None:
 
 
 def test_provider_dialog_toggles_advanced_section(qtbot, tmp_path) -> None:
-    from PySide6.QtWidgets import QToolButton, QWidget
+    from PySide6.QtCore import qInstallMessageHandler
+    from PySide6.QtWidgets import QScrollArea, QToolButton, QWidget
 
     dialog = _provider_dialog(tmp_path)
     qtbot.addWidget(dialog)
     toggle = dialog.findChild(QToolButton, "provider-advanced-toggle")
     box = dialog.findChild(QWidget, "provider-advanced-box")
+    assert dialog.findChild(QScrollArea, "provider-scroll") is not None
 
-    assert toggle.isChecked() is False and box.isHidden() is True
-    toggle.click()
-    assert toggle.isChecked() is True and box.isHidden() is False
+    warnings: list[str] = []
+    prev_handler = qInstallMessageHandler(lambda _mode, _ctx, msg: warnings.append(msg))
+    try:
+        dialog.show()
+        assert toggle.isChecked() is False and box.isHidden() is True
+        toggle.click()
+        assert toggle.isChecked() is True and box.isHidden() is False
+        assert dialog.minimumHeight() < 500
+        toggle.click()
+        assert toggle.isChecked() is False and box.isHidden() is True
+    finally:
+        qInstallMessageHandler(prev_handler)
+    assert not any("setGeometry" in msg for msg in warnings)
