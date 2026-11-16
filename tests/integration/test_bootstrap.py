@@ -235,3 +235,89 @@ def test_bootstrap_anomaly_wiring_capacity_import_and_report_export(
     assert payload["llm_inference"]["content"] == "确认为 UART RX FIFO 溢出导致丢包。"
 
     window.close()
+
+
+def test_bootstrap_analyze_cluster_resets_existing_chat_and_usage(
+    qapp, fake_settings, monkeypatch, qtbot
+) -> None:
+    """已有 LLM 会话及用量后点击「LLM」分析异常簇，旧卡片与状态栏用量必须同步清零并渲染新首轮。"""
+
+    import json
+
+    from serial_log_analyzer.core.models.analysis import (
+        AnalysisMessage,
+        AnalysisResult,
+        AnalysisState,
+        MessageRole,
+        TokenUsage,
+    )
+    from serial_log_analyzer.ui.controllers.device_controller import DeviceController
+
+    class _StubToken:
+        def cancel(self) -> None:
+            pass
+
+    class _FakeHttpTransport:
+        def __init__(self) -> None:
+            self.requests: list[object] = []
+
+        def send(self, request, on_chunk, on_done, on_error):
+            self.requests.append(request)
+            on_chunk(
+                json.dumps(
+                    {
+                        "choices": [{"message": {"content": "聚类根因结论"}}],
+                    }
+                ).encode("utf-8")
+            )
+            on_done()
+            return _StubToken()
+
+    class _FakeCredentials:
+        def resolve(self, _ref) -> str:
+            return "sk-test"
+
+    def _fast_device(session):
+        return DeviceController(session, batch_interval_ms=20, command_timeout_ms=50)
+
+    monkeypatch.setattr(bootstrap, "DeviceController", _fast_device)
+    context = bootstrap.build_application(["-platform", "offscreen"])
+    context.http_transport = _FakeHttpTransport()
+    context.credentials = _FakeCredentials()
+    context.profile = type(context.profile)(**{**context.profile.__dict__, "stream": False})
+
+    window = bootstrap.build_window(context)
+
+    # 先模拟一轮已有完整对话及状态栏 Token 摘要
+    old_user = AnalysisMessage(MessageRole.USER, "旧请求正文", "旧会话提问")
+    old_assistant = AnalysisMessage(MessageRole.ASSISTANT, "旧会话回答")
+    context.analysis_service._conversation.extend([old_user, old_assistant])
+    old_result = AnalysisResult(
+        state=AnalysisState.DONE,
+        conversation=[old_user, old_assistant],
+        content="旧会话回答",
+        usage=TokenUsage(input_tokens=120, output_tokens=30, total_tokens=150),
+    )
+    window.analysis_panel.set_result(old_result)
+    window.set_usage_summary(120, 30, 150)
+    assert [card.body_text() for card in window.analysis_panel.chat._cards] == [
+        "旧会话提问",
+        "旧会话回答",
+    ]
+    assert window.usage_status_label.isHidden() is False
+
+    # 接入含异常的日志，随后通过异常面板触发一键「LLM」聚类分析
+    context.session._on_bytes(b"[E] [mem] malloc failed size=64\r\n")
+    qtbot.waitUntil(lambda: len(window.anomaly_panel.clusters()) == 1, timeout=1000)
+    cluster = window.anomaly_panel.clusters()[0]
+    window.anomaly_panel.analyze_requested.emit(cluster)
+
+    assert len(context.http_transport.requests) == 1
+    assert window.usage_status_label.isHidden() is True
+    cards = [card.body_text() for card in window.analysis_panel.chat._cards]
+    assert len(cards) == 2
+    assert "旧会话提问" not in cards[0] and "旧会话回答" not in cards[1]
+    assert "malloc failed" in cards[0]
+    assert cards[1] == "聚类根因结论"
+
+    window.close()

@@ -374,6 +374,7 @@ def build_window(context: ApplicationContext) -> MainWindow:
     analysis.result_updated.connect(panel.set_result)
     analysis.state_changed.connect(panel.set_state)
     analysis.usage_updated.connect(window.set_usage_summary)
+    analysis.usage_cleared.connect(window.clear_usage_summary)
     analysis.error_occurred.connect(window.show_status)
 
     window.settings_requested.connect(lambda: _open_settings(window, context, service))

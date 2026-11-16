@@ -35,12 +35,14 @@ class AnalysisController(QObject):
         state_changed(object): 状态变化（:class:`AnalysisState`）。
         error_occurred(str): 错误文本。
         usage_updated(int, int, int): 用量统计更新（输入 / 输出 / 总计）。
+        usage_cleared(): 会话重置时通知清空状态栏用量摘要。
     """
 
     result_updated = Signal(object)
     state_changed = Signal(object)
     error_occurred = Signal(str)
     usage_updated = Signal(int, int, int)
+    usage_cleared = Signal()
 
     def __init__(self, service: AnalysisService, context_builder: AnalysisContextBuilder) -> None:
         super().__init__()
@@ -127,6 +129,7 @@ class AnalysisController(QObject):
 
         self._service.reset()
         self._usage = None
+        self.usage_cleared.emit()
         self.result_updated.emit(AnalysisResult())
         self.state_changed.emit(AnalysisState.IDLE)
 

@@ -316,6 +316,10 @@ class ChatView(QScrollArea):
         """按结果快照刷新转录（已定稿轮次按会话补卡片，未定稿一轮就地更新）。"""
 
         streaming = result.state is AnalysisState.STREAMING
+        if len(result.conversation) < len(self._message_cards) or (
+            not result.conversation and not streaming and self._cards
+        ):
+            self.clear()
         pending = list(result.conversation[len(self._message_cards) :])
 
         # 本轮结束：成功时把流式卡片收编为这一条 assistant 消息的卡片，
@@ -379,6 +383,8 @@ class ChatView(QScrollArea):
 
         for card in self._cards:
             self._layout.removeWidget(card)
+            card.hide()
+            card.setParent(None)
             card.deleteLater()
         self._cards.clear()
         self._message_cards.clear()
