@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import functools
 
-from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtCore import QByteArray, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
@@ -82,6 +82,11 @@ _ICON_PATHS: dict[str, str] = {
     ),
     "chevron-down": '<path d="m6 9 6 6 6-6"/>',
     "chevron-right": '<path d="m9 18 6-6-6-6"/>',
+    "dock-float": (
+        '<path d="M15 3h6v6"/>'
+        '<path d="M10 14 21 3"/>'
+        '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>'
+    ),
     "alert": (
         '<path d="m10.29 3.86-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.71-3.14l-8-14'
         'a2 2 0 0 0-3.42 0Z"/>'
@@ -135,7 +140,7 @@ def render_pixmap(name: str, color: str | QColor, *, size: int = 16, dpr: float 
     qcolor = QColor(color)
     if not qcolor.isValid():
         raise ValueError(f"非法图标颜色：{color!r}")
-    return _cached_pixmap(name, qcolor.name(QColor.NameFormat.HexArgb), size, round(dpr, 2))
+    return _cached_pixmap(name, qcolor.name(QColor.NameFormat.HexRgb), size, round(dpr, 2))
 
 
 def render_icon(name: str, color: str | QColor, *, size: int = 16) -> QIcon:
@@ -166,6 +171,6 @@ def _cached_pixmap(name: str, color_hex: str, size: int, dpr: float) -> QPixmap:
     pixmap.setDevicePixelRatio(dpr)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    renderer.render(painter)
+    renderer.render(painter, QRectF(0.0, 0.0, float(size), float(size)))
     painter.end()
     return pixmap

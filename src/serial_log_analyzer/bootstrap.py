@@ -248,7 +248,9 @@ def build_window(context: ApplicationContext) -> MainWindow:
     device.ports_refreshed.connect(toolbar.set_ports)
 
     def _on_connection(state: object, message: str) -> None:
-        toolbar.set_connected(state is DeviceConnectionState.CONNECTED)
+        connected = state is DeviceConnectionState.CONNECTED
+        toolbar.set_connected(connected)
+        window.set_connection_status(connected, toolbar.active_endpoint_label() if connected else "")
         window.show_status(message)
 
     device.connection_changed.connect(_on_connection)
@@ -266,9 +268,12 @@ def build_window(context: ApplicationContext) -> MainWindow:
     theme_manager = context.theme_manager
     if theme_manager is not None:
         table_model.set_tokens(theme_manager.tokens)
+        window.set_theme_tokens(theme_manager.tokens)
         panel.chat.set_theme_tokens(theme_manager.tokens)
         theme_manager.theme_changed.connect(table_model.set_tokens)
+        theme_manager.theme_changed.connect(window.set_theme_tokens)
         theme_manager.theme_changed.connect(panel.chat.set_theme_tokens)
+    window.set_preset_name(context.preset.preset_id)
 
     log_view.selection_changed.connect(analysis.selected_sequences)
     log_view.autoscroll_toggled.connect(
@@ -568,6 +573,7 @@ def _switch_preset(window: MainWindow, context: ApplicationContext, preset_id: s
     context.pipeline = pipeline
     context.context_builder.set_pipeline(pipeline)
     window.log_view.clear()
+    window.set_preset_name(preset_id)
     context.settings.set(SETTINGS_KEYS.CURRENT_PRESET, preset_id)
     window.show_status(f"已切换到 Preset {preset_id}，日志已清空")
 

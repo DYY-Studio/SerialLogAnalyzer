@@ -12,7 +12,7 @@ from serial_log_analyzer.core.models.analysis import (
     MessageRole,
 )
 from serial_log_analyzer.core.models.logs import LogEntry, LogLevel
-from serial_log_analyzer.ui.icons import available_icons, render_icon
+from serial_log_analyzer.ui.icons import available_icons, render_icon, render_pixmap
 from serial_log_analyzer.ui.models.log_table_model import LogTableModel
 from serial_log_analyzer.ui.theme import (
     DARK_TOKENS,
@@ -94,6 +94,10 @@ def test_monospace_font_and_builtin_icons_render(qapp) -> None:
         set(names)
     )
     for name in names:
+        pixmap = render_pixmap(name, "#E6EDF5", size=16, dpr=2.0)
+        assert not pixmap.isNull()
+        img = pixmap.toImage()
+        assert any(img.pixelColor(x, y).alpha() > 0 for y in range(16, 32) for x in range(16, 32))
         icon = render_icon(name, "#E6EDF5", size=16)
         assert not icon.isNull()
         assert not icon.pixmap(16, 16).isNull()

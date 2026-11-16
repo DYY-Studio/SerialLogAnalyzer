@@ -8,17 +8,21 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QDockWidget,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMenu,
     QStatusBar,
+    QToolButton,
     QWidget,
 )
 
+from serial_log_analyzer.ui.icons import render_icon
+from serial_log_analyzer.ui.theme import ThemeTokens, default_tokens
 from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
 from serial_log_analyzer.ui.widgets.app_log_panel import AppLogPanel
 from serial_log_analyzer.ui.widgets.command_panel import CommandPanel
@@ -26,6 +30,41 @@ from serial_log_analyzer.ui.widgets.log_view import LogView
 from serial_log_analyzer.ui.widgets.serial_toolbar import SerialToolBar
 
 __all__ = ["MainWindow"]
+
+
+class _DockTitleBar(QWidget):
+    """紧凑扁平的 Dock 标题栏：左对齐标题 + 图标化浮动与隐藏按钮。"""
+
+    def __init__(self, title: str, dock: QDockWidget) -> None:
+        super().__init__(dock)
+        self.setObjectName("dock-title-bar")
+        self.setFixedHeight(26)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 2, 6, 2)
+        layout.setSpacing(4)
+
+        label = QLabel(title)
+        label.setObjectName("dock-title-label")
+        layout.addWidget(label)
+        layout.addStretch()
+
+        self.float_btn = QToolButton()
+        self.float_btn.setToolTip("浮动 / 停靠")
+        self.float_btn.setIconSize(QSize(12, 12))
+        self.float_btn.clicked.connect(lambda: dock.setFloating(not dock.isFloating()))
+        layout.addWidget(self.float_btn)
+
+        self.close_btn = QToolButton()
+        self.close_btn.setToolTip("隐藏面板")
+        self.close_btn.setIconSize(QSize(12, 12))
+        self.close_btn.clicked.connect(dock.close)
+        layout.addWidget(self.close_btn)
+
+    def refresh_icons(self, tokens: ThemeTokens) -> None:
+        """按主题色刷新浮动与关闭按钮图标。"""
+
+        self.float_btn.setIcon(render_icon("dock-float", tokens.text_secondary, size=12))
+        self.close_btn.setIcon(render_icon("disconnect", tokens.text_secondary, size=12))
 
 
 class MainWindow(QMainWindow):
@@ -74,6 +113,8 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__(parent)
         self._on_close = on_close
+        self._tokens = default_tokens()
+        self._dock_titles: list[_DockTitleBar] = []
         self.log_view = log_view
         self.analysis_panel = analysis_panel
         self.serial_toolbar = serial_toolbar
@@ -100,13 +141,45 @@ class MainWindow(QMainWindow):
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.usage_status_label = QLabel("")
-        self.usage_status_label.setObjectName("status-usage")
+        self.connection_status_label = self._make_status_pill("status-connection", "○ 未连接")
+        self.preset_status_label = self._make_status_pill("status-preset", "Preset: -")
+        self.usage_status_label = self._make_status_pill("status-usage", "")
         self.usage_status_label.setVisible(False)
-        self.log_count_label = QLabel("日志 0 条")
-        self.log_count_label.setObjectName("status-log-count")
+        self.log_count_label = self._make_status_pill("status-log-count", "日志 0 条")
+        self.status_bar.addPermanentWidget(self.connection_status_label)
+        self.status_bar.addPermanentWidget(self.preset_status_label)
         self.status_bar.addPermanentWidget(self.usage_status_label)
         self.status_bar.addPermanentWidget(self.log_count_label)
+        self.set_theme_tokens(self._tokens)
+
+    @staticmethod
+    def _make_status_pill(object_name: str, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName(object_name)
+        label.setProperty("role", "status-pill")
+        return label
+
+    def set_theme_tokens(self, tokens: ThemeTokens) -> None:
+        """将新主题 Token 同步到停靠栏标题图标、工具栏与日志视图。"""
+
+        self._tokens = tokens
+        for bar in self._dock_titles:
+            bar.refresh_icons(tokens)
+        self.serial_toolbar.set_theme_tokens(tokens)
+        self.log_view.set_theme_tokens(tokens)
+
+    def set_connection_status(self, connected: bool, detail: str = "") -> None:
+        """更新状态栏右侧的串口连接状态胶囊。"""
+
+        if not connected:
+            self.connection_status_label.setText("○ 未连接")
+            return
+        self.connection_status_label.setText(f"● {detail}" if detail else "● 已连接")
+
+    def set_preset_name(self, preset_id: str) -> None:
+        """更新状态栏右侧的当前日志 Preset 标识。"""
+
+        self.preset_status_label.setText(f"Preset: {preset_id or '-'}")
 
     def show_status(self, message: str) -> None:
         """在状态栏显示一条消息。"""
@@ -160,6 +233,9 @@ class MainWindow(QMainWindow):
         dock = QDockWidget(title, self)
         dock.setObjectName(name)
         dock.setWidget(widget)
+        title_bar = _DockTitleBar(title, dock)
+        dock.setTitleBarWidget(title_bar)
+        self._dock_titles.append(title_bar)
         dock.setFeatures(
             QDockWidget.DockWidgetFeature.DockWidgetMovable
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable

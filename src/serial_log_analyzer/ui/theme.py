@@ -372,10 +372,35 @@ QStatusBar {{
 QStatusBar::item {{
     border: none;
 }}
+QLabel[role="status-pill"] {{
+    background-color: {t.bg_elevated};
+    color: {t.text_secondary};
+    border: 1px solid {t.border_subtle};
+    border-radius: 4px;
+    padding: 1px 8px;
+    font-size: 11px;
+}}
+#dock-title-bar {{
+    background-color: {t.bg_elevated};
+    border-top: 1px solid {t.border_subtle};
+    border-bottom: 1px solid {t.border_subtle};
+}}
+#dock-title-label {{
+    color: {t.text_secondary};
+    font-weight: 600;
+    font-size: 11px;
+}}
+#log-empty-title {{
+    color: {t.text_secondary};
+    font-weight: 600;
+    font-size: 13px;
+}}
+#log-empty-hint {{
+    color: {t.text_muted};
+    font-size: 12px;
+}}
 QDockWidget {{
     color: {t.text_primary};
-    titlebar-close-icon: none;
-    titlebar-normal-icon: none;
 }}
 QDockWidget::title {{
     background-color: {t.bg_elevated};
@@ -454,6 +479,11 @@ QPushButton[variant="danger"]:hover {{
     background-color: {t.danger};
     color: {t.text_on_accent};
 }}
+QPushButton[variant="danger"]:disabled {{
+    background-color: {t.bg_subtle};
+    color: {t.text_muted};
+    border-color: {t.border_subtle};
+}}
 QPushButton[variant="ghost"] {{
     background-color: transparent;
     color: {t.text_secondary};
@@ -479,6 +509,40 @@ QToolButton:checked {{
     color: {t.text_primary};
     border-color: {t.accent_primary};
 }}
+QToolButton[chip="level"] {{
+    background-color: transparent;
+    color: {t.text_muted};
+    border: 1px solid {t.border_subtle};
+    border-radius: 10px;
+    padding: 2px 8px;
+}}
+QToolButton[chip="level"]:hover {{
+    background-color: {t.bg_subtle};
+    color: {t.text_primary};
+}}
+QToolButton[chip="level"]:checked {{
+    background-color: {t.bg_surface};
+    color: {t.text_primary};
+    border-color: {t.border_strong};
+    font-weight: 500;
+}}
+QToolButton[chip="toggle"] {{
+    background-color: transparent;
+    color: {t.text_secondary};
+    border: 1px solid {t.border_subtle};
+    border-radius: 10px;
+    padding: 2px 9px;
+}}
+QToolButton[chip="toggle"]:hover {{
+    background-color: {t.bg_subtle};
+    color: {t.text_primary};
+}}
+QToolButton[chip="toggle"]:checked {{
+    background-color: {t.accent_soft};
+    color: {t.text_primary};
+    border-color: {t.accent_primary};
+    font-weight: 500;
+}}
 QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox {{
     background-color: {t.bg_surface};
     color: {t.text_primary};
@@ -495,10 +559,6 @@ QLineEdit:disabled, QPlainTextEdit:disabled, QComboBox:disabled, QSpinBox:disabl
     background-color: {t.bg_elevated};
     color: {t.text_muted};
     border-color: {t.border_subtle};
-}}
-QComboBox::drop-down {{
-    border: none;
-    width: 20px;
 }}
 QComboBox QAbstractItemView {{
     background-color: {t.bg_surface};

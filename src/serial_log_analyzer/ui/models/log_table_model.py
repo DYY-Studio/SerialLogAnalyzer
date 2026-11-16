@@ -203,7 +203,7 @@ class LogTableModel(QAbstractTableModel):
             row_bg = self._level_styles[entry.level].row_bg
             return QBrush(QColor(row_bg)) if row_bg is not None else None
         if role == Qt.ItemDataRole.ToolTipRole:
-            return entry.raw if column == 4 else None
+            return self._tooltip(entry)
         if role == LOG_LEVEL_ROLE:
             return entry.level
         if role == LOG_MODULE_ROLE:
@@ -224,14 +224,33 @@ class LogTableModel(QAbstractTableModel):
         return None
 
     @staticmethod
-    def _display(entry: LogEntry, column: int) -> str:
+    def _format_time(moment: float) -> str:
+        return f"{time.strftime('%H:%M:%S', time.localtime(moment))}.{int(moment % 1 * 1000):03d}"
+
+    @classmethod
+    def _display(cls, entry: LogEntry, column: int) -> str:
         if column == 0:
             return str(entry.sequence)
         if column == 1:
-            moment = entry.received_at
-            return f"{time.strftime('%H:%M:%S', time.localtime(moment))}.{int(moment % 1 * 1000):03d}"
+            return cls._format_time(entry.received_at)
         if column == 2:
             return LEVEL_LABELS.get(entry.level, entry.level.name)
         if column == 3:
             return entry.module or "-"
         return entry.message
+
+    @classmethod
+    def _tooltip(cls, entry: LogEntry) -> str:
+        lines = [
+            f"序号 #{entry.sequence} · {LEVEL_LABELS.get(entry.level, entry.level.name)}",
+            f"接收时间: {cls._format_time(entry.received_at)}",
+        ]
+        if entry.device_time:
+            lines.append(f"板上时间: {entry.device_time}")
+        if entry.module:
+            lines.append(f"模块: {entry.module}")
+        if entry.extra:
+            fields = "  ".join(f"{key}={value}" for key, value in entry.extra.items())
+            lines.append(f"字段: {fields}")
+        lines.append(f"原始行:\n{entry.raw}")
+        return "\n".join(lines)

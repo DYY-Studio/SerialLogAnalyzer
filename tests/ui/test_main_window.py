@@ -421,3 +421,74 @@ def test_head_drop_uses_incremental_remove_and_preserves_selection(qtbot) -> Non
     assert model.remove_sequences([4]) == 1
     assert reset_seen == [True]
     assert [model.entry_at(row).sequence for row in range(model.rowCount())] == [2, 3]
+
+
+def test_log_view_empty_state_clear_filters_and_delegate_render(qtbot) -> None:
+    """空状态指引切换、一键清空过滤、结构化 Tooltip 与胶囊委托渲染。"""
+
+    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtGui import QPainter, QPixmap
+    from PySide6.QtWidgets import QStyleOptionViewItem
+
+    from serial_log_analyzer.ui.delegates import LogLevelDelegate
+
+    window = _build_window(qtbot)
+    view = window.log_view
+    assert view._empty_state.isHidden() is False
+    assert "暂无" in view._empty_title.text()
+
+    rich_entry = LogEntry(
+        sequence=0,
+        received_at=1700000000.0,
+        level=LogLevel.ERROR,
+        message="temperature=29.7",
+        raw="[1.234] [E] [sensor] temperature=29.7",
+        device_time="1.234",
+        module="sensor",
+        extra={"temperature": "29.7"},
+    )
+    view.append_update(PipelineUpdate(added=(rich_entry,)))
+    assert view._empty_state.isHidden() is True
+
+    # 过滤为空后提示无匹配项，点重置恢复全部显示
+    view.text_filter.setText("missing")
+    assert view._empty_state.isHidden() is False
+    assert "没有匹配" in view._empty_title.text()
+    view.reset_filter_btn.click()
+    assert view._empty_state.isHidden() is True
+    assert view.table_view.model().rowCount() == 1
+
+    # 结构化 Tooltip 含板上时间、extra 与原文
+    tooltip = view._model.data(view._model.index(0, 4), Qt.ItemDataRole.ToolTipRole)
+    assert "1.234" in tooltip and "temperature=29.7" in tooltip and rich_entry.raw in tooltip
+
+    # 第 2 列挂载 LogLevelDelegate，可在离屏画布真实渲染胶囊
+    delegate = view.table_view.itemDelegateForColumn(2)
+    assert isinstance(delegate, LogLevelDelegate)
+    pixmap = QPixmap(80, 28)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    option = QStyleOptionViewItem()
+    option.rect = QRect(0, 0, 80, 28)
+    delegate.paint(painter, option, view.table_view.model().index(0, 2))
+    painter.end()
+    assert not pixmap.toImage().isNull()
+
+
+def test_main_window_segmented_status_and_dock_title_bars(qtbot) -> None:
+    """主窗口 Dock 紧凑标题栏、状态栏分段胶囊与连接/Preset 状态同步。"""
+
+    window = _build_window(qtbot)
+    assert window.analysis_dock.titleBarWidget() is not None
+    assert window.command_dock.titleBarWidget() is not None
+    assert window.app_log_dock.titleBarWidget() is not None
+
+    window.set_connection_status(True, "COM3 · 115200")
+    window.set_preset_name("hi3861-timestamped")
+    window.set_log_count(42)
+    assert "COM3 · 115200" in window.connection_status_label.text()
+    assert "hi3861-timestamped" in window.preset_status_label.text()
+    assert window.log_count_label.text() == "日志 42 条"
+
+    window.set_connection_status(False)
+    assert "未连接" in window.connection_status_label.text()
