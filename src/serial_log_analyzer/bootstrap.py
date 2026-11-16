@@ -310,6 +310,10 @@ def build_window(context: ApplicationContext) -> MainWindow:
     context.analysis_service = service
     analysis = AnalysisController(service, context.context_builder)
     service.set_history_rounds(_history_rounds(settings))
+    panel.set_board_prompt(context.preset.display_name, context.preset.prompt)
+    include_board = parse_bool(settings.get(SETTINGS_KEYS.INCLUDE_BOARD_PROMPT, True), True)
+    panel.set_include_board_prompt(include_board)
+    analysis.set_include_board_prompt(include_board)
     main = MainController(
         device,
         analysis,
@@ -431,6 +435,10 @@ def build_window(context: ApplicationContext) -> MainWindow:
     panel.cancel_requested.connect(analysis.cancel)
     panel.reset_requested.connect(analysis.reset)
     panel.reset_requested.connect(window.clear_usage_summary)
+    panel.board_prompt_toggled.connect(analysis.set_include_board_prompt)
+    panel.board_prompt_toggled.connect(
+        lambda enabled: settings.set(SETTINGS_KEYS.INCLUDE_BOARD_PROMPT, bool(enabled))
+    )
     analysis.result_updated.connect(panel.set_result)
     analysis.state_changed.connect(panel.set_state)
     analysis.usage_updated.connect(window.set_usage_summary)
@@ -456,6 +464,7 @@ def _analysis_service(context: ApplicationContext) -> AnalysisService:
         context.prompts,
         context.credentials,
         profile=context.profile,
+        board_prompt=context.preset.prompt,
     )
 
 
@@ -827,12 +836,15 @@ def _switch_preset(window: MainWindow, context: ApplicationContext, preset_id: s
         context.notification_controller.set_pipeline(pipeline)
     elif context.notification_service is not None:
         context.notification_service.set_pipeline(pipeline)
+    if context.analysis_service is not None:
+        context.analysis_service.set_board_prompt(preset.prompt)
     window.log_view.clear()
     if context.anomaly_controller is not None:
         context.anomaly_controller.reset()
     window.anomaly_panel.clear_alert_banner()
     window.command_panel.set_commands(preset.commands)
     window.chart_panel.set_preset_fields(tuple(preset.line.fields))
+    window.analysis_panel.set_board_prompt(preset.display_name, preset.prompt)
     window.set_preset_name(preset_id)
     context.settings.set(SETTINGS_KEYS.CURRENT_PRESET, preset_id)
     window.show_status(f"已切换到 Preset {preset_id}，日志已清空")

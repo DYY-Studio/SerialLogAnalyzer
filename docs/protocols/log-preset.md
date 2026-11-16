@@ -30,6 +30,9 @@ fallback:                       # 选填，无法匹配时的降级规则
   enabled: true
   level: UNKNOWN
 
+prompt: |                       # 选填，板卡/固件上下文提示词（LLM 分析时作为系统上下文）
+  当前设备上下文：Hi3861 Wi-Fi SoC，日志格式 [LEVEL] [module] message。
+
 commands:                       # 选填，命令面板快捷命令按钮列表
   - label: "PING"               # 必填，非空字符串（首尾去空白）
     command: "PING"             # 必填，发送或预填的文本
@@ -89,7 +92,15 @@ Preset 负责把板上的任意标识（`V` / `verbose` / `FATAL` …）映射�
 | `mode` | 否 | `send` | 仅允许 `send`（点击后直接发送）或 `prefill`（点击后填入输入框并把光标移至末尾，不直接发送） |
 | `tooltip` | 否 | `""` | 可选悬停提示文本，必须为字符串（首尾去空白） |
 
-## 6. 资源查找顺序
+## 6. 板卡上下文提示词 `prompt`
+
+`prompt` 为可选顶层字符串字段，用于声明当前设备/固件的背景上下文（如芯片与系统架构、日志格式约定、板载外设及命令语义），供 LLM 分析时作为系统上下文注入：
+
+- 省略或为 YAML `null` 时默认为空字符串 `""`（不额外注入板卡上下文）；
+- 加载时自动执行 `.strip()` 去除首尾空白；仅含空白字符时等效于 `""`；
+- 值必须为字符串；若为数字、布尔值、列表或对象等非字符串类型，加载报 `PresetError`。
+
+## 7. 资源查找顺序
 
 1. 用户配置目录 `presets/logs/`（Windows `%APPDATA%\SerialLogAnalyzer`，
    其他平台 `~/.config/SerialLogAnalyzer`，可用 `SLA_CONFIG_HOME` 覆盖）
@@ -99,7 +110,7 @@ Preset 负责把板上的任意标识（`V` / `verbose` / `FATAL` …）映射�
 同 `preset_id` 时高优先级覆盖低优先级，便于在不改仓库的前提下适配自己的固件。
 完整规则见 `docs/configuration.md`。
 
-## 7. 校验与错误
+## 8. 校验与错误
 
 | 情况 | 行为 |
 |---|---|
@@ -107,11 +118,12 @@ Preset 负责把板上的任意标识（`V` / `verbose` / `FATAL` …）映射�
 | 缺少必填字段 / 类型错误 | 同上 |
 | 正则编译失败或缺少必需组 | 同上 |
 | `fields` 非对象 / 字段名为空 / 字段正则非法 | 同上 |
+| `prompt` 非字符串类型 | 同上 |
 | `commands` 非列表 / 元素含未知字段 / `mode` 非法 / `label` 或 `command` 为空 | 同上 |
 | 未知顶层字段 | 报错（避免拼写错误被静默忽略） |
 | 级别标识未命中映射 | 运行期降级为 `UNKNOWN`，不报错 |
 
-## 8. 示例：新增一个固件格式
+## 9. 示例：新增一个固件格式
 
 ```yaml
 schema_version: 1

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from serial_log_analyzer.core.errors import ConfigError, PresetError
@@ -168,3 +170,60 @@ def test_invalid_commands_schema_raises(make_loader, commands_yaml: str) -> None
     bad = _MINIMAL_PRESET + commands_yaml
     with pytest.raises(PresetError):
         load_preset(make_loader({"presets/logs/custom.yaml": bad}), "custom")
+
+
+def test_prompt_defaults_to_empty_and_strips_whitespace(make_loader) -> None:
+    """省略或为 null 时默认为空串，合法字符串会去除首尾空白。"""
+
+    omitted = load_preset(make_loader({"presets/logs/custom.yaml": _MINIMAL_PRESET}), "custom")
+    assert omitted.prompt == ""
+
+    null_prompt = _MINIMAL_PRESET + "prompt: null\n"
+    parsed_null = load_preset(make_loader({"presets/logs/custom.yaml": null_prompt}), "custom")
+    assert parsed_null.prompt == ""
+
+    yaml_text = _MINIMAL_PRESET + "prompt: |\n  \n  Hi3861 测试板卡\n  第二行说明\n  \n"
+    preset = load_preset(make_loader({"presets/logs/custom.yaml": yaml_text}), "custom")
+    assert preset.prompt == "Hi3861 测试板卡\n第二行说明"
+
+
+@pytest.mark.parametrize(
+    "prompt_yaml",
+    [
+        "prompt: 123\n",
+        "prompt: true\n",
+        "prompt:\n  - line1\n",
+        "prompt:\n  key: value\n",
+    ],
+)
+def test_invalid_prompt_type_raises(make_loader, prompt_yaml: str) -> None:
+    bad = _MINIMAL_PRESET + prompt_yaml
+    with pytest.raises(PresetError):
+        load_preset(make_loader({"presets/logs/custom.yaml": bad}), "custom")
+
+
+def test_shipped_hi3861_presets_include_board_prompt(
+    make_loader, default_preset_yaml: str
+) -> None:
+    timestamped_yaml = (
+        Path(__file__).resolve().parents[3]
+        / "presets"
+        / "logs"
+        / "hi3861-timestamped.yaml"
+    ).read_text(encoding="utf-8")
+    loader = make_loader(
+        {
+            "presets/logs/hi3861-default.yaml": default_preset_yaml,
+            "presets/logs/hi3861-timestamped.yaml": timestamped_yaml,
+        }
+    )
+
+    default_preset = load_preset(loader, "hi3861-default")
+    timestamped_preset = load_preset(loader, "hi3861-timestamped")
+
+    assert default_preset.prompt
+    assert default_preset.prompt == default_preset.prompt.strip()
+    assert "Hi3861" in default_preset.prompt
+    assert timestamped_preset.prompt
+    assert timestamped_preset.prompt == timestamped_preset.prompt.strip()
+    assert "[uptime_s]" in timestamped_preset.prompt

@@ -40,6 +40,12 @@ fallback:
   enabled: true
   level: UNKNOWN
 
+prompt: |
+  当前设备上下文：Hi3861 Wi-Fi SoC（FS-Hi3861-V4.2 开发板），运行基于 OpenHarmony LiteOS-M 的串口日志固件（UART0 115200-8-N-1）。
+  - 日志格式：`[LEVEL] [module] message`（亦支持行首可选 `[uptime_s]` 时间戳前缀），级别含 `V`/`D`/`I`/`W`/`E` 等，行首空白缩进行为上一条日志的多行续行（如调用栈）。
+  - 板载 I2C0 外设：SHT20 温湿度传感器（`temperature` °C、`humidity` %RH）、AP3216C 光照/接近/红外传感器（`light`/`proximity`/`infrared`）、PCF8574 IO 扩展芯片（P2 控制运行指示灯 LED2，每 500ms 翻转心跳；P0 为风扇且本固件不驱动恒为 0；P1 为蜂鸣器）。约每 3s 上报一次 `[I] [sensor]` 读数。
+  - 命令通道：PC 下发文本命令后设备以 `@OK <payload>` 或 `@ERR <code> <msg>` 回复（独立于日志行），支持 `PING`、`VERSION`、`HELP` 与 `TEST <wifi|uart|gpio|memory|sensor|watchdog|all>`；`TEST` 仅输出可控模拟诊断日志（不引发真实死机、内存泄漏或硬件复位），分析时注意区分常规心跳、模拟自测与真实故障。
+
 commands:
   - label: "PING"
     command: "PING"

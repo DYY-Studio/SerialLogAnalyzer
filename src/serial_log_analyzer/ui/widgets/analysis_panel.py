@@ -8,6 +8,7 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QGuiApplication, QKeyEvent
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFrame,
     QHBoxLayout,
@@ -45,6 +46,8 @@ _CONTEXT_CHOICES: tuple[tuple[str, ContextSelector], ...] = (
     ("无", ContextSelector.NONE),
 )
 
+_BOARD_PROMPT_PREVIEW_LIMIT = 180
+
 
 class _SubmitEdit(QPlainTextEdit):
     """多行输入框：Enter 发送，Shift+Enter 换行。"""
@@ -76,6 +79,7 @@ class AnalysisPanel(QWidget):
         reset_requested(): 请求清空会话。
         profile_changed(str): 用户切换了 LLM Profile（携带 profile_id）。
         export_report_requested(): 请求导出结构化诊断报告。
+        board_prompt_toggled(bool): 用户切换「注入板级说明」开关（携带是否启用）。
     """
 
     analyze_requested = Signal(object)
@@ -84,6 +88,7 @@ class AnalysisPanel(QWidget):
     reset_requested = Signal()
     profile_changed = Signal(str)
     export_report_requested = Signal()
+    board_prompt_toggled = Signal(bool)
 
     def __init__(
         self,
@@ -95,6 +100,8 @@ class AnalysisPanel(QWidget):
         self._tokens = tokens if tokens is not None else default_tokens()
         self._has_session = False
         self._streaming = False
+        self._has_board_prompt = False
+        self._board_prompt_pref = True
         self._build()
         self.set_theme_tokens(self._tokens)
         self.set_state(AnalysisState.IDLE)
@@ -153,12 +160,69 @@ class AnalysisPanel(QWidget):
         first_turn = idle and not self._has_session
         self.goal_combo.setEnabled(first_turn)
         self.context_combo.setEnabled(first_turn)
+        self.board_prompt_box.setEnabled(first_turn and self._has_board_prompt)
         self._scope_widget.setVisible(not self._has_session)
         self._scope_summary.setVisible(self._has_session)
         if self._has_session:
+            board_note = "含板级说明" if self.include_board_prompt() else "不含板级说明"
             self._scope_summary.setText(
                 f"首轮范围：{self.goal_combo.currentText()} · {self.context_combo.currentText()}"
+                f" · {board_note}"
             )
+
+    def set_board_prompt(self, preset_name: str, prompt: str) -> None:
+        """设置当前 Preset 的板级说明，并同步「注入板级说明」复选框状态与提示。
+
+        当 ``prompt`` 去除首尾空白后为空时，保留用户原有的全局勾选偏好，但把复选框
+        视觉置灰并取消勾选（不触发 ``board_prompt_toggled``）。
+
+        参数:
+            preset_name: 当前日志 Preset 展示名称。
+            prompt: Preset 声明的板级系统提示词。
+        """
+
+        cleaned = prompt.strip()
+        self._has_board_prompt = bool(cleaned)
+        self._sync_board_prompt_box()
+        self.board_prompt_box.setToolTip(self._format_board_prompt_tooltip(preset_name, cleaned))
+        self._sync_enabled()
+
+    def set_include_board_prompt(self, enabled: bool) -> None:
+        """更新「注入板级说明」首选项并同步复选框（不触发变更信号）。
+
+        参数:
+            enabled: 用户是否偏好在新建会话时注入板级说明。
+        """
+
+        self._board_prompt_pref = bool(enabled)
+        self._sync_board_prompt_box()
+        self._sync_enabled()
+
+    def include_board_prompt(self) -> bool:
+        """返回当前新建会话时是否实际注入板级说明。"""
+
+        return bool(self._has_board_prompt and self._board_prompt_pref)
+
+    def _sync_board_prompt_box(self) -> None:
+        """在不触发信号的前提下把复选框勾选状态同步为当前生效开关。"""
+
+        self.board_prompt_box.blockSignals(True)
+        self.board_prompt_box.setChecked(self.include_board_prompt())
+        self.board_prompt_box.blockSignals(False)
+
+    @staticmethod
+    def _format_board_prompt_tooltip(preset_name: str, prompt: str) -> str:
+        """构造「注入板级说明」复选框的悬停提示文本。"""
+
+        if not prompt:
+            return "当前 Preset 未配置板级说明"
+        preview = (
+            prompt
+            if len(prompt) <= _BOARD_PROMPT_PREVIEW_LIMIT
+            else f"{prompt[:_BOARD_PROMPT_PREVIEW_LIMIT]}…"
+        )
+        title = preset_name.strip() or "当前 Preset"
+        return f"「{title}」板级说明（新建会话时注入）：\n{preview}"
 
     def set_details_expanded(self, expanded: bool) -> None:
         """设置「思考 / 参考内容」折叠块的默认展开状态。"""
@@ -247,7 +311,11 @@ class AnalysisPanel(QWidget):
         layout.addLayout(header_row)
 
         self._scope_widget = QWidget()
-        scope_row = QHBoxLayout(self._scope_widget)
+        scope_layout = QVBoxLayout(self._scope_widget)
+        scope_layout.setContentsMargins(0, 0, 0, 0)
+        scope_layout.setSpacing(4)
+
+        scope_row = QHBoxLayout()
         scope_row.setContentsMargins(0, 0, 0, 0)
         scope_row.setSpacing(6)
 
@@ -270,10 +338,19 @@ class AnalysisPanel(QWidget):
             self.context_combo.addItem(label, selector)
         ctx_col.addWidget(self.context_combo)
         scope_row.addLayout(ctx_col, stretch=1)
+        scope_layout.addLayout(scope_row)
+
+        self.board_prompt_box = QCheckBox("注入板级说明")
+        self.board_prompt_box.setObjectName("panel-board-prompt")
+        self.board_prompt_box.setChecked(True)
+        self.board_prompt_box.setToolTip("当前 Preset 未配置板级说明")
+        self.board_prompt_box.toggled.connect(self._on_board_prompt_toggled)
+        scope_layout.addWidget(self.board_prompt_box)
         layout.addWidget(self._scope_widget)
 
         self._scope_summary = QLabel()
         self._scope_summary.setProperty("role", "muted-caption")
+        self._scope_summary.setWordWrap(True)
         self._scope_summary.setVisible(False)
         layout.addWidget(self._scope_summary)
 
@@ -351,8 +428,18 @@ class AnalysisPanel(QWidget):
             goal_id=self.goal_combo.currentData(),
             user_input=text,
             context=None,
+            include_board_prompt=self.include_board_prompt(),
         )
         self.analyze_requested.emit((request, self.context_combo.currentData()))
+
+    def _on_board_prompt_toggled(self, checked: bool) -> None:
+        """响应用户切换「注入板级说明」复选框，仅在存在板级说明时更新偏好并通知外部。"""
+
+        if not self._has_board_prompt:
+            return
+        self._board_prompt_pref = bool(checked)
+        self._sync_enabled()
+        self.board_prompt_toggled.emit(bool(checked))
 
     def _on_reset(self) -> None:
         self.chat.clear()

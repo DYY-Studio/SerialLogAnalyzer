@@ -37,6 +37,7 @@ _TOP_LEVEL_FIELDS = {
     "line",
     "fallback",
     "commands",
+    "prompt",
 }
 _LINE_FIELDS = {"pattern", "level_map", "continuation_pattern", "fields"}
 _FALLBACK_FIELDS = {"enabled", "level"}
@@ -172,6 +173,7 @@ def _validate_and_build(
         )
 
     commands = _parse_commands(data.get("commands"))
+    prompt = _parse_prompt(data.get("prompt"))
 
     return LogPreset(
         preset_id=declared_id,
@@ -180,6 +182,7 @@ def _validate_and_build(
         fallback=fallback,
         source_path=source_path,
         commands=commands,
+        prompt=prompt,
     )
 
 
@@ -308,3 +311,17 @@ def _parse_commands(raw: object) -> tuple[PresetCommand, ...]:
             )
         )
     return tuple(commands)
+
+
+def _parse_prompt(raw: object) -> str:
+    """解析可选 ``prompt`` 文本并校验类型为字符串。
+
+    异常:
+        PresetError: 非字符串类型。
+    """
+
+    if raw is None:
+        return ""
+    if not isinstance(raw, str):
+        raise PresetError("prompt 必须是字符串")
+    return raw.strip()
