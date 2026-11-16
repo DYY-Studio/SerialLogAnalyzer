@@ -269,10 +269,8 @@ def build_window(context: ApplicationContext) -> MainWindow:
     if theme_manager is not None:
         table_model.set_tokens(theme_manager.tokens)
         window.set_theme_tokens(theme_manager.tokens)
-        panel.chat.set_theme_tokens(theme_manager.tokens)
         theme_manager.theme_changed.connect(table_model.set_tokens)
         theme_manager.theme_changed.connect(window.set_theme_tokens)
-        theme_manager.theme_changed.connect(panel.chat.set_theme_tokens)
     window.set_preset_name(context.preset.preset_id)
 
     log_view.selection_changed.connect(analysis.selected_sequences)

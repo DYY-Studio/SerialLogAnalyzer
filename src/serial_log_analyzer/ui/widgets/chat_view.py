@@ -10,10 +10,11 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QColor, QGuiApplication, QPalette
 from PySide6.QtWidgets import (
     QFrame,
+    QHBoxLayout,
     QLabel,
     QScrollArea,
     QToolButton,
@@ -27,8 +28,9 @@ from serial_log_analyzer.core.models.analysis import (
     AnalysisState,
     MessageRole,
 )
+from serial_log_analyzer.ui.icons import render_icon, render_pixmap
 from serial_log_analyzer.ui.markdown import MarkdownRenderer
-from serial_log_analyzer.ui.theme import ThemeTokens
+from serial_log_analyzer.ui.theme import ThemeTokens, default_tokens
 
 __all__ = ["ChatView"]
 
@@ -39,7 +41,7 @@ _EMPTY_HINT = "分析结果将显示在这里"
 _BOTTOM_SLACK = 4  # 距底部多少像素以内算「贴底」
 
 
-class _CollapsibleBlock(QWidget):
+class _CollapsibleBlock(QFrame):
     """可折叠的一段正文：标题按钮 + 自动换行、可复制的 Markdown 文本。"""
 
     def __init__(
@@ -47,6 +49,7 @@ class _CollapsibleBlock(QWidget):
         title: str,
         *,
         renderer: MarkdownRenderer,
+        tokens: ThemeTokens,
         expanded: bool,
         parent: QWidget | None = None,
     ) -> None:
@@ -54,17 +57,20 @@ class _CollapsibleBlock(QWidget):
         self.setObjectName("collapsible-block")
         self._title = title
         self._renderer = renderer
+        self._tokens = tokens
         self._text = ""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(2)
+        layout.setContentsMargins(8, 5, 8, 6)
+        layout.setSpacing(3)
 
         self._apply_palette(renderer)
 
         self._toggle = QToolButton()
+        self._toggle.setProperty("role", "disclosure")
         self._toggle.setCheckable(True)
         self._toggle.setAutoRaise(True)
         self._toggle.setText(title)
+        self._toggle.setIconSize(QSize(12, 12))
         self._toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._toggle.toggled.connect(self._on_toggled)
         layout.addWidget(self._toggle)
@@ -76,7 +82,8 @@ class _CollapsibleBlock(QWidget):
         layout.addWidget(self._body)
 
         self.setVisible(False)  # 没有内容时整块不出现（set_text 会按内容显隐）
-        self._toggle.setChecked(expanded)  # 触发 _on_toggled 同步箭头与可见性
+        self._toggle.setChecked(expanded)  # 触发 _on_toggled 同步图标与可见性
+        self._sync_chevron(expanded)
 
     @property
     def title(self) -> str:
@@ -106,11 +113,13 @@ class _CollapsibleBlock(QWidget):
 
         return self._toggle.isChecked()
 
-    def refresh_theme(self, renderer: MarkdownRenderer) -> None:
-        """按新渲染器刷新容器配色与已渲染的 Markdown 正文。"""
+    def refresh_theme(self, renderer: MarkdownRenderer, tokens: ThemeTokens) -> None:
+        """按新渲染器刷新容器配色、图标与已渲染的 Markdown 正文。"""
 
         self._renderer = renderer
+        self._tokens = tokens
         self._apply_palette(renderer)
+        self._sync_chevron(self._toggle.isChecked())
         if self._text:
             self._body.setText(renderer.html(self._text))
 
@@ -126,40 +135,53 @@ class _CollapsibleBlock(QWidget):
 
     def _on_toggled(self, expanded: bool) -> None:
         self._body.setVisible(expanded)
-        self._toggle.setArrowType(
-            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
-        )
+        self._sync_chevron(expanded)
+
+    def _sync_chevron(self, expanded: bool) -> None:
+        name = "chevron-down" if expanded else "chevron-right"
+        self._toggle.setIcon(render_icon(name, self._tokens.text_muted, size=12))
 
 
 class _TurnCard(QFrame):
-    """一轮对话：角色标题 + 可折叠的细节（思考 / 参考内容）+ 正文。"""
+    """一轮对话：角色徽章 + 单轮复制 + 可折叠细节（思考 / 参考内容）+ 正文。"""
 
     def __init__(
         self,
         role: MessageRole,
         *,
         renderer: MarkdownRenderer,
+        tokens: ThemeTokens,
         expanded: bool,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("turn-card")
+        self.setProperty("role", "assistant" if role is MessageRole.ASSISTANT else "user")
         self.role = role
         self._renderer = renderer
+        self._tokens = tokens
         self._body_text = ""
         detail_title = _THINKING_TITLE if role is MessageRole.ASSISTANT else _CONTEXT_TITLE
-        self.setFrameShape(QFrame.Shape.StyledPanel)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(4)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(6)
 
+        header = QHBoxLayout()
+        header.setSpacing(6)
         self.title = QLabel(_ROLE_TITLES[role])
-        font = self.title.font()
-        font.setBold(True)
-        self.title.setFont(font)
-        layout.addWidget(self.title)
+        self.title.setProperty("role", "card-badge")
+        header.addWidget(self.title)
+        header.addStretch()
+        self.copy_card_btn = QToolButton()
+        self.copy_card_btn.setToolTip("复制本轮正文原文")
+        self.copy_card_btn.setIconSize(QSize(13, 13))
+        self.copy_card_btn.clicked.connect(self._copy_body)
+        header.addWidget(self.copy_card_btn)
+        layout.addLayout(header)
 
-        self.detail = _CollapsibleBlock(detail_title, renderer=renderer, expanded=expanded)
+        self.detail = _CollapsibleBlock(
+            detail_title, renderer=renderer, tokens=tokens, expanded=expanded
+        )
         layout.addWidget(self.detail)
 
         self.body = QLabel()
@@ -167,6 +189,7 @@ class _TurnCard(QFrame):
         self.body.setTextFormat(Qt.TextFormat.RichText)
         self.body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.body)
+        self._sync_copy_icon()
 
     def set_detail(self, text: str) -> None:
         """更新细节块（思考 / 参考内容）。"""
@@ -187,13 +210,22 @@ class _TurnCard(QFrame):
     def set_details_expanded(self, expanded: bool) -> None:
         self.detail.set_expanded(expanded)
 
-    def refresh_theme(self, renderer: MarkdownRenderer) -> None:
-        """使用新渲染器刷新细节块与正文。"""
+    def refresh_theme(self, renderer: MarkdownRenderer, tokens: ThemeTokens) -> None:
+        """使用新渲染器刷新细节块、图标与正文。"""
 
         self._renderer = renderer
-        self.detail.refresh_theme(renderer)
+        self._tokens = tokens
+        self._sync_copy_icon()
+        self.detail.refresh_theme(renderer, tokens)
         if self._body_text:
             self.body.setText(renderer.html(self._body_text))
+
+    def _copy_body(self) -> None:
+        if self._body_text:
+            QGuiApplication.clipboard().setText(self._body_text)
+
+    def _sync_copy_icon(self) -> None:
+        self.copy_card_btn.setIcon(render_icon("copy", self._tokens.text_muted, size=13))
 
 
 class ChatView(QScrollArea):
@@ -205,8 +237,9 @@ class ChatView(QScrollArea):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setObjectName("chat-view")
         self._expanded = False
-        self._tokens: ThemeTokens | None = None
+        self._tokens: ThemeTokens = default_tokens()
         self._md = MarkdownRenderer(self.palette(), self.font().pointSizeF())
         self._cards: list[_TurnCard] = []
         self._message_cards: list[_TurnCard] = []
@@ -222,13 +255,28 @@ class ChatView(QScrollArea):
 
         body = QWidget()
         self._layout = QVBoxLayout(body)
-        self._layout.setContentsMargins(4, 4, 4, 4)
-        self._layout.setSpacing(6)
+        self._layout.setContentsMargins(6, 6, 6, 6)
+        self._layout.setSpacing(8)
+        self._empty_box = QWidget()
+        empty_layout = QVBoxLayout(self._empty_box)
+        empty_layout.setContentsMargins(12, 24, 12, 16)
+        empty_layout.setSpacing(6)
+        self._empty_icon = QLabel()
+        self._empty_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(self._empty_icon)
         self._hint = QLabel(_EMPTY_HINT)
+        self._hint.setObjectName("chat-empty-title")
         self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._layout.addWidget(self._hint)
+        empty_layout.addWidget(self._hint)
+        sub_hint = QLabel("在左侧日志表选中关键行，选择目标后按 Enter 开始诊断")
+        sub_hint.setObjectName("chat-empty-hint")
+        sub_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub_hint.setWordWrap(True)
+        empty_layout.addWidget(sub_hint)
+        self._layout.addWidget(self._empty_box)
         self._layout.addStretch(1)
         self.setWidget(body)
+        self._sync_empty_icon()
 
     # ------------------------------------------------------------------
     # 外部接口
@@ -251,13 +299,18 @@ class ChatView(QScrollArea):
         """按当前主题 Token 或调色板重建 Markdown 渲染器并重绘已有卡片。"""
 
         palette = QPalette(self.palette())
-        if self._tokens is not None:
-            palette.setColor(QPalette.ColorRole.Base, QColor(self._tokens.bg_surface))
-            palette.setColor(QPalette.ColorRole.Text, QColor(self._tokens.text_primary))
-            palette.setColor(QPalette.ColorRole.Link, QColor(self._tokens.accent_primary))
+        palette.setColor(QPalette.ColorRole.Base, QColor(self._tokens.bg_surface))
+        palette.setColor(QPalette.ColorRole.Text, QColor(self._tokens.text_primary))
+        palette.setColor(QPalette.ColorRole.Link, QColor(self._tokens.accent_primary))
         self._md = MarkdownRenderer(palette, self.font().pointSizeF())
+        self._sync_empty_icon()
         for card in self._cards:
-            card.refresh_theme(self._md)
+            card.refresh_theme(self._md, self._tokens)
+
+    def _sync_empty_icon(self) -> None:
+        self._empty_icon.setPixmap(
+            render_pixmap("search", self._tokens.text_muted, size=24, dpr=2.0)
+        )
 
     def render(self, result: AnalysisResult) -> None:
         """按结果快照刷新转录（已定稿轮次按会话补卡片，未定稿一轮就地更新）。"""
@@ -288,7 +341,7 @@ class ChatView(QScrollArea):
             self._live.set_detail(result.reasoning or "")
             self._live.set_body(result.content)
 
-        self._hint.setVisible(not self._cards)
+        self._empty_box.setVisible(not self._cards)
         if appended:  # 新一轮出现时重新贴底跟随
             self._follow = True
 
@@ -331,14 +384,19 @@ class ChatView(QScrollArea):
         self._message_cards.clear()
         self._live = None
         self._follow = True
-        self._hint.setVisible(True)
+        self._empty_box.setVisible(True)
 
     # ------------------------------------------------------------------
 
     def _append_card(self, message: AnalysisMessage) -> _TurnCard:
         """按消息落一张卡片，插在末尾（卡片区尾部有 stretch）。"""
 
-        card = _TurnCard(message.role, renderer=self._md, expanded=self._expanded)
+        card = _TurnCard(
+            message.role,
+            renderer=self._md,
+            tokens=self._tokens,
+            expanded=self._expanded,
+        )
         if message.role is MessageRole.USER:
             card.set_body(message.summary or message.content)
             if message.content.strip() != (message.summary or "").strip():

@@ -424,3 +424,34 @@ def test_credential_editor_environment_kind_has_no_secret_input(qtbot) -> None:
     editor.findChild(QLineEdit, "credential-target").setText("  ")
     with pytest.raises(ConfigError):
         editor.credential()
+
+
+def test_credential_editor_supports_custom_hints(qtbot, monkeypatch) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: warnings.append(str(args[2])))
+    editor = CredentialEditor(
+        KeyringStoreAdapter(backend=FakeKeyringBackend()),
+        target_hint="钥匙串账号名（留空用 smtp-alert）",
+        secret_hint="SMTP 授权码",
+        empty_secret_msg="请先输入 SMTP 授权码。",
+    )
+    qtbot.addWidget(editor)
+    editor.load(CredentialRef(kind=CredentialKind.KEYRING, name="smtp-alert"), "smtp-alert")
+
+    assert editor.findChild(QLineEdit, "credential-target").placeholderText().endswith("smtp-alert）")
+    assert editor.findChild(QLineEdit, "credential-secret").placeholderText() == "SMTP 授权码"
+    qtbot.mouseClick(editor.findChild(QPushButton, "credential-save"), Qt.MouseButton.LeftButton)
+    assert warnings == ["请先输入 SMTP 授权码。"]
+
+
+def test_provider_dialog_toggles_advanced_section(qtbot, tmp_path) -> None:
+    from PySide6.QtWidgets import QToolButton, QWidget
+
+    dialog = _provider_dialog(tmp_path)
+    qtbot.addWidget(dialog)
+    toggle = dialog.findChild(QToolButton, "provider-advanced-toggle")
+    box = dialog.findChild(QWidget, "provider-advanced-box")
+
+    assert toggle.isChecked() is False and box.isHidden() is True
+    toggle.click()
+    assert toggle.isChecked() is True and box.isHidden() is False

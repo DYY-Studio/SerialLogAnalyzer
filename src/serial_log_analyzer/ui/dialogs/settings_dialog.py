@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
-    QGroupBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -88,29 +88,49 @@ class SettingsDialog(QDialog):
         export_row.addWidget(self._export_dir)
         export_row.addWidget(browse)
 
-        log_group = QGroupBox("日志")
-        log_form = QFormLayout(log_group)
+        log_title = QLabel("日志")
+        log_title.setProperty("role", "section-title")
+        log_divider = QFrame()
+        log_divider.setProperty("role", "section-divider")
+        log_form = QFormLayout()
+        log_form.setSpacing(10)
         log_form.addRow("容量", self._capacity)
         log_form.addRow("自动滚动", self._autoscroll)
         log_form.addRow("应用日志级别", self._log_level)
         log_form.addRow("导出目录", export_row)
 
-        llm_group = QGroupBox("LLM 分析")
-        llm_form = QFormLayout(llm_group)
+        llm_title = QLabel("LLM 分析")
+        llm_title.setProperty("role", "section-title")
+        llm_divider = QFrame()
+        llm_divider.setProperty("role", "section-divider")
+        llm_form = QFormLayout()
+        llm_form.setSpacing(10)
         llm_form.addRow("默认展开", self._details_expanded)
         llm_form.addRow("携带历史", self._history_rounds)
 
         hint = QLabel("偏好保存在本机系统配置；模型服务与 API Key 由各自对话框管理。")
+        hint.setProperty("role", "muted-caption")
+        hint.setWordWrap(True)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
+        ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        ok_btn.setText("确定")
+        ok_btn.setProperty("variant", "primary")
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(log_group)
-        layout.addWidget(llm_group)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+        layout.addWidget(log_title)
+        layout.addWidget(log_divider)
+        layout.addLayout(log_form)
+        layout.addSpacing(6)
+        layout.addWidget(llm_title)
+        layout.addWidget(llm_divider)
+        layout.addLayout(llm_form)
+        layout.addSpacing(4)
         layout.addWidget(hint)
         layout.addWidget(buttons)
 

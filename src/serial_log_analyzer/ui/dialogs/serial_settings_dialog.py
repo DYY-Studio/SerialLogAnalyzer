@@ -12,8 +12,8 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QRadioButton,
@@ -75,9 +75,18 @@ class SerialSettingsDialog(QDialog):
 
     def _build(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
 
-        group = QGroupBox("串口参数")
-        grid = QGridLayout(group)
+        param_title = QLabel("串口参数")
+        param_title.setProperty("role", "section-title")
+        param_divider = QFrame()
+        param_divider.setProperty("role", "section-divider")
+        layout.addWidget(param_title)
+        layout.addWidget(param_divider)
+
+        grid = QGridLayout()
+        grid.setSpacing(10)
 
         grid.addWidget(QLabel("数据位"), 0, 0)
         self.data_bits = QComboBox()
@@ -95,21 +104,35 @@ class SerialSettingsDialog(QDialog):
         for label, value in _PARITY:
             self.parity_combo.addItem(label, value)
         grid.addWidget(self.parity_combo, 1, 1)
-        layout.addWidget(group)
+        layout.addLayout(grid)
 
-        flow_group = QGroupBox("流控")
-        flow_layout = QHBoxLayout(flow_group)
+        layout.addSpacing(4)
+        flow_title = QLabel("流控")
+        flow_title.setProperty("role", "section-title")
+        flow_divider = QFrame()
+        flow_divider.setProperty("role", "section-divider")
+        layout.addWidget(flow_title)
+        layout.addWidget(flow_divider)
+
+        flow_layout = QHBoxLayout()
+        flow_layout.setSpacing(12)
         self._flow_buttons = QButtonGroup(self)
         for index, (label, value) in enumerate(_FLOW):
             button = QRadioButton(label)
             button.setProperty("flow", value)
             self._flow_buttons.addButton(button, index)
             flow_layout.addWidget(button)
-        layout.addWidget(flow_group)
+        flow_layout.addStretch()
+        layout.addLayout(flow_layout)
 
+        layout.addSpacing(4)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
+        ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        ok_btn.setText("确定")
+        ok_btn.setProperty("variant", "primary")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)

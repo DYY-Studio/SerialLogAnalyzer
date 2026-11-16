@@ -160,13 +160,16 @@ class MainWindow(QMainWindow):
         return label
 
     def set_theme_tokens(self, tokens: ThemeTokens) -> None:
-        """将新主题 Token 同步到停靠栏标题图标、工具栏与日志视图。"""
+        """将新主题 Token 同步到停靠栏标题图标、工具栏、日志视图与各功能面板。"""
 
         self._tokens = tokens
         for bar in self._dock_titles:
             bar.refresh_icons(tokens)
         self.serial_toolbar.set_theme_tokens(tokens)
         self.log_view.set_theme_tokens(tokens)
+        self.analysis_panel.set_theme_tokens(tokens)
+        self.command_panel.set_theme_tokens(tokens)
+        self.app_log_panel.set_theme_tokens(tokens)
 
     def set_connection_status(self, connected: bool, detail: str = "") -> None:
         """更新状态栏右侧的串口连接状态胶囊。"""

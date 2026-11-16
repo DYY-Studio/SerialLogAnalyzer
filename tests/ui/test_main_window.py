@@ -135,6 +135,7 @@ def test_analysis_panel_first_turn_then_follow_up(qtbot) -> None:
 
     panel.set_state(AnalysisState.STREAMING)
     assert panel.send_btn.isEnabled() is False and panel.stop_btn.isEnabled() is True
+    assert panel._action_stack.currentWidget() is panel.stop_btn
 
     panel.set_result(
         AnalysisResult(
@@ -148,6 +149,9 @@ def test_analysis_panel_first_turn_then_follow_up(qtbot) -> None:
         )
     )
     panel.set_state(AnalysisState.DONE)
+    assert panel._action_stack.currentWidget() is panel.send_btn
+    assert panel._scope_widget.isHidden() is True
+    assert panel._scope_summary.isHidden() is False
     assert "结论" in panel.chat.plain_text()
     assert "3" in panel.usage_label.text() and "7" in panel.usage_label.text()
     assert "缓存 2" in panel.usage_label.text()
@@ -165,6 +169,8 @@ def test_analysis_panel_first_turn_then_follow_up(qtbot) -> None:
 
     panel.new_session_btn.click()
     assert panel.context_combo.isEnabled() is True and panel.goal_combo.isEnabled() is True
+    assert panel._scope_widget.isHidden() is False
+    assert panel._scope_summary.isHidden() is True
     assert panel.turns_label.text() == ""
 
 
@@ -313,6 +319,19 @@ def test_command_panel_echoes_command_and_appends_reply(qtbot) -> None:
 
     panel.send_btn.click()  # 空命令不发
     assert sent == ["PING"]
+
+    # 快捷命令芯片：PING 直接发送，TEST 仅预填前缀且不直接提交
+    from PySide6.QtWidgets import QToolButton
+
+    panel.findChild(QToolButton, "cmd-chip-ping").click()
+    assert sent == ["PING", "PING"]
+
+    panel.findChild(QToolButton, "cmd-chip-test").click()
+    assert panel.command_edit.text() == "TEST "
+    assert sent == ["PING", "PING"]
+
+    panel.findChild(QToolButton, "cmd-clear").click()
+    assert panel.reply_view.toPlainText() == ""
 
 
 def test_panel_profile_combo_emits_change(qtbot) -> None:

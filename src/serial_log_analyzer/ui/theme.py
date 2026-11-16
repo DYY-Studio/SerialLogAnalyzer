@@ -283,7 +283,8 @@ def build_palette(tokens: ThemeTokens) -> QPalette:
         QPalette.ColorRole.Link: accent,
         QPalette.ColorRole.Mid: border,
         QPalette.ColorRole.Light: subtle,
-        QPalette.ColorRole.Dark: QColor(tokens.border_subtle),
+        QPalette.ColorRole.Dark: border,
+        QPalette.ColorRole.Shadow: muted,
     }
     for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
         for role, color in active_roles.items():
@@ -390,14 +391,71 @@ QLabel[role="status-pill"] {{
     font-weight: 600;
     font-size: 11px;
 }}
-#log-empty-title {{
+#log-empty-title, #chat-empty-title {{
     color: {t.text_secondary};
     font-weight: 600;
     font-size: 13px;
 }}
-#log-empty-hint {{
+#log-empty-hint, #chat-empty-hint {{
     color: {t.text_muted};
     font-size: 12px;
+}}
+QFrame[role="section-divider"] {{
+    background-color: {t.border_subtle};
+    border: none;
+    max-height: 1px;
+    min-height: 1px;
+}}
+QLabel[role="section-title"] {{
+    color: {t.text_secondary};
+    font-weight: 600;
+    font-size: 12px;
+    padding-top: 2px;
+}}
+QFrame#turn-card[role="user"] {{
+    background-color: {t.bg_elevated};
+    border: 1px solid {t.border_subtle};
+    border-radius: 6px;
+}}
+QFrame#turn-card[role="assistant"] {{
+    background-color: {t.bg_surface};
+    border: 1px solid {t.border_subtle};
+    border-left: 3px solid {t.accent_primary};
+    border-radius: 6px;
+}}
+#collapsible-block {{
+    border: 1px solid {t.border_subtle};
+    border-radius: 4px;
+}}
+QFrame#chat-composer {{
+    background-color: {t.bg_surface};
+    border: 1px solid {t.border_strong};
+    border-radius: 6px;
+}}
+QLabel[role="card-badge"] {{
+    background-color: {t.bg_subtle};
+    color: {t.text_secondary};
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-weight: 600;
+}}
+QLabel[role="muted-caption"] {{
+    color: {t.text_muted};
+    font-size: 11px;
+}}
+QToolButton[chip="cmd"] {{
+    background-color: {t.bg_elevated};
+    color: {t.text_secondary};
+    border: 1px solid {t.border_subtle};
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+}}
+QToolButton[chip="cmd"]:hover {{
+    background-color: {t.bg_subtle};
+    color: {t.text_primary};
+    border-color: {t.border_strong};
 }}
 QDockWidget {{
     color: {t.text_primary};
@@ -509,6 +567,18 @@ QToolButton:checked {{
     color: {t.text_primary};
     border-color: {t.accent_primary};
 }}
+QToolButton[role="disclosure"],
+QToolButton[role="disclosure"]:checked {{
+    background-color: transparent;
+    color: {t.text_secondary};
+    border: 1px solid transparent;
+    padding: 2px 4px;
+    font-weight: 600;
+}}
+QToolButton[role="disclosure"]:hover {{
+    background-color: {t.bg_subtle};
+    color: {t.text_primary};
+}}
 QToolButton[chip="level"] {{
     background-color: transparent;
     color: {t.text_muted};
@@ -612,6 +682,13 @@ QGroupBox::title {{
 QCheckBox, QRadioButton {{
     spacing: 6px;
     color: {t.text_primary};
+}}
+QCheckBox::indicator:unchecked {{
+    width: 14px;
+    height: 14px;
+    border: 1px solid {t.border_strong};
+    background-color: {t.bg_surface};
+    border-radius: 3px;
 }}
 QCheckBox:disabled, QRadioButton:disabled {{
     color: {t.text_muted};

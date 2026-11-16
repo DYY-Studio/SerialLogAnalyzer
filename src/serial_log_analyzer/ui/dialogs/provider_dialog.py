@@ -15,12 +15,14 @@ import re
 from collections.abc import Callable
 
 import yaml
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -29,7 +31,9 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
+    QToolButton,
     QVBoxLayout,
+    QWidget,
 )
 
 from serial_log_analyzer.core.errors import AppError, ConfigError
@@ -38,6 +42,8 @@ from serial_log_analyzer.core.llm.model_discovery import ModelDiscoveryService
 from serial_log_analyzer.core.models.provider import ModelOption, ProviderProfile
 from serial_log_analyzer.core.ports import KeyringStore
 from serial_log_analyzer.io.storage.profile_store import ProfileStore
+from serial_log_analyzer.ui.icons import render_icon
+from serial_log_analyzer.ui.theme import default_tokens, monospace_font
 from serial_log_analyzer.ui.widgets.credential_editor import CredentialEditor
 
 __all__ = ["ProviderDialog"]
@@ -78,7 +84,9 @@ class ProviderDialog(QDialog):
         self._adapters = {adapter.adapter_id: adapter for adapter in adapters}
         self._profiles: list[ProviderProfile] = []
         self._saved_path = ""
+        self._tokens = default_tokens()
         self.setWindowTitle("模型服务")
+        self.setMinimumWidth(520)
 
         self._combo = QComboBox()
         self._combo.setObjectName("provider-combo")
@@ -89,6 +97,7 @@ class ProviderDialog(QDialog):
         self._new_button.clicked.connect(self._create)
         self._delete_button = QPushButton("删除")
         self._delete_button.setObjectName("provider-delete")
+        self._delete_button.setProperty("variant", "danger")
         self._delete_button.clicked.connect(self._delete)
 
         self._adapter = QComboBox()
@@ -116,48 +125,76 @@ class ProviderDialog(QDialog):
 
         self._extra_body = QPlainTextEdit()
         self._extra_body.setObjectName("provider-extra-body")
+        self._extra_body.setFont(monospace_font())
         self._extra_body.setPlaceholderText('YAML 映射，如 {"top_p": 0.9}；留空表示不追加')
-        self._extra_body.setFixedHeight(70)
+        self._extra_body.setFixedHeight(68)
 
         self._extra_headers = QPlainTextEdit()
         self._extra_headers.setObjectName("provider-extra-headers")
+        self._extra_headers.setFont(monospace_font())
         self._extra_headers.setPlaceholderText('YAML 映射，如 {"X-Org": "team-a"}；留空表示不追加')
-        self._extra_headers.setFixedHeight(70)
+        self._extra_headers.setFixedHeight(68)
 
         self._credential = CredentialEditor(keyring)
 
         profile_row = QHBoxLayout()
+        profile_row.setSpacing(6)
         profile_row.addWidget(self._combo, 1)
         profile_row.addWidget(self._new_button)
         profile_row.addWidget(self._delete_button)
 
         model_row = QHBoxLayout()
+        model_row.setSpacing(6)
         model_row.addWidget(self._model, 1)
         model_row.addWidget(self._fetch_button)
 
-        form = QFormLayout()
-        form.addRow("Profile", profile_row)
-        form.addRow("Adapter", self._adapter)
-        form.addRow("Base URL", self._base_url)
-        form.addRow("模型", model_row)
-        form.addRow("流式输出", self._stream)
-        form.addRow("请求超时", self._timeout)
-        form.addRow("extra_body", self._extra_body)
-        form.addRow("extra_headers", self._extra_headers)
-        form.addRow("凭据", self._credential)
+        basic_title = QLabel("基础连接与凭据")
+        basic_title.setProperty("role", "section-title")
+        basic_divider = QFrame()
+        basic_divider.setProperty("role", "section-divider")
+
+        basic_form = QFormLayout()
+        basic_form.setSpacing(10)
+        basic_form.addRow("Adapter", self._adapter)
+        basic_form.addRow("Base URL", self._base_url)
+        basic_form.addRow("模型", model_row)
+        basic_form.addRow("凭据", self._credential)
+
+        self._advanced_toggle = QToolButton()
+        self._advanced_toggle.setObjectName("provider-advanced-toggle")
+        self._advanced_toggle.setProperty("role", "disclosure")
+        self._advanced_toggle.setText("高级参数（流式 / 超时 / extra_body / extra_headers）")
+        self._advanced_toggle.setCheckable(True)
+        self._advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._advanced_toggle.setIconSize(QSize(12, 12))
+        self._advanced_toggle.toggled.connect(self._toggle_advanced)
+
+        self._advanced_box = QWidget()
+        self._advanced_box.setObjectName("provider-advanced-box")
+        adv_form = QFormLayout(self._advanced_box)
+        adv_form.setContentsMargins(0, 6, 0, 0)
+        adv_form.setSpacing(10)
+        adv_form.addRow("流式输出", self._stream)
+        adv_form.addRow("请求超时", self._timeout)
+        adv_form.addRow("extra_body", self._extra_body)
+        adv_form.addRow("extra_headers", self._extra_headers)
+        self._toggle_advanced(False)
 
         self._status = QLabel()
         self._status.setObjectName("provider-status")
+        self._status.setProperty("role", "muted-caption")
         self._status.setWordWrap(True)
 
         hint = QLabel(
             "Profile 以 providers/profiles/*.yaml 为准；保存写入用户配置目录并覆盖同 ID 的内置"
             " Profile（内置文件本身不会被修改）。凭据来源随 Profile 落盘，密钥只写系统钥匙串。"
         )
+        hint.setProperty("role", "muted-caption")
         hint.setWordWrap(True)
 
         self._save_button = QPushButton("保存到用户配置")
         self._save_button.setObjectName("provider-save")
+        self._save_button.setProperty("variant", "primary")
         self._save_button.clicked.connect(self._save_current)
 
         buttons = QDialogButtonBox(
@@ -170,12 +207,26 @@ class ProviderDialog(QDialog):
         buttons.addButton(self._save_button, QDialogButtonBox.ButtonRole.ActionRole)
 
         layout = QVBoxLayout(self)
-        layout.addLayout(form)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+        layout.addLayout(profile_row)
+        layout.addWidget(basic_title)
+        layout.addWidget(basic_divider)
+        layout.addLayout(basic_form)
+        layout.addWidget(self._advanced_toggle)
+        layout.addWidget(self._advanced_box)
         layout.addWidget(self._status)
         layout.addWidget(hint)
         layout.addWidget(buttons)
 
         self._set_profiles(profiles)
+
+    def _toggle_advanced(self, expanded: bool) -> None:
+        self._advanced_box.setVisible(expanded)
+        icon_name = "chevron-down" if expanded else "chevron-right"
+        self._advanced_toggle.setIcon(render_icon(icon_name, self._tokens.text_secondary, size=12))
+        if self.isVisible():
+            self.adjustSize()
 
     # ------------------------------------------------------------------
     # 对外接口
