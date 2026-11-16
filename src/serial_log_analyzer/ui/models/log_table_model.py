@@ -19,6 +19,7 @@ from serial_log_analyzer.ui.theme import LevelStyle, ThemeTokens, default_tokens
 __all__ = [
     "COLUMN_HEADERS",
     "LEVEL_LABELS",
+    "LOG_EXTRA_ROLE",
     "LOG_LEVEL_ROLE",
     "LOG_MESSAGE_ROLE",
     "LOG_MODULE_ROLE",
@@ -29,6 +30,7 @@ __all__ = [
 LOG_LEVEL_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 LOG_MODULE_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 LOG_MESSAGE_ROLE = int(Qt.ItemDataRole.UserRole) + 3
+LOG_EXTRA_ROLE = int(Qt.ItemDataRole.UserRole) + 4
 
 # 级别展示文案（用户可见文案用中文）。
 LEVEL_LABELS: dict[LogLevel, str] = {
@@ -40,7 +42,7 @@ LEVEL_LABELS: dict[LogLevel, str] = {
     LogLevel.UNKNOWN: "未知",
 }
 
-COLUMN_HEADERS = ("序号", "时间", "级别", "模块", "消息")
+COLUMN_HEADERS = ("序号", "时间", "级别", "模块", "字段", "消息")
 
 
 class LogTableModel(QAbstractTableModel):
@@ -210,6 +212,8 @@ class LogTableModel(QAbstractTableModel):
             return entry.module or ""
         if role == LOG_MESSAGE_ROLE:
             return entry.message
+        if role == LOG_EXTRA_ROLE:
+            return self._format_extra(entry.extra, sep=" ")
         return None
 
     def headerData(
@@ -227,6 +231,12 @@ class LogTableModel(QAbstractTableModel):
     def _format_time(moment: float) -> str:
         return f"{time.strftime('%H:%M:%S', time.localtime(moment))}.{int(moment % 1 * 1000):03d}"
 
+    @staticmethod
+    def _format_extra(extra: dict[str, str], *, sep: str = "  ", empty: str = "") -> str:
+        if not extra:
+            return empty
+        return sep.join(f"{key}={value}" for key, value in extra.items())
+
     @classmethod
     def _display(cls, entry: LogEntry, column: int) -> str:
         if column == 0:
@@ -237,6 +247,8 @@ class LogTableModel(QAbstractTableModel):
             return LEVEL_LABELS.get(entry.level, entry.level.name)
         if column == 3:
             return entry.module or "-"
+        if column == 4:
+            return cls._format_extra(entry.extra, sep="  ", empty="-")
         return entry.message
 
     @classmethod
@@ -249,8 +261,8 @@ class LogTableModel(QAbstractTableModel):
             lines.append(f"板上时间: {entry.device_time}")
         if entry.module:
             lines.append(f"模块: {entry.module}")
-        if entry.extra:
-            fields = "  ".join(f"{key}={value}" for key, value in entry.extra.items())
+        fields = cls._format_extra(entry.extra, sep="  ")
+        if fields:
             lines.append(f"字段: {fields}")
         lines.append(f"原始行:\n{entry.raw}")
         return "\n".join(lines)

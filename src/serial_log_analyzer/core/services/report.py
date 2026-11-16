@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -62,6 +62,7 @@ class EvidenceLine:
     level: str
     module: str | None
     rendered: str
+    extra: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -156,6 +157,7 @@ def build_diagnostic_report(
                     level=entry.level.name,
                     module=entry.module,
                     rendered=pipeline.render([entry])[0],
+                    extra=dict(entry.extra),
                 )
             )
         items.append(
@@ -360,6 +362,7 @@ def _cluster_to_dict(item: ClusterReportItem) -> dict[str, Any]:
                 "level": ev.level,
                 "module": ev.module,
                 "rendered": ev.rendered,
+                "extra": dict(ev.extra),
             }
             for ev in item.evidences
         ],

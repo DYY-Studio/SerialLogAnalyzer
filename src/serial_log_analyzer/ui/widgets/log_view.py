@@ -226,7 +226,7 @@ class LogView(QWidget):
         filter_row.addWidget(self.module_filter)
 
         self.text_filter = QLineEdit()
-        self.text_filter.setPlaceholderText("搜索日志关键字…")
+        self.text_filter.setPlaceholderText("搜索日志关键字或字段…")
         self.text_filter.setClearButtonEnabled(True)
         self.text_filter.setMinimumWidth(130)
         self._text_search_action = QAction(self)
@@ -275,6 +275,7 @@ class LogView(QWidget):
         self.table_view.setColumnWidth(1, 106)
         self.table_view.setColumnWidth(2, 68)
         self.table_view.setColumnWidth(3, 120)
+        self.table_view.setColumnWidth(4, 170)
 
         self._empty_state = self._build_empty_state(self.table_view.viewport())
         layout.addWidget(self.table_view, stretch=1)

@@ -100,9 +100,13 @@ class LogParser:
         return ParseResult(ParseOutcome.IGNORED)
 
     def render_for_llm(self, entry: LogEntry) -> str:
-        """把条目渲染为提交给 LLM 的文本行（含级别与模块前缀）。"""
+        """把条目渲染为提交给 LLM 的文本行（含级别、模块前缀与可选结构化字段）。"""
 
-        return f"[{entry.level.name}] [{entry.module or '-'}] {entry.message}"
+        base = f"[{entry.level.name}] [{entry.module or '-'}] {entry.message}"
+        if not entry.extra:
+            return base
+        fields = " ".join(f"{key}={value}" for key, value in entry.extra.items())
+        return f"{base} [extra: {fields}]"
 
     def _matched_entry(
         self, match, line: str, sequence: int, received_at: float

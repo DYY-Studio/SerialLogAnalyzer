@@ -114,6 +114,7 @@ def test_build_report_orders_clusters_extracts_evidences_and_separates_llm(parse
     assert [item.cluster.rule_id for item in report.clusters] == ["mem-oom", "uart-overflow"]
     assert [ev.sequence for ev in report.clusters[0].evidences] == [3]
     assert "malloc failed size=1024" in report.clusters[0].evidences[0].rendered
+    assert report.clusters[0].evidences[0].extra == {}
     assert report.clusters[0].missing_sequences == ()
 
     md = render_report_markdown(report)
@@ -158,3 +159,37 @@ def test_build_report_marks_evicted_evidence_sequences(parser) -> None:
     assert report2.clusters[0].evidences == ()
     assert report2.clusters[0].missing_sequences == (0,)
     assert "已淘汰/截断证据序号**：#0" in render_report_markdown(report2)
+
+
+def test_report_includes_structured_extra_in_evidence_and_json(parser) -> None:
+    """命中带结构化 extra 字段的证据应在 Markdown 与 JSON 报告中完整保留。"""
+
+    pipeline = LogPipeline(parser, capacity=10)
+    rule = AnomalyRule(
+        rule_id="sensor-overheat",
+        category="温度异常",
+        severity=AnomalySeverity.HIGH,
+        keywords=("overheat",),
+        min_level=LogLevel.WARN,
+    )
+    anomaly_service = AnomalyService([rule])
+    anomaly_service.apply_update(
+        pipeline.feed("[W] [sensor] overheat temperature=82.5 humidity=45.0", 1_700_000_100.0)
+    )
+
+    report = build_diagnostic_report(
+        pipeline,
+        anomaly_service,
+        preset_id="hi3861-default",
+        generated_at=1_700_000_101.0,
+    )
+    ev = report.clusters[0].evidences[0]
+    assert ev.extra == {"temperature": "82.5", "humidity": "45.0"}
+    assert "[extra: temperature=82.5 humidity=45.0]" in ev.rendered
+    assert "[extra: temperature=82.5 humidity=45.0]" in render_report_markdown(report)
+
+    payload = report_to_dict(report)
+    assert payload["rule_facts"]["clusters"][0]["evidences"][0]["extra"] == {
+        "temperature": "82.5",
+        "humidity": "45.0",
+    }

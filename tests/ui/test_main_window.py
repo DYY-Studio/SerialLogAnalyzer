@@ -627,3 +627,60 @@ def test_analysis_panel_export_report_button_emits_signal(qtbot) -> None:
 
     panel.export_report_btn.click()
     assert fired == [True]
+
+
+def test_log_table_extra_column_role_and_keyword_filter(qtbot) -> None:
+    """日志表格第 4 列展示提取字段，关键字过滤同时命中消息正文与 extra 字段。"""
+
+    from PySide6.QtCore import Qt
+
+    from serial_log_analyzer.ui.models.log_table_model import (
+        COLUMN_HEADERS,
+        LOG_EXTRA_ROLE,
+    )
+
+    view = LogView(LogTableModel())
+    qtbot.addWidget(view)
+    model = view._model
+    proxy = view.table_view.model()
+
+    assert COLUMN_HEADERS == ("序号", "时间", "级别", "模块", "字段", "消息")
+    assert model.columnCount() == 6
+    assert view.table_view.columnWidth(4) == 170
+    assert view.text_filter.placeholderText() == "搜索日志关键字或字段…"
+
+    view.append_update(
+        PipelineUpdate(
+            added=(
+                _entry(0, LogLevel.INFO, module="boot", message="boot done"),
+                LogEntry(
+                    sequence=1,
+                    received_at=1700000001.0,
+                    level=LogLevel.INFO,
+                    message="sample ok",
+                    raw="[I] [sensor] sample ok",
+                    module="sensor",
+                    extra={"temperature": "29.7", "humidity": "43.6"},
+                ),
+            )
+        )
+    )
+
+    assert model.data(model.index(0, 4), Qt.ItemDataRole.DisplayRole) == "-"
+    assert model.data(model.index(0, 5), Qt.ItemDataRole.DisplayRole) == "boot done"
+    assert model.data(model.index(0, 0), LOG_EXTRA_ROLE) == ""
+    assert model.data(model.index(1, 4), Qt.ItemDataRole.DisplayRole) == "temperature=29.7  humidity=43.6"
+    assert model.data(model.index(1, 5), Qt.ItemDataRole.DisplayRole) == "sample ok"
+    assert model.data(model.index(1, 0), LOG_EXTRA_ROLE) == "temperature=29.7 humidity=43.6"
+
+    for query in ("temperature", "29.7", "TEMPERATURE=29.7"):
+        view.text_filter.setText(query)
+        assert proxy.rowCount() == 1
+        assert proxy.index(0, 0).data() == "1"
+
+    view.text_filter.setText("boot")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data() == "0"
+
+    view.text_filter.clear()
+    assert proxy.rowCount() == 2
