@@ -601,3 +601,54 @@ def test_bootstrap_chart_panel_wiring_capacity_import_clear_and_preset_switch(
     assert window.chart_panel.current_field() is None
 
     window.close()
+
+
+def test_restore_apply_and_shutdown_handle_ini_bools_and_sync(qapp, tmp_path, monkeypatch) -> None:
+    """IniFormat 将布尔写为字符串 'false'/'0' 时，恢复/应用设置及关窗 sync 必须正确。"""
+
+    from PySide6.QtCore import QSettings
+
+    from serial_log_analyzer.io.settings.qt_settings_store import QtSettingsStore
+
+    ini_path = tmp_path / "settings.conf"
+    real_store = QtSettingsStore(settings=QSettings(str(ini_path), QSettings.Format.IniFormat))
+    sync_calls = 0
+    orig_sync = real_store.sync
+
+    def _tracked_sync() -> None:
+        nonlocal sync_calls
+        sync_calls += 1
+        orig_sync()
+
+    monkeypatch.setattr(real_store, "sync", _tracked_sync)
+    monkeypatch.setattr(bootstrap, "QtSettingsStore", lambda *a, **k: real_store)
+
+    orig_get = real_store.get
+
+    def _stringy_get(key: str, default: object = None) -> object:
+        if key == SETTINGS_KEYS.AUTOSCROLL:
+            return "false"
+        if key == SETTINGS_KEYS.CHAT_DETAILS_EXPANDED:
+            return "0"
+        return orig_get(key, default)
+
+    monkeypatch.setattr(real_store, "get", _stringy_get)
+
+    context = bootstrap.build_application(["-platform", "offscreen"])
+    window = bootstrap.build_window(context)
+
+    assert window.log_view.autoscroll_box.isChecked() is False
+    assert window.analysis_panel.chat._expanded is False
+
+    # 先强制切为 True，验证字符串 "false"/"0" 经过 _apply_settings 后能真实拉回 False
+    window.log_view.set_autoscroll(True)
+    window.analysis_panel.set_details_expanded(True)
+    bootstrap._apply_settings(window, context, context.analysis_service)
+    assert window.log_view.autoscroll_box.isChecked() is False
+    assert window.analysis_panel.chat._expanded is False
+
+    window.close()
+    assert sync_calls == 1
+    persisted = QSettings(str(ini_path), QSettings.Format.IniFormat)
+    assert persisted.contains(SETTINGS_KEYS.WINDOW_DOCKS)
+    assert persisted.contains(SETTINGS_KEYS.WINDOW_GEOMETRY)

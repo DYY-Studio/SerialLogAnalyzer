@@ -62,7 +62,11 @@ from serial_log_analyzer.io.notifications.qt_smtp_sender import QtSmtpNotifier
 from serial_log_analyzer.io.paths import default_export_dir, repo_root, user_config_dir
 from serial_log_analyzer.io.resources import CompositeResourceLoader
 from serial_log_analyzer.io.serial.qt_serial_transport import QtSerialTransport
-from serial_log_analyzer.io.settings.qt_settings_store import SETTINGS_KEYS, QtSettingsStore
+from serial_log_analyzer.io.settings.qt_settings_store import (
+    SETTINGS_KEYS,
+    QtSettingsStore,
+    parse_bool,
+)
 from serial_log_analyzer.io.storage.report_file_store import ReportFileStore, ReportFormat
 from serial_log_analyzer.ui.controllers.analysis_controller import AnalysisController
 from serial_log_analyzer.ui.controllers.anomaly_controller import AnomalyController
@@ -506,9 +510,11 @@ def _apply_settings(
     """把设置里可即时生效的项应用出来：自动滚动、容量、日志级别、折叠、携带历史。"""
 
     settings = context.settings
-    window.log_view.set_autoscroll(bool(settings.get(SETTINGS_KEYS.AUTOSCROLL, True)))
+    window.log_view.set_autoscroll(
+        parse_bool(settings.get(SETTINGS_KEYS.AUTOSCROLL, True), True)
+    )
     window.analysis_panel.set_details_expanded(
-        bool(settings.get(SETTINGS_KEYS.CHAT_DETAILS_EXPANDED, False))
+        parse_bool(settings.get(SETTINGS_KEYS.CHAT_DETAILS_EXPANDED, False), False)
     )
     service.set_history_rounds(_history_rounds(settings))
     context.pipeline.capacity = _capacity(settings)
@@ -856,13 +862,13 @@ def _restore_view(window: MainWindow, toolbar: SerialToolBar, log_view: LogView,
         window.restoreGeometry(geometry)
     _restore_layout(window, settings)
     window.analysis_panel.set_details_expanded(
-        bool(settings.get(SETTINGS_KEYS.CHAT_DETAILS_EXPANDED, False))
+        parse_bool(settings.get(SETTINGS_KEYS.CHAT_DETAILS_EXPANDED, False), False)
     )
     toolbar.restore(
         str(settings.get(SETTINGS_KEYS.LAST_PORT, "") or ""),
         str(settings.get(SETTINGS_KEYS.LAST_BAUDRATE, "115200") or "115200"),
     )
-    log_view.set_autoscroll(bool(settings.get(SETTINGS_KEYS.AUTOSCROLL, True)))
+    log_view.set_autoscroll(parse_bool(settings.get(SETTINGS_KEYS.AUTOSCROLL, True), True))
 
 
 def _shutdown(main_controller: MainController, window: MainWindow, settings: Any) -> None:
@@ -872,6 +878,9 @@ def _shutdown(main_controller: MainController, window: MainWindow, settings: Any
     settings.set(SETTINGS_KEYS.WINDOW_GEOMETRY, window.saveGeometry())
     settings.set(SETTINGS_KEYS.WINDOW_STATE, window.saveState())
     settings.set(SETTINGS_KEYS.WINDOW_DOCKS, window.dock_names())
+    sync = getattr(settings, "sync", None)
+    if callable(sync):
+        sync()
 
 
 def main(argv: list[str] | None = None) -> int:

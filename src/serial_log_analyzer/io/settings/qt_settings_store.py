@@ -13,7 +13,7 @@ from PySide6.QtCore import QSettings
 
 from serial_log_analyzer.core.models.notification import SMTP_SETTINGS_KEYS
 
-__all__ = ["QtSettingsStore", "SETTINGS_KEYS"]
+__all__ = ["QtSettingsStore", "SETTINGS_KEYS", "parse_bool"]
 
 
 class SETTINGS_KEYS:
@@ -46,11 +46,13 @@ class SETTINGS_KEYS:
     SMTP_TIMEOUT_SECONDS = SMTP_SETTINGS_KEYS.TIMEOUT_SECONDS
 
 
-def _as_bool(value: Any, default: bool) -> bool:
+def parse_bool(value: Any, default: bool) -> bool:
     """把 ``QSettings`` 读出的值稳健地转换为布尔值。
 
-    IniFormat 会把布尔值写成 ``true`` / ``false`` 字符串，因此不能直接 ``bool(value)``。
+    IniFormat 与部分注册表项会把布尔值写成 ``true`` / ``false`` 字符串，因此不能直接 ``bool(value)``。
     """
+    if value is None:
+        return default
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
@@ -107,7 +109,7 @@ class QtSettingsStore:
 
     def get_bool(self, key: str, default: bool = False) -> bool:
         """读取布尔设置，兼容 ``true``/``false`` 字符串与 ``0``/``1``。"""
-        return _as_bool(self._settings.value(key, default), default)
+        return parse_bool(self._settings.value(key, default), default)
 
     def get_int(self, key: str, default: int = 0) -> int:
         """读取整数设置，无法转换时返回 ``default``。"""

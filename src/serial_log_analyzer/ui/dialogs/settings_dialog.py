@@ -43,7 +43,7 @@ from serial_log_analyzer.core.models.notification import (
 )
 from serial_log_analyzer.core.models.provider import CredentialKind, CredentialRef
 from serial_log_analyzer.core.ports import KeyringStore, SettingsStore
-from serial_log_analyzer.io.settings.qt_settings_store import SETTINGS_KEYS
+from serial_log_analyzer.io.settings.qt_settings_store import SETTINGS_KEYS, parse_bool
 from serial_log_analyzer.ui.widgets.credential_editor import CredentialEditor
 
 __all__ = ["SettingsDialog"]
@@ -388,7 +388,7 @@ class SettingsDialog(QDialog):
 
     def _load(self) -> None:
         self._autoscroll.setChecked(
-            _as_bool(self._settings.get(SETTINGS_KEYS.AUTOSCROLL), True)
+            parse_bool(self._settings.get(SETTINGS_KEYS.AUTOSCROLL), True)
         )
         self._capacity.setValue(
             _clamp(_as_int(self._settings.get(SETTINGS_KEYS.LOG_CAPACITY), 100_000))
@@ -398,7 +398,7 @@ class SettingsDialog(QDialog):
             level = _DEFAULT_LOG_LEVEL
         self._log_level.setCurrentText(level)
         self._details_expanded.setChecked(
-            _as_bool(self._settings.get(SETTINGS_KEYS.CHAT_DETAILS_EXPANDED), False)
+            parse_bool(self._settings.get(SETTINGS_KEYS.CHAT_DETAILS_EXPANDED), False)
         )
         self._history_rounds.setValue(
             _as_int(self._settings.get(SETTINGS_KEYS.LLM_HISTORY_ROUNDS), 0)
@@ -484,20 +484,6 @@ class SettingsDialog(QDialog):
         chosen = QFileDialog.getExistingDirectory(self, "选择默认导出目录", current)
         if chosen:
             self._export_dir.setText(chosen)
-
-
-def _as_bool(value: object, default: bool) -> bool:
-    """把设置存储中的值稳健地转换为布尔（QSettings 可能是字符串）。"""
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    text = str(value).strip().lower()
-    if text in {"1", "true", "yes", "on"}:
-        return True
-    if text in {"0", "false", "no", "off", ""}:
-        return False
-    return default
 
 
 def _as_int(value: object, default: int) -> int:
