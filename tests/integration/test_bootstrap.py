@@ -559,7 +559,7 @@ def test_bootstrap_chart_panel_wiring_capacity_import_clear_and_preset_switch(
     context = bootstrap.build_application(["-platform", "offscreen"])
     window = bootstrap.build_window(context)
 
-    # 1) 实时串口到达含结构化数值字段的日志 -> ChartPanel 同步入队
+    # 1) 实时串口到达含结构化数值字段的日志 -> ChartPanel 同步入队并默认选中首个有效字段
     context.session._on_bytes(
         b"[I] [sensor] led=1 fan=0 temperature=26.5 humidity=44.0\r\n"
         b"[I] [sensor] led=1 fan=1 temperature=27.8 humidity=45.2\r\n"
@@ -567,13 +567,17 @@ def test_bootstrap_chart_panel_wiring_capacity_import_clear_and_preset_switch(
     qtbot.waitUntil(lambda: window.chart_panel.sample_count("temperature") == 2, timeout=1000)
     assert window.chart_panel.sample_count("humidity") == 2
     assert window.chart_panel.sample_count("led") == 2
+    assert window.chart_panel.current_field() == "led"
+    assert window.chart_panel.window_seconds() == 30.0
+    window.chart_panel.select_field("temperature")
+    assert window.chart_panel.current_field() == "temperature"
 
     # 2) 容量淘汰同步移除最旧采样点
     fake_settings.values[SETTINGS_KEYS.LOG_CAPACITY] = 1
     bootstrap._apply_settings(window, context, context.analysis_service)
     assert window.chart_panel.sample_count("temperature") == 1
 
-    # 3) 恢复容量后导入日志，增量驱动 ChartPanel 追加新采样点
+    # 3) 恢复容量后导入日志，增量驱动 ChartPanel 追加新采样点并保持当前字段选择
     fake_settings.values[SETTINGS_KEYS.LOG_CAPACITY] = 10
     bootstrap._apply_settings(window, context, context.analysis_service)
     sample_log = tmp_path / "sensor.log"
@@ -584,14 +588,16 @@ def test_bootstrap_chart_panel_wiring_capacity_import_clear_and_preset_switch(
     bootstrap._import_logs(window, context)
     assert window.chart_panel.sample_count("temperature") == 2
     assert window.chart_panel._buffer.samples("temperature")[-1].value == 28.4
+    assert window.chart_panel.current_field() == "temperature"
 
     # 4) 清空日志清空曲线采样但保留 Preset 字段配置
     window.clear_requested.emit()
     assert window.chart_panel.sample_count("temperature") == 0
     assert window.chart_panel.field_names() == tuple(context.preset.line.fields)
 
-    # 5) 切换 Preset 时重置图表面板预设字段
+    # 5) 切换 Preset 时重置图表面板预设字段与选中字段
     bootstrap._switch_preset(window, context, "hi3861-timestamped")
     assert window.chart_panel.field_names() == ()
+    assert window.chart_panel.current_field() is None
 
     window.close()

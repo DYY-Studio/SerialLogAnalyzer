@@ -664,7 +664,19 @@ QToolButton[chip="toggle"]:checked {{
     background-color: {t.accent_soft};
     color: {t.text_primary};
     border-color: {t.accent_primary};
-    font-weight: 500;
+    font-weight: 600;
+}}
+QComboBox#chart-window-combo {{
+    padding: 2px 8px;
+}}
+QGraphicsView#chart-plot-widget {{
+    background-color: {t.bg_surface};
+    border: 1px solid {t.border_subtle};
+    border-radius: 4px;
+}}
+QScrollArea#chart-chips-scroll QScrollBar:horizontal {{
+    height: 5px;
+    margin: 1px 0px 0px 0px;
 }}
 QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox {{
     background-color: {t.bg_surface};
