@@ -51,6 +51,7 @@ class AnalysisController(QObject):
         self._selected: list[int] = []
         self._usage: object = None
         self._streaming = False
+        self._include_board_prompt = True
         service.set_handlers(
             AnalysisServiceHandlers(
                 on_result=self._on_result,
@@ -63,6 +64,15 @@ class AnalysisController(QObject):
         """记录用户当前在表格中选中的条目序号，供上下文构造使用。"""
 
         self._selected = list(selected)
+
+    def set_include_board_prompt(self, enabled: bool) -> None:
+        """设置聚类分析等控制器直发请求是否注入当前 Preset 的板级说明。
+
+        参数:
+            enabled: 为 ``True`` 时在新建会话首轮注入板级系统提示。
+        """
+
+        self._include_board_prompt = bool(enabled)
 
     def start_analysis(self, request: AnalysisRequest, selector: ContextSelector) -> None:
         """按界面选择（含上下文选择器）构造上下文并开始一轮分析。"""
@@ -104,6 +114,7 @@ class AnalysisController(QObject):
                     f"累计 {cluster.occurrence_count} 次）：{cluster.normalized_message}"
                 ),
                 context=context,
+                include_board_prompt=self._include_board_prompt,
             )
             self._service.ask(request)
         except AppError as exc:

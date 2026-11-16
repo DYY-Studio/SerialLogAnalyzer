@@ -27,6 +27,7 @@ class SETTINGS_KEYS:
     CURRENT_PROFILE = "llm/current_profile"
     CHAT_DETAILS_EXPANDED = "llm/details_expanded"
     LLM_HISTORY_ROUNDS = "llm/history_rounds"
+    INCLUDE_BOARD_PROMPT = "llm/include_board_prompt"
     CURRENT_PRESET = "logs/current_preset"
     AUTOSCROLL = "logs/autoscroll"
     LOG_CAPACITY = "logs/capacity"

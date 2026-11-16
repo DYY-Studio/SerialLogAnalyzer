@@ -700,3 +700,108 @@ def test_log_table_compact_columns_extra_role_and_keyword_filter(qtbot) -> None:
 
     view.text_filter.clear()
     assert proxy.rowCount() == 2
+
+
+def test_analysis_panel_board_prompt_toggle_and_preset_preservation(qtbot) -> None:
+    """板级说明复选框在无说明 Preset 下保留用户偏好，并在首轮请求与范围摘要中体现。"""
+
+    panel = AnalysisPanel()
+    qtbot.addWidget(panel)
+    panel.set_goals([])
+    toggled: list[bool] = []
+    requests: list[object] = []
+    panel.board_prompt_toggled.connect(toggled.append)
+    panel.analyze_requested.connect(requests.append)
+
+    assert panel.board_prompt_box.objectName() == "panel-board-prompt"
+    assert panel.board_prompt_box.isChecked() is True
+    assert panel.board_prompt_box.isEnabled() is False
+    assert panel.include_board_prompt() is False
+
+    # 切到含板级说明的 Preset：不发出 toggled 信号，恢复默认勾选偏好
+    panel.set_board_prompt("Hi3861 默认日志", "  Hi3861 Wi-Fi SoC，I2C0 挂载 SHT20 传感器  ")
+    assert toggled == []
+    assert panel.board_prompt_box.isEnabled() is True
+    assert panel.board_prompt_box.isChecked() is True
+    assert panel.include_board_prompt() is True
+    assert "Hi3861 默认日志" in panel.board_prompt_box.toolTip()
+    assert "SHT20" in panel.board_prompt_box.toolTip()
+
+    # 临时切到无板级说明的 Preset：视觉置灰且取消勾选，但不发信号也不丢失偏好
+    panel.set_board_prompt("Generic", "   ")
+    assert toggled == []
+    assert panel.board_prompt_box.isEnabled() is False
+    assert panel.board_prompt_box.isChecked() is False
+    assert panel.include_board_prompt() is False
+    assert panel.board_prompt_box.toolTip() == "当前 Preset 未配置板级说明"
+
+    # 切回有板级说明的 Preset：自动恢复 True 偏好
+    panel.set_board_prompt("Hi3861 默认日志", "Hi3861 SoC")
+    assert toggled == []
+    assert panel.board_prompt_box.isEnabled() is True
+    assert panel.board_prompt_box.isChecked() is True
+    assert panel.include_board_prompt() is True
+
+    # 用户手动取消勾选 -> 发出 toggled(False)；经无说明 Preset 往返后仍保留 False 偏好
+    panel.board_prompt_box.click()
+    assert toggled == [False]
+    assert panel.include_board_prompt() is False
+
+    panel.set_board_prompt("Empty", "")
+    assert panel.board_prompt_box.isEnabled() is False
+    assert panel.board_prompt_box.isChecked() is False
+    assert toggled == [False]
+
+    panel.set_board_prompt("Hi3861 默认日志", "Hi3861 SoC")
+    assert panel.board_prompt_box.isEnabled() is True
+    assert panel.board_prompt_box.isChecked() is False
+    assert panel.include_board_prompt() is False
+    assert toggled == [False]
+
+    # 首轮发送携带 include_board_prompt=False，进入流式/会话后禁用复选框并更新摘要
+    panel.message_edit.setPlainText("排查连接")
+    panel.send_btn.click()
+    request, _selector = requests[-1]
+    assert request.include_board_prompt is False
+
+    panel.set_state(AnalysisState.STREAMING)
+    assert panel.board_prompt_box.isEnabled() is False
+    panel.set_result(
+        AnalysisResult(
+            state=AnalysisState.DONE,
+            content="结论",
+            conversation=[
+                AnalysisMessage(MessageRole.USER, "排查连接"),
+                AnalysisMessage(MessageRole.ASSISTANT, "结论"),
+            ],
+        )
+    )
+    panel.set_state(AnalysisState.DONE)
+    assert panel.board_prompt_box.isEnabled() is False
+    assert " · 不含板级说明" in panel._scope_summary.text()
+
+    # 新会话后以编程方式开启偏好（不触发信号），首轮请求与摘要均反映含板级说明
+    panel.new_session_btn.click()
+    assert panel.board_prompt_box.isEnabled() is True
+    panel.set_include_board_prompt(True)
+    assert toggled == [False]
+    assert panel.board_prompt_box.isChecked() is True
+    assert panel.include_board_prompt() is True
+
+    panel.message_edit.setPlainText("再查一次")
+    panel.send_btn.click()
+    request2, _selector2 = requests[-1]
+    assert request2.include_board_prompt is True
+
+    panel.set_result(
+        AnalysisResult(
+            state=AnalysisState.DONE,
+            content="结论2",
+            conversation=[
+                AnalysisMessage(MessageRole.USER, "再查一次"),
+                AnalysisMessage(MessageRole.ASSISTANT, "结论2"),
+            ],
+        )
+    )
+    panel.set_state(AnalysisState.DONE)
+    assert " · 含板级说明" in panel._scope_summary.text()

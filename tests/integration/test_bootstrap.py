@@ -652,3 +652,135 @@ def test_restore_apply_and_shutdown_handle_ini_bools_and_sync(qapp, tmp_path, mo
     persisted = QSettings(str(ini_path), QSettings.Format.IniFormat)
     assert persisted.contains(SETTINGS_KEYS.WINDOW_DOCKS)
     assert persisted.contains(SETTINGS_KEYS.WINDOW_GEOMETRY)
+
+
+def test_bootstrap_board_prompt_persistence_cluster_and_preset_switch(
+    qapp, fake_settings, monkeypatch, qtbot, tmp_path
+) -> None:
+    """板级说明开关全链路：设置恢复/持久化、聚类分析传播、切换 Preset 联动。"""
+
+    import json
+
+    from serial_log_analyzer.core.models.analysis import ContextSelector
+    from serial_log_analyzer.io.resources import CompositeResourceLoader
+    from serial_log_analyzer.ui.controllers.device_controller import DeviceController
+
+    class _StubToken:
+        def cancel(self) -> None:
+            pass
+
+    class _FakeHttpTransport:
+        def __init__(self) -> None:
+            self.requests: list[object] = []
+
+        def send(self, request, on_chunk, on_done, on_error):
+            self.requests.append(request)
+            on_chunk(
+                json.dumps(
+                    {"choices": [{"message": {"content": "分析完成"}}]},
+                ).encode("utf-8")
+            )
+            on_done()
+            return _StubToken()
+
+    class _FakeCredentials:
+        def resolve(self, _ref) -> str:
+            return "sk-test"
+
+    presets_dir = tmp_path / "presets" / "logs"
+    presets_dir.mkdir(parents=True)
+    (presets_dir / "custom-empty.yaml").write_text(
+        "schema_version: 1\n"
+        "preset_id: custom-empty\n"
+        "display_name: Custom Empty\n"
+        "line:\n"
+        r"  pattern: '^\[(?P<level>[A-Za-z]+)\]\s*\[(?P<module>[^\]]+)\]\s*(?P<message>.*)$'"
+        "\n"
+        "  level_map:\n"
+        "    I: INFO\n",
+        encoding="utf-8",
+    )
+    (presets_dir / "custom-board.yaml").write_text(
+        "schema_version: 1\n"
+        "preset_id: custom-board\n"
+        "display_name: Custom Board\n"
+        "line:\n"
+        r"  pattern: '^\[(?P<level>[A-Za-z]+)\]\s*\[(?P<module>[^\]]+)\]\s*(?P<message>.*)$'"
+        "\n"
+        "  level_map:\n"
+        "    I: INFO\n"
+        "prompt: Custom STM32F4 board context.\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        bootstrap,
+        "DeviceController",
+        lambda s: DeviceController(s, batch_interval_ms=20, command_timeout_ms=50),
+    )
+    # 模拟从 QSettings IniFormat 读出字符串 "false"
+    fake_settings.values[SETTINGS_KEYS.INCLUDE_BOARD_PROMPT] = "false"
+
+    context = bootstrap.build_application(["-platform", "offscreen"])
+    context.resources = CompositeResourceLoader([tmp_path, *context.resources.roots])
+    context.http_transport = _FakeHttpTransport()
+    context.credentials = _FakeCredentials()
+    context.profile = type(context.profile)(**{**context.profile.__dict__, "stream": False})
+
+    window = bootstrap.build_window(context)
+    panel = window.analysis_panel
+
+    # 1) 启动恢复：Preset 有 prompt 且设置关闭 -> 控件可用未勾选，服务持有板卡说明
+    assert context.analysis_service._board_prompt == context.preset.prompt
+    assert panel.board_prompt_box.isEnabled() is True
+    assert panel.board_prompt_box.isChecked() is False
+    assert panel.include_board_prompt() is False
+
+    # 2) 聚类一键分析遵循控制器上的关闭状态（不注入 system）
+    context.session._on_bytes(b"[E] [mem] malloc failed size=64\r\n")
+    qtbot.waitUntil(lambda: len(window.anomaly_panel.clusters()) == 1, timeout=1000)
+    cluster = window.anomaly_panel.clusters()[0]
+    window.anomaly_panel.analyze_requested.emit(cluster)
+    assert len(context.http_transport.requests) == 1
+    assert [m["role"] for m in context.http_transport.requests[-1].body["messages"]] == ["user"]
+
+    # 3) 重开会话后勾选开关 -> 写回设置并传播到分析控制器，聚类分析随首轮注入 system
+    panel.new_session_btn.click()
+    panel.board_prompt_box.click()
+    assert fake_settings.values[SETTINGS_KEYS.INCLUDE_BOARD_PROMPT] is True
+    assert panel.include_board_prompt() is True
+
+    window.anomaly_panel.analyze_requested.emit(cluster)
+    assert len(context.http_transport.requests) == 2
+    assert context.http_transport.requests[-1].body["messages"][0] == {
+        "role": "system",
+        "content": context.preset.prompt,
+    }
+
+    # 4) 切到无板级说明 Preset -> 服务清空、控件置灰取消勾选，但全局设置与偏好不被覆盖
+    panel.new_session_btn.click()
+    bootstrap._switch_preset(window, context, "custom-empty")
+    assert context.analysis_service._board_prompt == ""
+    assert panel.board_prompt_box.isEnabled() is False
+    assert panel.board_prompt_box.isChecked() is False
+    assert panel.include_board_prompt() is False
+    assert fake_settings.values[SETTINGS_KEYS.INCLUDE_BOARD_PROMPT] is True
+
+    # 5) 再切到含新板级说明 Preset -> 恢复勾选状态并更新服务端板卡说明，首轮发送生效
+    bootstrap._switch_preset(window, context, "custom-board")
+    assert context.analysis_service._board_prompt == "Custom STM32F4 board context."
+    assert panel.board_prompt_box.isEnabled() is True
+    assert panel.board_prompt_box.isChecked() is True
+    assert panel.include_board_prompt() is True
+
+    none_idx = panel.context_combo.findData(ContextSelector.NONE)
+    panel.context_combo.setCurrentIndex(none_idx)
+    panel.message_edit.setPlainText("确认板型")
+    panel.send_btn.click()
+    assert len(context.http_transport.requests) == 3
+    assert context.http_transport.requests[-1].body["messages"][0] == {
+        "role": "system",
+        "content": "Custom STM32F4 board context.",
+    }
+
+    window.close()
