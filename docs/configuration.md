@@ -208,8 +208,20 @@ export MY_DEEPSEEK_API_KEY=sk-...
 | `logs/capacity` | 日志环形缓冲容量（1000–1000000） | `100000` |
 | `logs/app_log_level` | 应用日志级别 | `INFO` |
 | `logs/export_dir` | 默认导出目录（留空用默认目录） | 空 |
+| `alert/smtp_enabled` | 是否启用 SMTP 邮件告警 | `false` |
+| `alert/smtp_host` | SMTP 服务器主机名 | 空 |
+| `alert/smtp_port` | SMTP 端口（1–65535） | `587` |
+| `alert/smtp_security` | 传输安全模式（`none` / `starttls` / `ssl`） | `starttls` |
+| `alert/smtp_username` | 认证用户名（留空表示免密中继） | 空 |
+| `alert/smtp_sender` | 发件人邮箱地址 | 空 |
+| `alert/smtp_recipients` | 收件人列表（逗号或分号分隔） | 空 |
+| `alert/smtp_credential_kind` | SMTP 密码凭据来源（`keyring` / `environment`） | `keyring` |
+| `alert/smtp_credential_target` | 钥匙串账号名或环境变量名 | `smtp-alert` |
+| `alert/smtp_min_severity` | 触发邮件告警的最低级别（`LOW` / `MEDIUM` / `HIGH` / `CRITICAL`） | `HIGH` |
+| `alert/smtp_include_evidence` | 邮件正文是否附带最多 5 条原始日志（默认脱敏摘要） | `false` |
+| `alert/smtp_timeout_seconds` | SMTP 单次发送超时秒数 | `15.0` |
 
-- 复杂配置（Profile）**不放进** QSettings，统一用 YAML。
+- 复杂配置（Profile）**不放进** QSettings，统一用 YAML；SMTP **密码/授权码绝不写入** QSettings，仍只通过 `CredentialResolver` 从系统钥匙串或环境变量读取。
 - 布尔值经 `get_bool()` 读取，兼容 `true`/`false` 与 `0`/`1`；`get_int()` / `get_str()` 在类型不符时回退默认值。
 - 「设置」对话框只读写上述键，保存失败会提示用户并保持对话框打开。
 - 保存后**立即生效**的项：自动滚动、日志容量（超出部分当场裁掉并同步表格）、应用日志级别、

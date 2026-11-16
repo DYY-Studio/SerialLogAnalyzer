@@ -17,6 +17,7 @@ __all__ = [
     "HttpStatusError",
     "NetworkError",
     "NetworkTimeoutError",
+    "NotificationError",
     "PointerError",
     "PresetError",
     "ProviderError",
@@ -87,3 +88,7 @@ class PresetError(AppError):
 
 class CredentialError(AppError):
     """凭据读取、写入或删除失败（含钥匙串不可用）。"""
+
+
+class NotificationError(AppError):
+    """告警通知发送失败（SMTP 连接、认证、TLS 或传输超时）。"""
