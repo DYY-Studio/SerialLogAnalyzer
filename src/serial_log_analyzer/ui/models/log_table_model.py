@@ -14,23 +14,21 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 
 from serial_log_analyzer.core.models.logs import LogEntry, LogLevel
+from serial_log_analyzer.ui.theme import LevelStyle, ThemeTokens, default_tokens, level_styles
 
-__all__ = ["COLUMN_HEADERS", "LEVEL_COLORS", "LOG_LEVEL_ROLE", "LOG_MESSAGE_ROLE", "LOG_MODULE_ROLE", "LogTableModel"]
+__all__ = [
+    "COLUMN_HEADERS",
+    "LEVEL_LABELS",
+    "LOG_LEVEL_ROLE",
+    "LOG_MESSAGE_ROLE",
+    "LOG_MODULE_ROLE",
+    "LogTableModel",
+]
 
 # 供过滤代理读取原始字段，避免依赖展示文案。
 LOG_LEVEL_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 LOG_MODULE_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 LOG_MESSAGE_ROLE = int(Qt.ItemDataRole.UserRole) + 3
-
-# 级别着色（浅色主题）。
-LEVEL_COLORS: dict[LogLevel, QColor] = {
-    LogLevel.VERBOSE: QColor(120, 130, 145),
-    LogLevel.DEBUG: QColor(49, 130, 206),
-    LogLevel.INFO: QColor(56, 161, 105),
-    LogLevel.WARN: QColor(214, 158, 46),
-    LogLevel.ERROR: QColor(229, 62, 62),
-    LogLevel.UNKNOWN: QColor(128, 90, 213),
-}
 
 # 级别展示文案（用户可见文案用中文）。
 LEVEL_LABELS: dict[LogLevel, str] = {
@@ -46,7 +44,7 @@ COLUMN_HEADERS = ("序号", "时间", "级别", "模块", "消息")
 
 
 class LogTableModel(QAbstractTableModel):
-    """日志表格模型：批量插入 / 更新 / 移除，按级别着色。
+    """日志表格模型：批量插入 / 更新 / 移除，按主题级别着色。
 
     信号:
         row_count_changed(int): 行数变化后发出，供状态栏展示。
@@ -54,9 +52,33 @@ class LogTableModel(QAbstractTableModel):
 
     row_count_changed = Signal(int)
 
-    def __init__(self, parent: object | None = None) -> None:
+    def __init__(
+        self,
+        parent: object | None = None,
+        *,
+        tokens: ThemeTokens | None = None,
+    ) -> None:
         super().__init__(parent)
         self._entries: list[LogEntry] = []
+        self._tokens = tokens if tokens is not None else default_tokens()
+        self._level_styles = level_styles(self._tokens)
+
+    def set_tokens(self, tokens: ThemeTokens) -> None:
+        """更新主题 Token 并刷新可见单元格前景色与行提示底色。"""
+
+        self._tokens = tokens
+        self._level_styles = level_styles(tokens)
+        if self._entries:
+            self.dataChanged.emit(
+                self.index(0, 0),
+                self.index(len(self._entries) - 1, self.columnCount() - 1),
+                [Qt.ItemDataRole.ForegroundRole, Qt.ItemDataRole.BackgroundRole],
+            )
+
+    def level_style(self, level: LogLevel) -> LevelStyle:
+        """返回指定日志级别在当前主题下的语义视觉色。"""
+
+        return self._level_styles[level]
 
     # ------------------------------------------------------------------
     # 数据变更（由 LogView 依据 PipelineUpdate 调用）
@@ -176,8 +198,10 @@ class LogTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DisplayRole:
             return self._display(entry, column)
         if role == Qt.ItemDataRole.ForegroundRole and column == 2:
-            color = LEVEL_COLORS.get(entry.level)
-            return QBrush(color) if color is not None else None
+            return QBrush(QColor(self._level_styles[entry.level].foreground))
+        if role == Qt.ItemDataRole.BackgroundRole:
+            row_bg = self._level_styles[entry.level].row_bg
+            return QBrush(QColor(row_bg)) if row_bg is not None else None
         if role == Qt.ItemDataRole.ToolTipRole:
             return entry.raw if column == 4 else None
         if role == LOG_LEVEL_ROLE:

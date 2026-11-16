@@ -55,6 +55,7 @@ from serial_log_analyzer.ui.controllers.device_controller import DeviceControlle
 from serial_log_analyzer.ui.controllers.main_controller import MainController
 from serial_log_analyzer.ui.main_window import MainWindow
 from serial_log_analyzer.ui.models.log_table_model import LogTableModel
+from serial_log_analyzer.ui.theme import ThemeManager
 from serial_log_analyzer.ui.widgets.analysis_panel import AnalysisPanel
 from serial_log_analyzer.ui.widgets.app_log_panel import AppLogPanel
 from serial_log_analyzer.ui.widgets.command_panel import CommandPanel
@@ -88,6 +89,7 @@ class ApplicationContext:
         adapter: 当前 Adapter。
         prompts: Prompt 模板库。
         context_builder: 分析上下文构造器。
+        theme_manager: 界面主题管理器。
         window: 主窗口，由 :func:`build_window` 填充。
     """
 
@@ -106,6 +108,7 @@ class ApplicationContext:
     adapter: Any
     prompts: Any
     context_builder: Any
+    theme_manager: Any = None
     window: Any = None
 
 
@@ -128,6 +131,8 @@ def build_application(argv: list[str] | None = None) -> ApplicationContext:
     app.setOrganizationName(_APP_NAME)
     app.setApplicationVersion(_APP_VERSION)
     _use_system_tls_backend()
+    theme_manager = ThemeManager(app)
+    theme_manager.apply()
 
     settings = QtSettingsStore()
     configure_logging(
@@ -166,6 +171,7 @@ def build_application(argv: list[str] | None = None) -> ApplicationContext:
         adapter=load_adapter(resources, profile.adapter_id),
         prompts=PromptLibrary(resources),
         context_builder=AnalysisContextBuilder(pipeline),
+        theme_manager=theme_manager,
     )
     # 让「视图 → 应用日志」一开始就有内容，也便于 issue 报告看清本次运行的配置。
     get_logger("bootstrap").info(
@@ -256,6 +262,13 @@ def build_window(context: ApplicationContext) -> MainWindow:
 
     device.command_timed_out.connect(_on_command_timeout)
     table_model.row_count_changed.connect(window.set_log_count)
+
+    theme_manager = context.theme_manager
+    if theme_manager is not None:
+        table_model.set_tokens(theme_manager.tokens)
+        panel.chat.set_theme_tokens(theme_manager.tokens)
+        theme_manager.theme_changed.connect(table_model.set_tokens)
+        theme_manager.theme_changed.connect(panel.chat.set_theme_tokens)
 
     log_view.selection_changed.connect(analysis.selected_sequences)
     log_view.autoscroll_toggled.connect(

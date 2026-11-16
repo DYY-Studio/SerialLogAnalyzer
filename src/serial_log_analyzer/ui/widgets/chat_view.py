@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPalette
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QFrame,
     QLabel,
@@ -28,6 +28,7 @@ from serial_log_analyzer.core.models.analysis import (
     MessageRole,
 )
 from serial_log_analyzer.ui.markdown import MarkdownRenderer
+from serial_log_analyzer.ui.theme import ThemeTokens
 
 __all__ = ["ChatView"]
 
@@ -50,6 +51,7 @@ class _CollapsibleBlock(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setObjectName("collapsible-block")
         self._title = title
         self._renderer = renderer
         self._text = ""
@@ -57,14 +59,7 @@ class _CollapsibleBlock(QWidget):
         layout.setContentsMargins(6, 4, 6, 4)
         layout.setSpacing(2)
 
-        # 次要材料：淡底色 + 灰字，和正文区分开。底色比代码块再淡一档，
-        # 否则块内的代码块与容器同色、看不出边界。
-        palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Window, renderer.faint)
-        palette.setColor(QPalette.ColorRole.Text, renderer.muted)
-        palette.setColor(QPalette.ColorRole.WindowText, renderer.muted)
-        self.setPalette(palette)
-        self.setAutoFillBackground(True)
+        self._apply_palette(renderer)
 
         self._toggle = QToolButton()
         self._toggle.setCheckable(True)
@@ -111,6 +106,24 @@ class _CollapsibleBlock(QWidget):
 
         return self._toggle.isChecked()
 
+    def refresh_theme(self, renderer: MarkdownRenderer) -> None:
+        """按新渲染器刷新容器配色与已渲染的 Markdown 正文。"""
+
+        self._renderer = renderer
+        self._apply_palette(renderer)
+        if self._text:
+            self._body.setText(renderer.html(self._text))
+
+    def _apply_palette(self, renderer: MarkdownRenderer) -> None:
+        # 次要材料：淡底色 + 灰字，和正文区分开。底色比代码块再淡一档，
+        # 否则块内的代码块与容器同色、看不出边界。
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Window, renderer.faint)
+        palette.setColor(QPalette.ColorRole.Text, renderer.muted)
+        palette.setColor(QPalette.ColorRole.WindowText, renderer.muted)
+        self.setPalette(palette)
+        self.setAutoFillBackground(True)
+
     def _on_toggled(self, expanded: bool) -> None:
         self._body.setVisible(expanded)
         self._toggle.setArrowType(
@@ -130,6 +143,7 @@ class _TurnCard(QFrame):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setObjectName("turn-card")
         self.role = role
         self._renderer = renderer
         self._body_text = ""
@@ -173,6 +187,14 @@ class _TurnCard(QFrame):
     def set_details_expanded(self, expanded: bool) -> None:
         self.detail.set_expanded(expanded)
 
+    def refresh_theme(self, renderer: MarkdownRenderer) -> None:
+        """使用新渲染器刷新细节块与正文。"""
+
+        self._renderer = renderer
+        self.detail.refresh_theme(renderer)
+        if self._body_text:
+            self.body.setText(renderer.html(self._body_text))
+
 
 class ChatView(QScrollArea):
     """按轮次堆叠卡片的分析结果区。
@@ -184,6 +206,7 @@ class ChatView(QScrollArea):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._expanded = False
+        self._tokens: ThemeTokens | None = None
         self._md = MarkdownRenderer(self.palette(), self.font().pointSizeF())
         self._cards: list[_TurnCard] = []
         self._message_cards: list[_TurnCard] = []
@@ -217,6 +240,24 @@ class ChatView(QScrollArea):
         self._expanded = bool(expanded)
         for card in self._cards:
             card.set_details_expanded(self._expanded)
+
+    def set_theme_tokens(self, tokens: ThemeTokens) -> None:
+        """更新主题 Token 并同步重绘已有对话卡片。"""
+
+        self._tokens = tokens
+        self.refresh_theme()
+
+    def refresh_theme(self) -> None:
+        """按当前主题 Token 或调色板重建 Markdown 渲染器并重绘已有卡片。"""
+
+        palette = QPalette(self.palette())
+        if self._tokens is not None:
+            palette.setColor(QPalette.ColorRole.Base, QColor(self._tokens.bg_surface))
+            palette.setColor(QPalette.ColorRole.Text, QColor(self._tokens.text_primary))
+            palette.setColor(QPalette.ColorRole.Link, QColor(self._tokens.accent_primary))
+        self._md = MarkdownRenderer(palette, self.font().pointSizeF())
+        for card in self._cards:
+            card.refresh_theme(self._md)
 
     def render(self, result: AnalysisResult) -> None:
         """按结果快照刷新转录（已定稿轮次按会话补卡片，未定稿一轮就地更新）。"""
